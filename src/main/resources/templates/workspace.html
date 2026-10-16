@@ -1,0 +1,1057 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>DeepShell · 工作台</title>
+    <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
+    <link rel="stylesheet" th:href="@{/vendor/xterm/xterm.css}">
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+<body class="ws-body">
+<div id="app" v-cloak class="ws-root">
+    <div class="ws-topbar">
+        <div class="brand small">Deep<span>Shell</span></div>
+        <div class="tabs" ref="tabBar" @dragleave="onTabBarDragLeave">
+            <div v-for="t in tabs" :key="t.key" class="tab"
+                 :class="{ active: t.key === activeKey }"
+                 draggable="true"
+                 @click="activate(t.key)" @mousedown.middle.prevent="closeTab(t)"
+                 @contextmenu.prevent="onTabContextMenu($event, t)"
+                 @dragstart="onTabDragStart($event, t)"
+                 @dragover="onTabDragOver($event, t)"
+                 @drop.prevent="onTabDrop($event, t)"
+                 @dragend="onTabDragEnd">
+                <span class="dot" :class="'dot-' + t.status"></span>
+                <span class="tname">{{ t.title }}</span>
+                <i class="el-icon-close tclose" @click.stop="closeTab(t)"></i>
+            </div>
+            <div class="tab add" title="打开连接" @click="openConnectDialog">
+                <i class="el-icon-plus"></i>
+            </div>
+        </div>
+        <div class="topbar-actions">
+            <div class="stats-strip" v-if="activeTab && activeTab.stats && !activeTab.stats.error">
+                <el-tooltip effect="dark" placement="bottom-start" :open-delay="200" :content="statTooltip(activeTab)">
+                    <span class="statgroup">
+                        <span class="stat-label">CPU</span>
+                        <span class="minibar">
+                            <i :class="levelClass(activeTab.stats.cpu)"
+                               :style="{ width: (activeTab.stats.cpu == null ? 0 : activeTab.stats.cpu) + '%' }"></i>
+                        </span>
+                        <span class="stat-val">{{ activeTab.stats.cpu == null ? '--' : activeTab.stats.cpu + '%' }}</span>
+                        <span class="stat-label stat-gap">内存</span>
+                        <span class="minibar">
+                            <i :class="levelClass(activeTab.stats.memPct)"
+                               :style="{ width: (activeTab.stats.memPct == null ? 0 : activeTab.stats.memPct) + '%' }"></i>
+                        </span>
+                        <span class="stat-val">{{ activeTab.stats.memPct == null ? '--' : activeTab.stats.memPct + '%' }}</span>
+                        <span class="stat-label stat-gap">交换</span>
+                        <span class="minibar">
+                            <i :class="levelClass(activeTab.stats.swapPct)"
+                               :style="{ width: (activeTab.stats.swapTotalMb ? (activeTab.stats.swapPct == null ? 0 : activeTab.stats.swapPct) : 0) + '%' }"></i>
+                        </span>
+                        <span class="stat-val">{{ activeTab.stats.swapTotalMb ? (activeTab.stats.swapPct + '%') : '—' }}</span>
+                        <span class="stat-net">↓ {{ fmtRate(activeTab.stats.rxRate) }} ↑ {{ fmtRate(activeTab.stats.txRate) }}</span>
+                    </span>
+                </el-tooltip>
+            </div>
+            <span class="stat-err" v-else-if="activeTab && activeTab.stats && activeTab.stats.error">
+                {{ activeTab.stats.error }}
+            </span>
+            <i class="el-icon-full-screen tbtn" title="终端自适应" @click="fitActive"></i>
+            <i class="tbtn" :class="panelVisible ? 'el-icon-s-fold' : 'el-icon-s-unfold'"
+               :title="panelVisible ? '隐藏侧栏' : '显示侧栏'"
+               @click="panelVisible = !panelVisible"></i>
+            <i ref="menuBtn" class="el-icon-menu tbtn" :class="{ 'menu-active': topMenuVisible }" title="菜单"
+               @click.stop="toggleTopMenu"></i>
+        </div>
+    </div>
+
+    <div class="ws-content">
+        <div class="ws-main">
+            <div class="term-area">
+                <div class="term-bg" v-if="bgSettings.url"
+                     :style="{ backgroundImage: 'url(' + bgSettings.url + ')', opacity: bgSettings.opacity,
+                               filter: bgSettings.blur ? ('blur(' + bgSettings.blur + 'px)') : 'none' }"></div>
+                <div v-for="t in tabs" :key="t.key" class="term-host" v-show="t.key === activeKey">
+                    <div class="term-box" :ref="'term-' + t.key"></div>
+                </div>
+                <div v-if="!tabs.length" class="ws-empty">
+                    <div class="empty-logo">Deep<b>Shell</b></div>
+                    <p>点击下方按钮，选择一个已保存的连接开始</p>
+                    <el-button type="primary" icon="el-icon-monitor" @click="openConnectDialog">
+                        打开连接
+                    </el-button>
+                </div>
+            </div>
+
+            <div class="cmd-ai-bar" v-if="activeTab && activeTab.cmdVisible && activeTab.aiVisible">
+                <i class="el-icon-magic-stick cmd-ai-icon"></i>
+                <el-input ref="aiInput" size="mini" v-model="activeTab.aiText" class="cmd-ai-input"
+                          placeholder="用一句话描述你要做的事，例如：查看磁盘占用最大的前 10 个目录（Enter 生成 ｜ Esc 关闭）"
+                          @keydown.native="onAiKeydown"></el-input>
+                <el-button size="mini" type="primary" :loading="activeTab.aiLoading" @click="aiGenerate">
+                    {{ activeTab.aiLoading ? '生成中' : '生成' }}
+                </el-button>
+            </div>
+            <div class="cmd-bar" v-if="activeTab && activeTab.cmdVisible">
+                <el-button size="mini" type="primary" icon="el-icon-position" class="cmd-send-btn"
+                           title="发送 (Enter)" @click="sendCmd"></el-button>
+                <el-input ref="cmdInput" size="mini" v-model="activeTab.cmdText" class="cmd-input"
+                          :placeholder="activeTab.sessionId
+                              ? '输入命令：Enter 发送 ｜ Tab 补全 ｜ ↑↓ 历史 ｜ Alt 历史列表 ｜ Esc 关闭 ｜ 双击 Ctrl 显隐'
+                              : '等待连接…'"
+                          @keydown.native="onCmdKeydown" @keyup.native="onCmdKeyup" @input.native="resetComp"></el-input>
+                <span class="cmd-tools">
+                    <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
+                       :class="{ 'cmd-tool-active': activeTab.aiVisible }" @click="toggleAiBar"></i>
+                    <el-popover placement="top-end" width="300" trigger="click" v-model="histVisible"
+                                popper-class="cmd-pop">
+                        <div class="cmd-hist">
+                            <div class="cmd-hist-head">
+                                <span>命令历史（{{ (activeTab.cmdHistory || []).length }}）</span>
+                                <el-button size="mini" type="text" @click="clearHistory">清空</el-button>
+                            </div>
+                            <div class="cmd-hist-list">
+                                <div v-for="(h, i) in (activeTab.cmdHistory || []).slice().reverse()" :key="i"
+                                     class="cmd-hist-item" :title="h"
+                                     @click="pickHistory(h)" @dblclick="runHistory(h)">{{ h }}</div>
+                                <div v-if="!activeTab.cmdHistory || !activeTab.cmdHistory.length" class="panel-tip">
+                                    暂无历史
+                                </div>
+                            </div>
+                        </div>
+                        <i slot="reference" class="el-icon-time cmd-tool" title="历史 (Alt)"></i>
+                    </el-popover>
+                    <el-popover placement="top-end" width="250" trigger="click" v-model="optsVisible"
+                                popper-class="cmd-pop">
+                        <div class="cmd-opts">
+                            <div class="cmd-opt-row">
+                                <span>发送后清空输入框</span>
+                                <el-switch v-model="cmdOpts.clearAfterSend" size="mini"></el-switch>
+                            </div>
+                            <div class="cmd-opt-row">
+                                <span>发送时自动追加回车</span>
+                                <el-switch v-model="cmdOpts.appendCr" size="mini"></el-switch>
+                            </div>
+                            <div class="cmd-opt-row">
+                                <span>忽略空白行</span>
+                                <el-switch v-model="cmdOpts.ignoreBlank" size="mini"></el-switch>
+                            </div>
+                        </div>
+                        <i slot="reference" class="el-icon-setting cmd-tool" title="选项"></i>
+                    </el-popover>
+                    <el-popover placement="top-end" width="250" trigger="click" v-model="sendToVisible"
+                                popper-class="cmd-pop">
+                        <div class="cmd-opts">
+                            <div class="cmd-opt-row" v-for="t in tabs" :key="t.key">
+                                <span class="cmd-target-name" :title="t.title">{{ t.title }}</span>
+                                <el-checkbox :value="(activeTab.sendTargets || []).indexOf(t.key) >= 0"
+                                             @change="toggleTarget(t.key, $event)"></el-checkbox>
+                            </div>
+                            <div class="panel-tip" v-if="!tabs.length">没有打开的会话</div>
+                            <div class="cmd-hint">勾选多个会话可同时下发命令</div>
+                        </div>
+                        <i slot="reference" class="el-icon-connection cmd-tool" title="发送到多个会话"></i>
+                    </el-popover>
+                    <i class="el-icon-document-copy cmd-tool" title="复制终端选中内容" @click="copySelection"></i>
+                    <i class="el-icon-document cmd-tool" title="粘贴到输入框" @click="pasteToInput"></i>
+                    <el-popover placement="top-end" width="300" trigger="click" v-model="searchVisible"
+                                popper-class="cmd-pop">
+                        <div class="cmd-search">
+                            <el-input size="mini" v-model="searchText" placeholder="搜索终端输出"
+                                      @keyup.native="onSearchKey"></el-input>
+                            <div class="cmd-search-btns">
+                                <el-button size="mini" icon="el-icon-top" @click="findPrev">上一个</el-button>
+                                <el-button size="mini" icon="el-icon-bottom" @click="findNext">下一个</el-button>
+                                <span class="cmd-hint">Enter 下一个</span>
+                            </div>
+                        </div>
+                        <i slot="reference" class="el-icon-search cmd-tool" title="搜索"></i>
+                    </el-popover>
+                    <i class="el-icon-edit cmd-tool" title="编辑当前连接" @click="editCurrentConnection"></i>
+                    <i class="el-icon-full-screen cmd-tool" title="全屏" @click="toggleFullscreen"></i>
+                </span>
+            </div>
+        </div>
+
+        <div class="ws-splitter" v-if="panelVisible && activeTab" @mousedown.prevent="startResize"></div>
+        <div class="ws-panel" :style="{ width: panelWidth + 'px' }" v-if="panelVisible && activeTab">
+            <el-tabs v-model="panelTab" stretch class="panel-tabs" @tab-click="onPanelTabClick">
+                <el-tab-pane label="文件 SFTP" name="file">
+                    <div class="sftp" v-if="activeTab.sessionId">
+                        <div class="sftp-path">
+                            <el-input size="mini" v-model="activeTab.sftpPath" placeholder="/path/to/dir"
+                                      @keyup.enter.native="loadDir(activeTab.sftpPath, activeTab)">
+                                <el-button slot="append" icon="el-icon-refresh"
+                                           @click="loadDir(activeTab.sftpPath, activeTab)"></el-button>
+                            </el-input>
+                        </div>
+                        <div class="sftp-toolbar">
+                            <el-button size="mini" icon="el-icon-back" title="返回上一目录"
+                                       :disabled="!activeTab.sftpHistory.length" @click="sftpGoBack"></el-button>
+                            <el-button size="mini" icon="el-icon-top" title="上级目录" @click="gotoParent"></el-button>
+                            <el-button size="mini" icon="el-icon-folder-add" title="新建文件夹"
+                                       @click="mkdir"></el-button>
+                            <el-button size="mini" icon="el-icon-document-add" title="新建文件"
+                                       @click="createFile"></el-button>
+                            <el-upload :show-file-list="false" :http-request="uploadFile" action="#">
+                                <el-button size="mini" icon="el-icon-upload2" title="上传到当前目录"></el-button>
+                            </el-upload>
+                            <el-button size="mini" icon="el-icon-refresh" title="刷新当前目录"
+                                       :loading="activeTab.sftpLoading" @click="refreshSftp"></el-button>
+                            <el-button size="mini" icon="el-icon-data-analysis" title="分析磁盘占用（哪个目录最占空间）"
+                                       @click="analyzeFromSftp"></el-button>
+                            <el-button size="mini" icon="el-icon-link" :type="sftpFollow ? 'primary' : 'default'"
+                                       :title="sftpFollow ? '已开启：目录跟随终端 cd（点击关闭）' : '目录跟随终端 cd（点击开启）'"
+                                       @click="toggleSftpFollow"></el-button>
+                            <span class="spacer"></span>
+                            <span class="sftp-count">{{ activeTab.sftpEntries.length }} 项</span>
+                        </div>
+                        <el-table ref="sftpTable" :data="activeTab.sftpEntries" size="mini" stripe
+                                  v-loading="activeTab.sftpLoading" class="sftp-table"
+                                  height="100%" @row-dblclick="onRowDblclick"
+                                  @dragover.native="onTableDragOver" @drop.native="onTableDrop"
+                                  @dragleave.native="onTableDragLeave">
+                            <el-table-column label="名称" prop="name" min-width="150" show-overflow-tooltip
+                                             sortable :sort-method="sortByName">
+                                <template slot-scope="s">
+                                    <span class="drag-wrap" draggable="true"
+                                          :data-drag-path="entryPath(s.row)"
+                                          :data-dir-path="s.row.dir ? entryPath(s.row) : false"
+                                          @dragstart.stop="onFileDragStart($event, s.row)"
+                                          @dragend.stop="endDrag">
+                                        <i :class="fileIcon(s.row)"></i>
+                                        <span class="fname" @click="onNameClick(s.row)">{{ s.row.name }}</span>
+                                    </span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="大小" prop="size" width="76" align="right" sortable>
+                                <template slot-scope="s">
+                                    <span class="dim">{{ s.row.dir ? '' : fmtSize(s.row.size) }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="修改时间" prop="mtime" width="132" sortable>
+                                <template slot-scope="s">
+                                    <span class="dim">{{ fmtTime(s.row.mtime) }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="操作" width="190" align="right">
+                                <template slot-scope="s">
+                                    <el-button v-if="!s.row.dir" size="mini" type="text" icon="el-icon-download"
+                                               title="下载" @click="download(s.row)"></el-button>
+                                    <el-button v-if="!s.row.dir" size="mini" type="text" class="vsc-edit"
+                                               title="用 VSCode 编辑（保存自动同步回服务器）" @click="vscodeEdit(s.row)">
+                                        <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+                                            <path fill="currentColor" d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z"/>
+                                        </svg>
+                                    </el-button>
+                                    <el-button v-if="!s.row.dir" size="mini" type="text" icon="el-icon-edit-outline"
+                                               title="在线编辑" @click="openEdit(s.row)"></el-button>
+                                    <el-button size="mini" type="text" icon="el-icon-rank" title="重命名"
+                                               @click="openRename(s.row)"></el-button>
+                                    <el-button size="mini" type="text" icon="el-icon-delete" class="danger-text"
+                                               title="删除" @click="remove(s.row)"></el-button>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </div>
+                    <div v-else class="panel-tip">连接建立后即可浏览远程文件</div>
+                </el-tab-pane>
+
+                <el-tab-pane label="常用目录" name="dirs">
+                    <div class="dirs" v-if="activeTab.sessionId">
+                        <div class="dirs-toolbar">
+                            <el-input size="mini" v-model="newDirPath" class="dirs-input"
+                                      placeholder="目录路径，如 /home/user"
+                                      @keyup.enter.native="addCommonDir">
+                                <el-button slot="append" icon="el-icon-plus" title="添加"
+                                           @click="addCommonDir"></el-button>
+                            </el-input>
+                            <el-button size="mini" icon="el-icon-location-outline" title="把当前目录加入常用"
+                                       :disabled="!(activeTab.sftpPath || activeTab.sftpHome)"
+                                       @click="addCurrentDir"></el-button>
+                        </div>
+                        <div class="dirs-current" v-if="activeTab.sftpPath">
+                            当前目录：<span class="dirs-current-path">{{ activeTab.sftpPath }}</span>
+                        </div>
+                        <div class="dirs-list">
+                            <div class="dir-item" v-for="d in commonDirs" :key="d.id"
+                                 :title="'cd 到 ' + d.path" @click="cdIntoDir(d)">
+                                <i class="el-icon-folder-opened dir-ico"></i>
+                                <span class="dir-path">{{ d.path }}</span>
+                                <i class="el-icon-close dir-del" title="从常用目录移除"
+                                   @click.stop="removeCommonDir(d)"></i>
+                            </div>
+                            <div v-if="!commonDirs.length" class="panel-tip">
+                                还没有常用目录：浏览到目标目录后点右侧定位按钮添加，或在上方输入路径
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="panel-tip">连接建立后即可使用常用目录</div>
+                </el-tab-pane>
+
+                <el-tab-pane :label="'快捷命令 (' + snippets.length + ')'" name="cmd">
+                    <div class="cmds">
+                        <div class="cmd-target-bar">
+                            <span class="cmd-target-label">发送到</span>
+                            <el-radio-group v-model="snippetTarget" size="mini">
+                                <el-radio-button label="current">当前会话</el-radio-button>
+                                <el-radio-button label="all">所有会话</el-radio-button>
+                                <el-radio-button label="custom">指定会话</el-radio-button>
+                            </el-radio-group>
+                        </div>
+                        <div v-if="snippetTarget === 'custom'" class="cmd-target-list">
+                            <el-checkbox v-for="t in tabs" :key="t.key"
+                                         :value="snippetTargets.indexOf(t.key) >= 0"
+                                         @change="toggleSnippetTarget(t.key, $event)">{{ t.title }}</el-checkbox>
+                            <span v-if="!tabs.length" class="panel-tip">没有打开的会话</span>
+                        </div>
+                        <div class="cmd-list">
+                            <div class="cmd-item" v-for="c in snippets" :key="c.id"
+                                 :title="c.command" @click="runSnippet(c)">
+                                <i class="el-icon-caret-right"></i>
+                                <span class="cmd-name">{{ c.name }}</span>
+                                <span class="cmd-text">{{ c.command }}</span>
+                                <i class="el-icon-edit cmd-edit" title="编辑"
+                                   @click.stop="openCmdEdit(c)"></i>
+                                <i class="el-icon-plus cmd-send" title="仅填入，不执行" @click.stop="fillSnippet(c)"></i>
+                            </div>
+                            <div v-if="!snippets.length" class="panel-tip">
+                                还没有快捷命令，可直接在下方输入框添加
+                            </div>
+                        </div>
+                        <div class="cmd-add">
+                            <el-input size="mini" v-model="newCmd.name" placeholder="名称" class="cmd-add-name"></el-input>
+                            <el-input size="mini" v-model="newCmd.command" placeholder="命令，如 df -h"
+                                      class="cmd-add-cmd" @keyup.enter.native="addSnippet"></el-input>
+                            <el-button size="mini" type="primary" icon="el-icon-plus" title="添加"
+                                       @click="addSnippet"></el-button>
+                        </div>
+                    </div>
+                </el-tab-pane>
+
+                <el-tab-pane :label="'进程 (' + (activeTab.procList ? activeTab.procList.length : 0) + ')'" name="process">
+                    <div class="procs" v-if="activeTab.sessionId">
+                        <div class="proc-toolbar">
+                            <el-input size="mini" v-model="activeTab.procKeyword" placeholder="过滤 名称/用户/PID/命令"
+                                      prefix-icon="el-icon-search" clearable class="proc-search"></el-input>
+                            <el-switch v-model="activeTab.procAuto" size="mini" active-text="3s"></el-switch>
+                            <el-button size="mini" icon="el-icon-refresh" @click="loadProcesses(activeTab)"></el-button>
+                        </div>
+                        <el-table :data="filteredProcRows" size="mini" stripe v-loading="activeTab.procLoading"
+                                  class="proc-table" height="100%"
+                                  :default-sort="{ prop: 'cpu', order: 'descending' }"
+                                  @row-click="showProcDetail">
+                            <el-table-column label="名称" min-width="110" show-overflow-tooltip>
+                                <template slot-scope="s">
+                                    <el-tooltip placement="top-start" :content="s.row.args || s.row.comm">
+                                        <span class="proc-comm">{{ s.row.comm }}</span>
+                                    </el-tooltip>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="PID" prop="pid" width="64" sortable></el-table-column>
+                            <el-table-column label="用户" prop="user" width="76" show-overflow-tooltip></el-table-column>
+                            <el-table-column label="CPU" prop="cpu" width="64" sortable :sort-method="sortByCpu">
+                                <template slot-scope="s">
+                                    <span :class="{ 'proc-hot': procCpuValue(s.row) >= 50 }">{{ fmtProcCpu(s.row) }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="内存" prop="rssMb" width="76" sortable :sort-method="sortByMem">
+                                <template slot-scope="s">
+                                    <el-tooltip placement="top" :content="(s.row.memPct || 0) + '% 物理内存'">
+                                        <span>{{ fmtMb(s.row.rssMb) }}</span>
+                                    </el-tooltip>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="状态" width="50" align="center">
+                                <template slot-scope="s">
+                                    <el-tooltip placement="top" :content="statText(s.row.state)">
+                                        <span>{{ s.row.state }}</span>
+                                    </el-tooltip>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="时长" width="86">
+                                <template slot-scope="s">
+                                    <span class="dim">{{ s.row.elapsedSecs >= 0 ? fmtUptime(s.row.elapsedSecs) : '--' }}</span>
+                                </template>
+                            </el-table-column>
+                            <el-table-column label="操作" width="86" align="right">
+                                <template slot-scope="s">
+                                    <el-button size="mini" type="text" class="danger-text"
+                                               @click.stop="killProcess(s.row, false)">结束</el-button>
+                                    <el-button size="mini" type="text" class="danger-text"
+                                               @click.stop="killProcess(s.row, true)">强杀</el-button>
+                                </template>
+                            </el-table-column>
+                        </el-table>
+                    </div>
+                    <div v-else class="panel-tip">连接建立后即可查看服务器进程</div>
+                </el-tab-pane>
+
+                <el-tab-pane label="磁盘" name="disk">
+                    <div class="disk" v-if="activeTab.sessionId">
+                        <div class="disk-toolbar">
+                            <el-input size="mini" v-model="activeTab.diskPath" class="disk-path"
+                                      placeholder="要分析的目录，如 / 或 /var/log"
+                                      @keyup.enter.native="analyzeDisk(activeTab.diskPath)">
+                                <el-button slot="append" icon="el-icon-search" title="开始分析"
+                                           @click="analyzeDisk(activeTab.diskPath)"></el-button>
+                            </el-input>
+                            <el-button size="mini" icon="el-icon-top" title="上级目录"
+                                       :disabled="!activeTab.diskPath || activeTab.diskPath === '/'"
+                                       @click="diskUp"></el-button>
+                        </div>
+                        <div class="disk-status" v-if="activeTab.diskLoading">
+                            <i class="el-icon-loading"></i> 正在扫描 {{ activeTab.diskPath }} …（大目录可能耗时较长，已用 {{ diskElapsed }}s）
+                        </div>
+                        <div class="disk-status disk-err" v-else-if="activeTab.diskError">{{ activeTab.diskError }}</div>
+                        <template v-else-if="activeTab.diskEntries.length">
+                            <div class="disk-summary">
+                                合计 <b>{{ fmtDisk(activeTab.diskTotalKb) }}</b> ｜ {{ activeTab.diskEntries.length }} 项
+                                <span v-if="activeTab.diskTruncated">（仅显示最大的 {{ activeTab.diskEntries.length }} 项）</span>
+                            </div>
+                            <el-table :data="activeTab.diskEntries" size="mini" stripe class="disk-table"
+                                      height="100%" :default-sort="{ prop: 'sizeKb', order: 'descending' }">
+                                <el-table-column label="名称" min-width="140" show-overflow-tooltip
+                                                 sortable :sort-method="sortDiskName">
+                                    <template slot-scope="s">
+                                        <i :class="s.row.dir ? 'el-icon-folder disk-ico-dir' : 'el-icon-document disk-ico-file'"></i>
+                                        <span class="fname" :class="{ 'disk-file': !s.row.dir }"
+                                              @click="s.row.dir && analyzeDisk(s.row.path)">{{ s.row.name }}</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="大小" prop="sizeKb" width="82" align="right"
+                                                 sortable :sort-method="sortDiskSize">
+                                    <template slot-scope="s">{{ fmtDisk(s.row.sizeKb) }}</template>
+                                </el-table-column>
+                                <el-table-column label="占比" width="104">
+                                    <template slot-scope="s">
+                                        <span class="disk-cell-bar">
+                                            <span class="disk-bar"><i :style="{ width: Math.max(3, s.row.pct) + '%' }"></i></span>
+                                            <span class="disk-pct">{{ s.row.pct }}%</span>
+                                        </span>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                        </template>
+                        <div v-else-if="activeTab.diskTotalKb != null" class="panel-tip">
+                            该目录为空（或路径是文件）
+                        </div>
+                        <div v-else class="disk-empty">
+                            <i class="el-icon-pie-chart"></i>
+                            <p>输入目录后点击搜索开始分析，或者点下方快捷入口</p>
+                            <div class="disk-quick">
+                                <el-button size="mini" @click="analyzeDisk('/')">/</el-button>
+                                <el-button size="mini" @click="analyzeDisk('/home')">/home</el-button>
+                                <el-button size="mini" @click="analyzeDisk('/var')">/var</el-button>
+                                <el-button size="mini" v-if="activeTab.sftpHome"
+                                           @click="analyzeDisk(activeTab.sftpHome)">主目录</el-button>
+                            </div>
+                            <p class="disk-hint">按目录逐层下钻：点击列表中的文件夹可进入下一层；不跨文件系统挂载点统计</p>
+                        </div>
+                    </div>
+                    <div v-else class="panel-tip">连接建立后即可分析磁盘占用</div>
+                </el-tab-pane>
+            </el-tabs>
+        </div>
+    </div>
+
+    <div class="ws-status" v-if="activeTab">
+        <span><span class="dot" :class="'dot-' + activeTab.status"></span> {{ statusText(activeTab) }}</span>
+        <span class="dim">会话 {{ tabs.length }} 个</span>
+    </div>
+
+    <div class="file-drop-mask" v-if="fileDragOver">
+        <div class="file-drop-box">
+            <i class="el-icon-upload"></i>
+            <div class="file-drop-title">松开鼠标上传文件</div>
+            <div class="file-drop-dir">
+                目标目录：{{ (activeTab && (activeTab.sftpPath || activeTab.sftpHome)) || '（等待会话就绪）' }}
+            </div>
+        </div>
+    </div>
+
+    <el-dialog title="打开连接" :visible.sync="connectDialogVisible" width="580px" custom-class="conn-dlg">
+        <div class="conn-dlg-head">
+            <el-radio-group v-model="connFilter" size="mini">
+                <el-radio-button label="all">全部</el-radio-button>
+                <el-radio-button label="fav">收藏</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="connKeyword" size="mini" prefix-icon="el-icon-search" clearable
+                      placeholder="搜索名称 / 主机 / 用户名" class="conn-dlg-search"></el-input>
+            <span class="conn-dlg-actions" v-if="connFilter === 'all' && folders.length">
+                <el-button size="mini" type="text" @click="expandAllFolders(true)">展开全部</el-button>
+                <el-button size="mini" type="text" @click="expandAllFolders(false)">收起全部</el-button>
+            </span>
+        </div>
+        <div class="conn-dlg-list">
+            <template v-for="row in connRows">
+                <div v-if="row._rowType === 'section'" :key="row.key" class="conn-sec">
+                    <i :class="row.icon"></i> {{ row.label }}
+                </div>
+                <div v-else-if="row._rowType === 'sep'" :key="row.key" class="conn-sep"></div>
+                <div v-else-if="row._rowType === 'folder'" :key="row.key" class="conn-row is-folder"
+                     :class="{ 'drop-target': connDragOverId === row.id }"
+                     :style="{ paddingLeft: (8 + row.depth * 18) + 'px' }" @click="toggleFolder(row.id)"
+                     @contextmenu.prevent="onFolderContextMenu($event, row)"
+                     @dragover.prevent="onFolderDragOver(row)" @dragleave="onFolderDragLeave(row)"
+                     @drop.prevent="onConnDrop(row)">
+                    <i class="conn-row-arrow"
+                       :class="connExpanded[row.id] ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
+                    <i class="el-icon-folder conn-row-icon"></i>
+                    <span class="conn-row-name">{{ row.name }}</span>
+                    <span class="conn-row-folder-ops">
+                        <i class="el-icon-edit" title="重命名文件夹" @click.stop="renameFolderQuick(row)"></i>
+                        <i class="el-icon-delete" title="删除文件夹（内容上移到上一级）"
+                           @click.stop="removeFolderQuick(row)"></i>
+                    </span>
+                    <span class="conn-row-count">{{ row._count }} 项</span>
+                </div>
+                <div v-else :key="row.key" class="conn-row" :draggable="!row.noDrag"
+                     :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }" @click="openTab(row.id)"
+                     @dragstart="onConnDragStart($event, row)" @dragend="onConnDragEnd">
+                    <i class="el-icon-monitor conn-row-icon"></i>
+                    <span class="conn-row-name">{{ row.name }}</span>
+                    <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
+                    <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                    <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
+                    <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop">
+                        <div class="conn-set">
+                            <div class="conn-set-row">
+                                <span><i class="el-icon-top"></i> 置顶显示</span>
+                                <el-switch :value="row.pinned" size="mini"
+                                           @change="setConnFlag(row.id, 'pinned', $event)"></el-switch>
+                            </div>
+                            <div class="conn-set-row">
+                                <span><i class="el-icon-star-on"></i> 收藏</span>
+                                <el-switch :value="row.favorite" size="mini"
+                                           @change="setConnFlag(row.id, 'favorite', $event)"></el-switch>
+                            </div>
+                            <div class="conn-set-row conn-set-action" @click="editConnFromDialog(row.id)">
+                                <span><i class="el-icon-edit"></i> 编辑连接</span>
+                                <i class="el-icon-arrow-right"></i>
+                            </div>
+                            <div class="conn-set-row conn-set-action conn-set-danger"
+                                 @click="removeConnFromDialog(row.id)">
+                                <span><i class="el-icon-delete"></i> 删除连接</span>
+                            </div>
+                            <div class="conn-set-hint">置顶后显示在列表顶部，收藏可用顶部「收藏」筛选</div>
+                        </div>
+                        <i slot="reference" class="el-icon-setting conn-set-btn" title="连接设置"
+                           @click.stop></i>
+                    </el-popover>
+                </div>
+            </template>
+            <div v-if="!connRows.length" class="panel-tip">
+                {{ connFilter === 'fav'
+                    ? '暂无收藏的连接（点击连接右侧 ⚙ 可收藏）'
+                    : (connKeyword ? '没有匹配的连接' : '暂无连接，点击下方「新建连接」直接创建') }}
+            </div>
+        </div>
+        <div class="conn-dlg-tip" v-if="connFilter === 'all' && folders.length">
+            <i class="el-icon-rank"></i> 可将连接拖到文件夹上移动
+        </div>
+        <div slot="footer">
+            <el-button size="small" icon="el-icon-folder-add" @click="newFolderQuick(null)">新建文件夹</el-button>
+            <el-button size="small" type="primary" icon="el-icon-plus" @click="openNewConnDialog">新建连接</el-button>
+        </div>
+    </el-dialog>
+
+    <conn-form-dialog ref="connForm" @saved="onConnSaved"></conn-form-dialog>
+
+    <!-- 连接导入 -->
+    <el-dialog title="连接导入" :visible.sync="connImportVisible" width="460px" append-to-body>
+        <div class="set-row">
+            <el-upload :show-file-list="false" :auto-upload="false" :multiple="true"
+                       :on-change="onImportFilesChange" action="#" accept=".json"
+                       style="display:inline-block">
+                <el-button size="small" type="primary" icon="el-icon-upload2">选择文件导入</el-button>
+            </el-upload>
+            <span class="set-hint">支持一次框选多个文件，导入后立即出现在连接列表</span>
+        </div>
+        <div class="set-hint" style="margin-top:10px;line-height:1.9">
+            · 支持 FinalShell 连接文件（finalshell_connections_*.json 或安装目录 conn 文件夹下的连接文件）<br>
+            · 兼容本工具「连接导出」生成的文件（含密码，导入后可直接连接）
+        </div>
+    </el-dialog>
+
+    <!-- 连接导出 -->
+    <el-dialog title="连接导出" :visible.sync="connExportVisible" width="520px" append-to-body>
+        <div class="export-head">
+            <span class="set-hint">勾选要导出的连接（含加密密码）</span>
+            <span class="export-actions">
+                <el-button size="mini" type="text" @click="toggleAllExport(true)">全选</el-button>
+                <el-button size="mini" type="text" @click="toggleAllExport(false)">全不选</el-button>
+            </span>
+        </div>
+        <div class="export-list">
+            <el-checkbox-group v-model="connExportChecked" v-if="connections.length">
+                <el-checkbox v-for="c in connections" :key="c.id" :label="c.id" class="export-item">
+                    {{ connExportLabel(c) }}
+                </el-checkbox>
+            </el-checkbox-group>
+            <div v-else class="panel-tip">暂无连接</div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="connExportVisible = false">取消</el-button>
+            <el-button size="small" type="primary" icon="el-icon-download"
+                       :disabled="!connExportChecked.length" @click="exportConnsSelected">
+                导出选中（{{ connExportChecked.length }}）
+            </el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 字体设置 -->
+    <el-dialog title="字体设置（终端）" :visible.sync="fontVisible" width="470px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">字体</span>
+            <el-select v-model="fontSettings.family" size="small" filterable allow-create
+                       default-first-option style="flex:1" @change="applyFont">
+                <el-option v-for="f in fontCandidates" :key="f" :label="f" :value="f"></el-option>
+            </el-select>
+        </div>
+        <div class="set-row">
+            <span class="set-label">字号</span>
+            <el-slider v-model="fontSettings.size" :min="10" :max="24" :step="0.5"
+                       style="flex:1" @change="applyFont"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ fontSettings.size }}px</span>
+        </div>
+        <div class="set-hint">即时生效并记忆，所有会话与新建会话通用</div>
+    </el-dialog>
+
+    <!-- 快捷键设置 -->
+    <el-dialog title="快捷键设置" :visible.sync="hotkeyVisible" width="500px" append-to-body>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">双击 Ctrl：显示 / 隐藏命令输入栏</span>
+            <el-switch v-model="hotkeySettings.doubleCtrl" size="mini"></el-switch>
+        </div>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">Tab：命令输入栏智能补全（路径 / 历史 / 快捷命令）</span>
+            <el-switch v-model="hotkeySettings.tabComplete" size="mini"></el-switch>
+        </div>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">Esc：关闭命令输入栏</span>
+            <el-switch v-model="hotkeySettings.escClose" size="mini"></el-switch>
+        </div>
+        <el-divider></el-divider>
+        <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
+    </el-dialog>
+
+    <!-- 背景图片设置 -->
+    <el-dialog title="背景图片设置" :visible.sync="bgVisible" width="520px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">图片</span>
+            <el-input size="small" v-model="bgSettings.url" placeholder="图片 URL，或点击右侧上传本地图片"
+                      style="flex:1" @change="applyBg"></el-input>
+            <el-upload :show-file-list="false" :http-request="uploadBg" action="#" accept="image/*"
+                       style="display:inline-block;margin-left:8px">
+                <el-button size="small" icon="el-icon-upload2">上传</el-button>
+            </el-upload>
+        </div>
+        <div class="set-row">
+            <span class="set-label">不透明度</span>
+            <el-slider v-model="bgSettings.opacity" :min="0.1" :max="1" :step="0.05"
+                       style="flex:1" @change="applyBg"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ Math.round(bgSettings.opacity * 100) }}%</span>
+        </div>
+        <div class="set-row">
+            <span class="set-label">模糊度</span>
+            <el-slider v-model="bgSettings.blur" :min="0" :max="12" :step="1"
+                       style="flex:1" @change="applyBg"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ bgSettings.blur }}px</span>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="clearBg">清除背景</el-button>
+            <el-button size="small" type="primary" @click="bgVisible = false">完成</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- AI 设置 -->
+    <el-dialog title="AI 设置（OpenAI 兼容接口 / DeepSeek）" :visible.sync="aiSetVisible" width="560px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">API 地址</span>
+            <el-input size="small" v-model="aiSetForm.baseUrl" placeholder="https://api.deepseek.com"
+                      style="flex:1"></el-input>
+        </div>
+        <div class="set-row">
+            <span class="set-label">API Key</span>
+            <el-input size="small" v-model="aiSetForm.apiKey" type="password" show-password style="flex:1"
+                      :placeholder="aiSetForm.hasKey ? '已配置，留空表示不修改' : 'sk-...'"></el-input>
+        </div>
+        <div class="set-row">
+            <span class="set-label">模型</span>
+            <el-input size="small" v-model="aiSetForm.model" placeholder="deepseek-chat" style="flex:1"></el-input>
+        </div>
+        <div class="set-hint" style="margin-top:10px;line-height:1.9">
+            · 兼容 OpenAI Chat Completions 协议：DeepSeek 默认地址 https://api.deepseek.com（Key 在 platform.deepseek.com 获取），也可填任意兼容服务地址<br>
+            · 配置保存在本机 ~/.deepshell/ai.properties，仅在点击「AI 生成命令」时随需求描述发送到该接口
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="aiSetVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="aiSetSaving" @click="saveAiConfig">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 编辑快捷命令 -->
+    <el-dialog title="编辑快捷命令" :visible.sync="cmdEditDialog" width="520px" append-to-body
+               :close-on-click-modal="false" :close-on-press-escape="false">
+        <el-form label-width="60px" size="small">
+            <el-form-item label="名称" required>
+                <el-input v-model="cmdEditForm.name" placeholder="例如：查看磁盘"></el-input>
+            </el-form-item>
+            <el-form-item label="命令" required>
+                <el-input v-model="cmdEditForm.command" type="textarea" :rows="3"
+                          placeholder="例如：df -h"></el-input>
+            </el-form-item>
+        </el-form>
+        <div slot="footer">
+            <el-button size="small" type="danger" plain icon="el-icon-delete" style="float:left"
+                       @click="removeSnippet">删除</el-button>
+            <el-button size="small" @click="cmdEditDialog = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="cmdEditSaving" @click="saveCmdEdit">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 进程详情 -->
+    <el-dialog :title="procDetail ? ('进程详情 · ' + procDetail.comm) : '进程详情'"
+               :visible.sync="procDetailVisible" width="680px" append-to-body>
+        <div class="sysinfo-list" v-if="procDetail">
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">名称</span>
+                <span class="sysinfo-value">{{ procDetail.comm }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">PID / 父进程 PID</span>
+                <span class="sysinfo-value">{{ procDetail.pid }} / {{ procDetail.ppid }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">用户</span>
+                <span class="sysinfo-value">{{ procDetail.user || '-' }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">状态</span>
+                <span class="sysinfo-value">{{ procDetail.state }}（{{ statText(procDetail.state) }}）</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">CPU</span>
+                <span class="sysinfo-value">瞬时 {{ procDetail.cpu == null ? '--' : (Math.round(procDetail.cpu * 10) / 10) + '%' }}
+                    ｜ 生命周期均值 {{ procDetail.cpuAvg == null ? '--' : procDetail.cpuAvg + '%' }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">内存</span>
+                <span class="sysinfo-value">{{ fmtMb(procDetail.rssMb) }}<template
+                        v-if="procDetail.memPct != null">（占物理内存 {{ procDetail.memPct }}%）</template></span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">运行时长</span>
+                <span class="sysinfo-value">{{ procDetail.elapsedSecs >= 0 ? fmtUptime(procDetail.elapsedSecs) : '--' }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">命令行</span>
+                <span class="sysinfo-value proc-cmd-detail">{{ procDetailCmd || procDetail.args || procDetail.comm || '-' }}</span>
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" icon="el-icon-document-copy" @click="copyProcCmd">复制命令行</el-button>
+            <el-button size="small" type="primary" @click="procDetailVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 系统信息 -->
+    <el-dialog :title="sysInfoTitle ? ('系统信息 · ' + sysInfoTitle) : '系统信息'"
+               :visible.sync="sysInfoVisible" width="780px" append-to-body>
+        <div v-if="sysInfoLoading" class="sysinfo-tip">
+            <i class="el-icon-loading"></i> 正在采集系统信息…
+        </div>
+        <div v-else-if="sysInfoError" class="sysinfo-tip sysinfo-err">{{ sysInfoError }}</div>
+        <div v-else class="sysinfo-list">
+            <template v-if="sysInfo">
+                <div class="sysinfo-sec">基础信息</div>
+                <div class="sysinfo-row" v-for="row in sysInfo.basic" :key="'b' + row.label">
+                    <span class="sysinfo-label">{{ row.label }}</span>
+                    <span class="sysinfo-value">{{ row.value }}</span>
+                </div>
+                <template v-if="sysInfo.cpu && sysInfo.cpu.length">
+                    <div class="sysinfo-sec">CPU</div>
+                    <div class="sysinfo-row" v-for="row in sysInfo.cpu" :key="'c' + row.label">
+                        <span class="sysinfo-label">{{ row.label }}</span>
+                        <span class="sysinfo-value">{{ row.value }}</span>
+                    </div>
+                </template>
+                <template v-if="sysInfo.cpuUsage && sysInfo.cpuUsage.length">
+                    <div class="sysinfo-sec">CPU 占用（实时）</div>
+                    <div class="sysinfo-row" v-for="row in sysInfo.cpuUsage" :key="'u' + row.label">
+                        <span class="sysinfo-label">{{ row.label }}</span>
+                        <span class="sysinfo-value">{{ row.value }}</span>
+                    </div>
+                </template>
+                <template v-if="sysInfo.memory && sysInfo.memory.length">
+                    <div class="sysinfo-sec">内存 / 交换分区</div>
+                    <div class="sysinfo-row" v-for="row in sysInfo.memory" :key="'m' + row.label">
+                        <span class="sysinfo-label">{{ row.label }}</span>
+                        <span class="sysinfo-value">{{ row.value }}</span>
+                    </div>
+                </template>
+                <template v-if="sysInfo.net && sysInfo.net.length">
+                    <div class="sysinfo-sec">网络接口</div>
+                    <el-table :data="sysInfo.net" size="mini" class="sysinfo-table">
+                        <el-table-column label="名称" prop="name" min-width="80"></el-table-column>
+                        <el-table-column label="接收总量" min-width="96" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.rxBytes) }}</template>
+                        </el-table-column>
+                        <el-table-column label="发送总量" min-width="96" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.txBytes) }}</template>
+                        </el-table-column>
+                        <el-table-column label="接收速率" min-width="88" align="right">
+                            <template slot-scope="s">{{ s.row.rxRate == null ? '--' : fmtRate(s.row.rxRate) }}</template>
+                        </el-table-column>
+                        <el-table-column label="发送速率" min-width="88" align="right">
+                            <template slot-scope="s">{{ s.row.txRate == null ? '--' : fmtRate(s.row.txRate) }}</template>
+                        </el-table-column>
+                    </el-table>
+                </template>
+                <template v-if="sysInfo.disk && sysInfo.disk.length">
+                    <div class="sysinfo-sec">文件系统</div>
+                    <el-table :data="sysInfo.disk" size="mini" class="sysinfo-table">
+                        <el-table-column label="挂载点" prop="mount" min-width="110" show-overflow-tooltip></el-table-column>
+                        <el-table-column label="文件系统" prop="fs" min-width="130" show-overflow-tooltip></el-table-column>
+                        <el-table-column label="总大小" min-width="84" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.sizeKb) }}</template>
+                        </el-table-column>
+                        <el-table-column label="已用" min-width="84" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.usedKb) }}</template>
+                        </el-table-column>
+                        <el-table-column label="可用" min-width="84" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.availKb) }}</template>
+                        </el-table-column>
+                        <el-table-column label="使用率" width="72" align="right">
+                            <template slot-scope="s">{{ s.row.pct }}%</template>
+                        </el-table-column>
+                    </el-table>
+                </template>
+            </template>
+            <div v-if="!sysInfo" class="sysinfo-tip">未获取到系统信息</div>
+        </div>
+        <div slot="footer">
+            <el-switch v-model="sysInfoAuto" size="mini" active-text="自动刷新（5s）" class="sysinfo-auto"></el-switch>
+            <el-button size="small" :disabled="sysInfoLoading" icon="el-icon-refresh"
+                       @click="loadSysInfo">刷新</el-button>
+            <el-button size="small" type="primary" @click="sysInfoVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 局域网访问 -->
+    <el-dialog title="局域网访问" :visible.sync="lanVisible" width="560px" append-to-body>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">开放局域网访问（切换需重启应用生效）</span>
+            <el-switch v-model="lanSettings.lanEnabled" @change="saveLan"></el-switch>
+        </div>
+        <div class="set-row">
+            <span class="set-hint">
+                当前状态：{{ lanSettings.effectiveLan ? ('已开放（监听 0.0.0.0:' + lanSettings.port + '）') : ('仅本机（监听 127.0.0.1:' + lanSettings.port + '）') }}
+            </span>
+            <span v-if="lanSettings.restartRequired" class="set-hint" style="color:#e6a23c">
+                设置与运行状态不一致，请重启应用后生效
+            </span>
+        </div>
+        <el-divider></el-divider>
+        <div class="set-hint" style="margin-bottom:6px">访问地址：</div>
+        <div class="lan-url" v-for="u in lanSettings.urls" :key="u">
+            <span class="lan-url-text">{{ u }}</span>
+            <el-button size="mini" type="text" icon="el-icon-document-copy" title="复制"
+                       @click="copyText(u)"></el-button>
+        </div>
+        <div class="set-hint" style="margin-top:10px;line-height:1.9">
+            · 默认仅本机（127.0.0.1）可访问；开放并重启后，局域网内电脑可通过上方 IP 地址访问<br>
+            · 首次开放如弹出 Windows 防火墙提示，请选择「允许访问」<br>
+            · 本工具无登录鉴权，请仅在可信局域网中开放
+        </div>
+    </el-dialog>
+
+    <!-- 帮助 -->
+    <el-dialog title="帮助" :visible.sync="helpVisible" width="640px" top="5vh" append-to-body>
+        <div class="help-box">
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-monitor"></i>连接与工作台</div>
+                <ul>
+                    <li>右上角「＋」打开已保存连接，或点击「新建连接」直接创建后立即连接；连接右侧 ⚙ 可设置置顶 / 收藏 / <b>编辑连接</b>，也可以<b>把连接拖动到文件夹上</b>快速归入文件夹；<b>文件夹上右键「连接所有」</b>可批量打开其中（含子文件夹）的全部服务器</li>
+                    <li>页面刷新（F5）后会自动<b>恢复之前打开的会话标签并重新连接</b>，不会丢失工作现场</li>
+                    <li>标签：<b>拖动</b>可排序；<b>右键</b>支持复制 IP / 系统信息 / 重新连接 / 断开 / 关闭（其他、左边、右边、全部）；中键点击快速关闭</li>
+                    <li>终端顶栏实时显示远端 CPU / 内存 / 网络利用率，悬浮查看主机、负载与运行时长</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-position"></i>命令输入栏（终端底部）</div>
+                <ul>
+                    <li><b>双击 Ctrl</b> 显示 / 隐藏；<b>Esc</b> 关闭；<b>Enter</b> 发送</li>
+                    <li><b>Tab</b> 智能补全（路径 / 历史 / 快捷命令）；<b>Alt</b> 或 <b>↑↓</b> 调出历史命令</li>
+                    <li><b>AI 生成命令</b>：点击魔法棒图标展开 AI 输入框，用自然语言描述需求，自动翻译为 shell 命令并填入命令框（需先在右上角菜单「AI 设置」配置 API Key）</li>
+                    <li>右侧工具：历史、选项（发送后清空 / 追加回车 / 忽略空行）、<b>多会话下发</b>（一条命令同时发到多台）、复制 / 粘贴、搜索、连接编辑、全屏</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-folder-opened"></i>文件 SFTP（右侧面板）</div>
+                <ul>
+                    <li>双击目录进入 / 双击文件在线编辑；点击列头排序（名称 / 大小 / 修改时间）</li>
+                    <li><b>拖动文件名到文件夹</b>即可移动（拖到表格边缘自动滚动找目标，移动前弹确认框）</li>
+                    <li>VSCode 图标：下载到本机用 VSCode 打开，<b>保存后自动同步回服务器</b></li>
+                    <li>工具栏：返回上一目录 / 上级目录 / 新建文件夹 / 新建文件（创建后直接打开编辑）/ 上传 / 刷新当前目录 / <b>分析磁盘占用</b> / <b>目录跟随开</b></li>
+                    <li><b>目录跟随</b>（默认开启）：终端里 <code>cd</code> 到某个目录后，文件面板自动切换到该目录；手动浏览不受影响，直到下次 cd；点工具栏链接图标可开关</li>
+                    <li><b>把系统里的文件直接拖进浏览器窗口</b>即可上传到当前目录（拖入时会显示目标目录提示，成功后顶部弹出提示）</li>
+                    <li>每行操作：下载、重命名、删除（目录递归删除，带确认）</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-folder-opened"></i>常用目录（右侧面板）</div>
+                <ul>
+                    <li>把常用路径存成快捷入口：浏览到目标目录后点「定位」按钮一键添加，或直接输入路径</li>
+                    <li><b>点击条目即在终端执行 cd</b>（特殊字符自动安全转义），文件面板同步进入该目录</li>
+                    <li>鼠标悬浮条目右侧的 × 可从常用目录中移除</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-pie-chart"></i>磁盘分析（右侧面板「磁盘」）</div>
+                <ul>
+                    <li>输入目录后点搜索（或从 SFTP 工具栏点「分析磁盘占用」），列出每个子目录 / 文件的大小与占比（按大小降序）</li>
+                    <li><b>点击文件夹逐层下钻</b>找占空间最大的目录，「↑」返回上一级；不跨文件系统挂载点统计</li>
+                    <li>目录很大时扫描需要等待（面板会显示已用时间），超时可换更小的目录逐层分析</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-data-line"></i>监控与进程</div>
+                <ul>
+                    <li>「进程」面板：类任务管理器，支持排序 / 过滤 / 3 秒自动刷新，可结束（SIGTERM）/ 强杀（SIGKILL）；<b>单击进程行查看详情</b>（PID、父进程、用户、状态、CPU、内存、运行时长与完整命令行，支持一键复制）</li>
+                    <li>采样经独立通道读取 /proc，不打扰交互终端；仅支持 Linux 服务器</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-menu"></i>右上角菜单</div>
+                <ul>
+                    <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、背景图片设置、AI 设置（DeepSeek / OpenAI 兼容接口）</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-folder"></i>数据与安全</div>
+                <ul>
+                    <li>连接、密码（AES 加密）、快捷命令与背景图存放于 <b>~/.deepshell</b>，拷贝该目录即可迁移</li>
+                    <li>本工具设计为本机使用，请勿直接暴露到公网</li>
+                </ul>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 关于 -->
+    <el-dialog title="关于" :visible.sync="aboutVisible" width="440px" append-to-body>
+        <div class="about-box">
+            <div class="about-logo">Deep<b>Shell</b></div>
+            <div class="about-line">版本 {{ appInfo.version }} · 现代化 Web 终端工具</div>
+            <div class="about-line">SSH 终端 · SFTP · 实时监控 · AI 命令助手</div>
+            <div class="about-line">SpringBoot + Thymeleaf + ElementUI + xterm.js</div>
+            <el-divider></el-divider>
+            <div class="about-line dim">运行环境：Java {{ appInfo.java }} ｜ {{ appInfo.os }}</div>
+            <div class="about-line dim">数据目录：{{ appInfo.dataDir }}</div>
+            <div class="about-line dim">本地工具 · 连接与账号信息仅保存在本机</div>
+        </div>
+    </el-dialog>
+
+    <el-dialog :title="'编辑远程文件 · ' + editForm.path" :visible.sync="editVisible" width="780px" top="4vh">
+        <el-input type="textarea" v-model="editForm.content" :rows="25" class="edit-area"
+                  v-loading="editForm.loading"></el-input>
+        <div slot="footer">
+            <el-button size="small" @click="editVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="editForm.saving" @click="saveEdit">保存到远程</el-button>
+        </div>
+    </el-dialog>
+
+    <el-dialog title="重命名" :visible.sync="renameVisible" width="420px">
+        <el-input v-model="renameForm.newName" size="small" @keyup.enter.native="doRename"></el-input>
+        <div slot="footer">
+            <el-button size="small" @click="renameVisible = false">取消</el-button>
+            <el-button size="small" type="primary" @click="doRename">确定</el-button>
+        </div>
+    </el-dialog>
+
+    <div class="tab-menu top-menu" v-if="topMenuVisible"
+         :style="{ top: topMenuPos.top + 'px', right: topMenuPos.right + 'px' }">
+        <div class="tab-menu-item" @click="onMenuCommand('connImport')">
+            <i class="el-icon-upload2"></i>连接导入
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('connExport')">
+            <i class="el-icon-download"></i>连接导出
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('font')">
+            <i class="el-icon-edit-outline"></i>字体设置
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('hotkey')">
+            <i class="el-icon-set-up"></i>快捷键设置
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('bg')">
+            <i class="el-icon-picture-outline"></i>背景图片设置
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('ai')">
+            <i class="el-icon-magic-stick"></i>AI 设置
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('lan')">
+            <i class="el-icon-share"></i>局域网访问
+        </div>
+        <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" @click="onMenuCommand('help')">
+            <i class="el-icon-question"></i>帮助
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('about')">
+            <i class="el-icon-info"></i>关于
+        </div>
+    </div>
+
+    <!-- 文件夹右键菜单（打开连接弹窗内） -->
+    <div class="tab-menu" v-if="folderMenu.visible"
+         :style="{ left: folderMenu.x + 'px', top: folderMenu.y + 'px' }">
+        <div class="tab-menu-item" @click="folderMenuConnectAll">
+            <i class="el-icon-connection"></i>连接所有
+        </div>
+    </div>
+
+    <div class="tab-menu" v-if="tabMenu.visible" :style="{ left: tabMenu.x + 'px', top: tabMenu.y + 'px' }">
+        <div class="tab-menu-item" @click="menuAction('reconnect')">
+            <i class="el-icon-refresh-right"></i>重新连接
+        </div>
+        <div class="tab-menu-item" @click="menuAction('disconnect')">
+            <i class="el-icon-switch-button"></i>断开
+        </div>
+        <div class="tab-menu-item" @click="menuAction('copyIp')">
+            <i class="el-icon-document-copy"></i>复制 IP
+        </div>
+        <div class="tab-menu-item" @click="menuAction('sysinfo')">
+            <i class="el-icon-cpu"></i>系统信息
+        </div>
+        <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" @click="menuAction('close')">
+            <i class="el-icon-close"></i>关闭
+        </div>
+        <div class="tab-menu-item" @click="menuAction('closeOthers')">
+            <i class="el-icon-circle-close"></i>关闭其他
+        </div>
+        <div class="tab-menu-item" @click="menuAction('closeRight')">
+            <i class="el-icon-d-arrow-right"></i>关闭右边
+        </div>
+        <div class="tab-menu-item" @click="menuAction('closeLeft')">
+            <i class="el-icon-d-arrow-left"></i>关闭左边
+        </div>
+        <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" @click="menuAction('closeAll')">
+            <i class="el-icon-delete"></i>关闭所有
+        </div>
+    </div>
+</div>
+
+<script th:src="@{/vendor/vue/vue.min.js}"></script>
+<script th:src="@{/vendor/element-ui/index.js}"></script>
+<script th:src="@{/vendor/axios/axios.min.js}"></script>
+<script th:src="@{/vendor/xterm/xterm.js}"></script>
+<script th:src="@{/vendor/xterm-addon-fit/xterm-addon-fit.js}"></script>
+<script th:src="@{/vendor/xterm-addon-search/xterm-addon-search.js}"></script>
+<script th:src="@{/js/conn-form.js}"></script>
+<script th:src="@{/js/workspace.js}"></script>
+</body>
+</html>

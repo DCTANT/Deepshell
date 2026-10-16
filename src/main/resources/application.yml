@@ -1,0 +1,41 @@
+server:
+  port: 18080
+  # 默认仅本机访问；在应用内开启「局域网访问」并重启后绑定 0.0.0.0
+  address: ${deepshell.lan-address:127.0.0.1}
+  compression:
+    enabled: true
+
+spring:
+  application:
+    name: deepshell
+  datasource:
+    url: jdbc:sqlite:${user.home}/.deepshell/db/deepshell.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1
+      connection-init-sql: PRAGMA journal_mode=WAL
+  jpa:
+    database-platform: org.sqlite.hibernate.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  thymeleaf:
+    cache: false
+  servlet:
+    multipart:
+      max-file-size: 4096MB
+      max-request-size: 4096MB
+
+logging:
+  level:
+    com.itdct.deepshell: info
+  file:
+    name: ${user.home}/.deepshell/logs/deepshell.log
+
+deepshell:
+  # VSCode 命令行（默认 code；未加入 PATH 时可配完整路径，如 C:\Program Files\Microsoft VS Code\bin\code.cmd）
+  vscode-command: code
+  # 启动完成后自动打开浏览器访问首页（双击 jar 启动的默认体验；-Ddeepshell.open-browser=false 关闭；
+  # 可用 deepshell.browser-cmd 自定义打开命令，{url} 为地址占位符，如指定某浏览器完整路径）
+  open-browser: true
+  browser-cmd: ""
