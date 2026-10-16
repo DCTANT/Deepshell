@@ -1,22 +1,22 @@
 package com.itdct.deepshell.service;
 
+import com.itdct.deepshell.common.DataDir;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Properties;
 
-/** AI 设置持久化：~/.deepshell/ai.properties（OpenAI 兼容接口配置） */
+/** AI 设置持久化：数据目录下的 ai.properties（OpenAI 兼容接口配置） */
 @Service
 public class AiConfigService {
 
     private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
     private static final String DEFAULT_MODEL = "deepseek-chat";
 
-    private final Path file = Paths.get(System.getProperty("user.home"), ".deepshell", "ai.properties");
+    private final Path file = DataDir.root().resolve("ai.properties");
 
     public synchronized Properties load() {
         Properties p = new Properties();

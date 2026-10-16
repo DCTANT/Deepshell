@@ -1,5 +1,6 @@
 package com.itdct.deepshell.web;
 
+import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.common.R;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,11 +13,10 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 
 /**
- * 局域网访问开关：设置存 ~/.deepshell/network.properties，
+ * 局域网访问开关：设置存数据目录下的 network.properties，
  * 应用启动时读取决定绑定 127.0.0.1（默认）或 0.0.0.0；切换需重启生效。
  */
 @Slf4j
@@ -31,7 +31,7 @@ public class NetworkController {
     private String boundAddress;
 
     private Path cfgFile() {
-        return Paths.get(System.getProperty("user.home"), ".deepshell", "network.properties");
+        return DataDir.root().resolve("network.properties");
     }
 
     private boolean savedLanEnabled() {

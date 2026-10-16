@@ -1,5 +1,6 @@
 package com.itdct.deepshell.web;
 
+import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.common.R;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -10,14 +11,13 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * 终端背景图片：上传到 ~/.deepshell/bg（替换旧图），通过 /img 提供访问
+ * 终端背景图片：上传到数据目录下的 bg/（替换旧图），通过 /img 提供访问
  */
 @RestController
 @RequestMapping("/api/terminal-bg")
@@ -26,7 +26,7 @@ public class TerminalBgController {
     private static final List<String> ALLOWED = Arrays.asList("png", "jpg", "jpeg", "gif", "webp", "bmp");
 
     private Path dir() {
-        return Paths.get(System.getProperty("user.home"), ".deepshell", "bg");
+        return DataDir.root().resolve("bg");
     }
 
     @PostMapping

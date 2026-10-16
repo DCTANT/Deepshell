@@ -1,0 +1,16 @@
+# DeepShell 外置配置
+# 此文件与 deepshell.jar 同级，启动时自动加载并覆盖程序内置默认值；未列出的项保持内置默认。
+# 完整的内置默认配置可在 jar 内的 BOOT-INF/classes/application.yml 查看。
+
+deepshell:
+  # 程序数据目录：数据库、加密密钥、AI 配置、局域网开关、日志、背景图等均存放于此。
+  # 相对路径基于启动目录解析；默认指向程序目录下的 data/，拷贝该目录即可迁移全部数据。
+  data-dir: ./data
+
+# ── 常用可调项（去掉行首 # 即生效）────────────────────────────
+# server:
+#   port: 18080              # 服务端口
+# deepshell:
+#   open-browser: true       # 启动后自动打开浏览器
+#   browser-cmd: ""          # 自定义打开命令，{url} 为地址占位符
+#   vscode-command: code     # VSCode 命令行（不在 PATH 时填完整路径）

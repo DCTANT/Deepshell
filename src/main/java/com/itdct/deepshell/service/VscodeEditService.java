@@ -1,5 +1,6 @@
 package com.itdct.deepshell.service;
 
+import com.itdct.deepshell.common.DataDir;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -48,7 +49,7 @@ public class VscodeEditService {
     public Map<String, Object> open(String sessionId, String remotePath) throws Exception {
         sessions.get(sessionId);
         String hash = sha1(remotePath).substring(0, 8);
-        Path dir = Paths.get(System.getProperty("user.home"), ".deepshell", "edit", sessionId, hash);
+        Path dir = DataDir.root().resolve("edit").resolve(sessionId).resolve(hash);
         Files.createDirectories(dir);
         Path local = dir.resolve(safeFileName(remotePath));
 

@@ -1,5 +1,6 @@
 package com.itdct.deepshell.service;
 
+import com.itdct.deepshell.common.DataDir;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -9,12 +10,11 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * 连接密码的本地加密存储：AES/GCM，密钥首启自动生成于 ~/.deepshell/secret.key
+ * 连接密码的本地加密存储：AES/GCM，密钥首启自动生成于数据目录的 secret.key
  */
 @Slf4j
 @Service
@@ -26,7 +26,7 @@ public class CryptoService {
     private final SecretKeySpec key;
 
     public CryptoService() throws Exception {
-        Path dir = Paths.get(System.getProperty("user.home"), ".deepshell");
+        Path dir = DataDir.root();
         Files.createDirectories(dir);
         Path keyFile = dir.resolve("secret.key");
         byte[] keyBytes;

@@ -31,16 +31,32 @@
 前置要求：JDK 8+、Maven。
 
 ```bash
-# 构建
+# 构建（同时生成分发包 target/deepshell-1.0.0.zip）
 mvn -DskipTests package
 
-# 运行
-java -jar target/deepshell-1.0.0.jar
+# 或直接运行 jar（开发调试）
+java -jar target/deepshell.jar
 ```
 
-或直接在 IntelliJ IDEA 中运行 `DeepShellApplication`。
+### 分发包（推荐）
 
-**Windows 双击启动**：直接双击 `target/deepshell-1.0.0.jar` 即可启动（系统已关联 Java 时），**启动完成后会自动打开默认浏览器**进入应用首页。关闭自动打开浏览器：启动命令或 IDEA 运行配置加 `-Ddeepshell.open-browser=false`。
+解压 `target/deepshell-1.0.0.zip` 后的目录结构：
+
+```
+deepshell-1.0.0/
+├─ deepshell.jar      主程序
+├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
+├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）
+├─ start.sh           Linux 启动脚本（后台运行）
+├─ stop.sh            Linux 停止脚本
+└─ data/              运行数据（数据库 / 密钥 / 配置 / 日志 / 背景图）
+```
+
+- **Windows**：双击 `start.cmd`
+- **Linux**：`./start.sh` 启动 / `./stop.sh` 停止（控制台输出见 `data/logs/console.log`）
+- 启动完成后会自动打开默认浏览器；不需要时在外置 `application.yml` 设 `deepshell.open-browser: false`（或启动命令加 `-Ddeepshell.open-browser=false`）
+
+开发模式（在 IntelliJ IDEA 中运行 `DeepShellApplication`）数据目录默认为 `~/.deepshell`；分发包数据全部位于程序目录 `data/` 下，拷贝整个目录即可迁移。
 
 启动后访问 **http://localhost:18080**
 
@@ -56,14 +72,16 @@ java -jar target/deepshell-1.0.0.jar
 
 ## 数据与安全
 
-| 数据 | 位置 |
+| 数据 | 位置（数据目录下） |
 |---|---|
-| 连接/快捷命令数据 | `~/.deepshell/db/deepshell.db`（SQLite 单文件库） |
-| 密码加密密钥 | `~/.deepshell/secret.key`（首次启动自动生成） |
-| AI 接口配置 | `~/.deepshell/ai.properties`（API 地址 / Key / 模型） |
-| 背景图片 | `~/.deepshell/bg/` |
-| VSCode 编辑副本 | `~/.deepshell/edit/` |
-| 运行日志 | `~/.deepshell/logs/` |
+| 连接/快捷命令数据 | `db/deepshell.db`（SQLite 单文件库） |
+| 密码加密密钥 | `secret.key`（首次启动自动生成） |
+| AI 接口配置 | `ai.properties`（API 地址 / Key / 模型） |
+| 背景图片 | `bg/` |
+| VSCode 编辑副本 | `edit/` |
+| 运行日志 | `logs/` |
+
+> 数据目录：分发包默认为程序目录下的 `data/`（可在同级 `application.yml` 中修改）；开发模式为 `~/.deepshell`。拷贝该目录即可迁移全部数据（含密钥与数据库）。
 
 - 密码/私钥口令经 AES-GCM 加密后落库，明文仅在提交与建立连接时短暂存在于内存
 - 本工具设计为**本机使用**；请勿直接暴露到公网（SSH 连接代理无鉴权）
@@ -71,9 +89,9 @@ java -jar target/deepshell-1.0.0.jar
 ## 目录结构
 
 ```
-src/main/java/com/deepshell/
+src/main/java/com/itdct/deepshell/
 ├─ config/       WebSocket 配置
-├─ common/       R 统一返回、全局异常
+├─ common/       R 统一返回、全局异常、DataDir 数据目录解析
 ├─ entity/       SshConnection、QuickCommand
 ├─ repo/         Spring Data JPA
 ├─ dto/          SftpEntry、ConnectionForm、SftpReq
@@ -87,11 +105,17 @@ src/main/resources/
    ├─ css/app.css
    ├─ js/workspace.js、conn-form.js（可复用连接编辑弹窗组件）
    └─ vendor/    Vue / ElementUI / axios / xterm（本地化，无需外网）
+
+dist/              分发包模板（application.yml / start.cmd / start.sh / stop.sh / data）
+src/assembly/      maven-assembly 打包描述（dist.xml）
 ```
 
 ## 常用配置（application.yml）
 
+内置默认配置在 `src/main/resources/application.yml`；分发包使用与 jar 同级的外置 `application.yml`，只需填写要覆盖的项：
+
 ```yaml
-server.port: 18080                 # 服务端口
-spring.datasource.url: ...         # SQLite 单文件库（默认 ~/.deepshell/db/deepshell.db）
+server.port: 18080             # 服务端口（默认 18080）
+deepshell.data-dir: ./data     # 数据目录（默认 ~/.deepshell；分发包为 ./data）
+deepshell.open-browser: true   # 启动后自动打开浏览器
 ```

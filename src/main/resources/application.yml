@@ -9,7 +9,8 @@ spring:
   application:
     name: deepshell
   datasource:
-    url: jdbc:sqlite:${user.home}/.deepshell/db/deepshell.db
+    # 数据目录（数据库/密钥/日志等统一存放）：-Ddeepshell.data-dir > 外置 application.yml > 缺省 ~/.deepshell
+    url: jdbc:sqlite:${deepshell.data-dir:${user.home}/.deepshell}/db/deepshell.db
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 1
@@ -30,7 +31,7 @@ logging:
   level:
     com.itdct.deepshell: info
   file:
-    name: ${user.home}/.deepshell/logs/deepshell.log
+    name: ${deepshell.data-dir:${user.home}/.deepshell}/logs/deepshell.log
 
 deepshell:
   # VSCode 命令行（默认 code；未加入 PATH 时可配完整路径，如 C:\Program Files\Microsoft VS Code\bin\code.cmd）

@@ -1,5 +1,6 @@
 package com.itdct.deepshell.web;
 
+import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.common.R;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,7 +21,7 @@ public class AppInfoController {
         m.put("version", v == null ? "1.0.0" : v);
         m.put("java", System.getProperty("java.version"));
         m.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));
-        m.put("dataDir", System.getProperty("user.home") + "/.deepshell");
+        m.put("dataDir", DataDir.root().toString());
         return R.ok(m);
     }
 }
