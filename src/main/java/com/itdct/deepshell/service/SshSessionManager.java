@@ -311,25 +311,142 @@ public class SshSessionManager {
      * 在独立 exec 通道执行命令并捕获输出（stdout/stderr 合并），不干扰交互终端
      */
     public String execCapture(SshSession s, String command, long timeoutMs) throws Exception {
+        return execRaw(s, command, timeoutMs, Integer.MAX_VALUE).output;
+    }
+
+    /** exec 通道原始执行结果（内部载体） */
+    static class RawExec {
+        volatile String output = "";
+        volatile boolean done;
+        volatile boolean aborted;
+        boolean truncated;
+        boolean timedOut;
+        int exitStatus = -1;
+    }
+
+    /**
+     * exec 通道底层执行：读线程 + join 超时（静默卡死的命令也能超时退出），
+     * 关闭 stdin 让读取标准输入的命令（如无参数 cat）立即收到 EOF 而不是挂死。
+     */
+    private RawExec execRaw(SshSession s, String command, long timeoutMs, int maxBytes) throws Exception {
         ChannelExec exec = (ChannelExec) s.getJsch().openChannel("exec");
         exec.setCommand(command);
+        // 立即向远端 stdin 发 EOF：读取标准输入的命令（如无参数 cat）直接结束而不是挂起
+        exec.setInputStream(null);
         InputStream in = exec.getInputStream();
         exec.connect(5000);
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        try {
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                bos.write(buf, 0, n);
-                if (System.currentTimeMillis() > deadline) {
-                    break;
+        RawExec r = new RawExec();
+        Thread reader = new Thread(() -> {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            try {
+                byte[] buf = new byte[8192];
+                int n;
+                while (!r.aborted && (n = in.read(buf)) != -1) {
+                    long remain = maxBytes - bos.size();
+                    if (n > remain) {
+                        bos.write(buf, 0, (int) Math.max(0, remain));
+                        r.truncated = true;
+                        break;
+                    }
+                    bos.write(buf, 0, n);
+                }
+            } catch (Exception ignore) {
+                // 超时断开通道会触发读取异常，按已读内容返回
+            } finally {
+                r.output = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                r.done = true;
+            }
+        }, "ssh-exec-" + s.getId());
+        reader.setDaemon(true);
+        reader.start();
+        reader.join(timeoutMs);
+        if (!r.done) {
+            r.aborted = true;
+            r.timedOut = true;
+        }
+        r.exitStatus = exec.getExitStatus();
+        exec.disconnect();
+        if (!r.done) {
+            try {
+                reader.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return r;
+    }
+
+    /** 带工作目录跟踪的 exec 执行结果（AI 终端用） */
+    public static class ExecResult {
+        public String output = "";
+        public Integer exitCode;
+        public String cwd;
+        public boolean truncated;
+        public boolean timedOut;
+    }
+
+    private static final String END_MARK = "__DEEPSHELL_END__";
+    private static final java.util.regex.Pattern END_RE =
+            java.util.regex.Pattern.compile("__DEEPSHELL_END__(\\d+)__(.*)__");
+
+    /**
+     * 在独立 exec 通道执行命令，并附带退出码与执行后的工作目录：
+     * 命令前先 cd 到给定目录，命令后打印标记行回传 $? 与 $PWD，下一跳可据此续跑。
+     */
+    public ExecResult execInShell(SshSession s, String command, String cwd, long timeoutMs, int maxBytes)
+            throws Exception {
+        return parseWrappedOutput(execRaw(s, wrapCommand(command, cwd), timeoutMs, maxBytes));
+    }
+
+    /** 拆出命令输出（去掉标记行）、退出码与执行后的工作目录；标记缺失时用 JSch 退出码兜底 */
+    static ExecResult parseWrappedOutput(RawExec raw) {
+        ExecResult res = new ExecResult();
+        res.truncated = raw.truncated;
+        res.timedOut = raw.timedOut;
+        String out = raw.output == null ? "" : raw.output;
+        int idx = out.lastIndexOf(END_MARK);
+        if (idx >= 0) {
+            java.util.regex.Matcher m = END_RE.matcher(out.substring(idx));
+            if (m.find()) {
+                try {
+                    res.exitCode = Integer.parseInt(m.group(1));
+                } catch (NumberFormatException ignore) {
+                    // 保持 null，用 JSch 退出码兜底
+                }
+                String dir = m.group(2).trim();
+                if (!dir.isEmpty()) {
+                    res.cwd = dir;
+                }
+                out = out.substring(0, idx);
+                if (out.endsWith("\n")) {
+                    out = out.substring(0, out.length() - 1);
+                }
+                if (out.endsWith("\r")) {
+                    out = out.substring(0, out.length() - 1);
                 }
             }
-        } finally {
-            exec.disconnect();
         }
-        return new String(bos.toByteArray(), StandardCharsets.UTF_8);
+        if (res.exitCode == null && raw.exitStatus >= 0) {
+            res.exitCode = raw.exitStatus;
+        }
+        res.output = out;
+        return res;
+    }
+
+    static String wrapCommand(String command, String cwd) {
+        StringBuilder sb = new StringBuilder();
+        if (cwd != null && !cwd.trim().isEmpty()) {
+            sb.append("cd ").append(shellQuote(cwd.trim()))
+                    .append(" 2>/dev/null || cd \"$HOME\" 2>/dev/null || cd /\n");
+        }
+        sb.append(command);
+        sb.append("\n__dsrc=$?; __dsp=$(pwd 2>/dev/null); ")
+                .append("printf '\\n").append(END_MARK).append("%s__%s__\\n' \"$__dsrc\" \"$__dsp\"\n");
+        return sb.toString();
+    }
+
+    private static String shellQuote(String v) {
+        return "'" + v.replace("'", "'\\''") + "'";
     }
 
     public SshSession get(String sessionId) {

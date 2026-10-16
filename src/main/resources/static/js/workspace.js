@@ -79,6 +79,73 @@ function loadSftpFollow() {
     return true;
 }
 
+/* ---------- AI 终端对话记录（按连接保存，最近 40 条，超长文本截断后保存） ---------- */
+var AI_CHAT_MAX = 40;
+
+function loadAiChat(connId) {
+    try {
+        var s = localStorage.getItem('deepshell.aiChat.' + connId);
+        if (s) {
+            var a = JSON.parse(s);
+            if (Array.isArray(a)) {
+                // 刷新前处于执行中/待确认的卡片，恢复后不再继续，标记为已跳过
+                a.forEach(function (m) {
+                    if (m && (m.state === 'running' || m.state === 'confirm')) {
+                        m.state = 'skipped';
+                    }
+                });
+                return a.slice(-AI_CHAT_MAX);
+            }
+        }
+    } catch (e) { /* ignore */ }
+    return [];
+}
+
+function saveAiChat(connId, msgs) {
+    try {
+        var capped = (msgs || []).slice(-AI_CHAT_MAX).map(function (m) {
+            var o = {};
+            for (var k in m) {
+                if (Object.prototype.hasOwnProperty.call(m, k)) { o[k] = m[k]; }
+            }
+            ['text', 'output'].forEach(function (f) {
+                if (typeof o[f] === 'string' && o[f].length > 3000) {
+                    o[f] = o[f].slice(0, 3000) + '…（已截断）';
+                }
+            });
+            return o;
+        });
+        localStorage.setItem('deepshell.aiChat.' + connId, JSON.stringify(capped));
+    } catch (e) { /* ignore */ }
+}
+
+function loadAiChatMode() {
+    try {
+        if (localStorage.getItem('deepshell.aiChatMode') === 'manual') {
+            return 'manual';
+        }
+    } catch (e) { /* ignore */ }
+    return 'auto';
+}
+
+/* AI 自己跟踪的工作目录（刷新后仍在，命令继续在该目录执行） */
+function loadAiCwd(connId) {
+    try {
+        return localStorage.getItem('deepshell.aiCwd.' + connId) || null;
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+function saveAiCwd(connId, cwd) {
+    try {
+        if (cwd) {
+            localStorage.setItem('deepshell.aiCwd.' + connId, cwd);
+        } else {
+            localStorage.removeItem('deepshell.aiCwd.' + connId);
+        }
+    } catch (e) { /* ignore */ }
+}
+
 /* 记住当前窗口打开的会话标签（sessionStorage 天然按浏览器标签页隔离），用于 F5 后恢复 */
 function saveOpenTabs(app) {
     try {
@@ -201,6 +268,8 @@ new Vue({
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
+        chatExamples: ['看看哪个目录占用空间最大', '这台服务器上都装了什么服务，分别监听哪些端口',
+            '最近的登录记录里有没有异常 IP'],
         fontCandidates: ['Consolas', 'JetBrains Mono', 'Courier New', 'monospace',
             'Microsoft YaHei Mono', 'DejaVu Sans Mono', 'Menlo', 'Monaco']
     },
@@ -397,7 +466,16 @@ new Vue({
                 sendTargets: [],
                 aiVisible: false,
                 aiText: '',
-                aiLoading: false
+                aiLoading: false,
+                chatMsgs: loadAiChat(connId),
+                chatInput: '',
+                chatBusy: false,
+                chatPhase: '',
+                chatMode: loadAiChatMode(),
+                chatCwd: loadAiCwd(connId),
+                chatStop: false,
+                chatStep: 0,
+                chatRun: 0
             };
             tab.sendTargets = [tab.key];
             this.tabs.push(tab);
@@ -807,6 +885,262 @@ new Vue({
                 });
             }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
                 t.aiLoading = false;
+            });
+        },
+        /* ---------- AI 终端（对话式：AI 自动执行命令，独立通道） ---------- */
+        onChatModeChange: function (v) {
+            try { localStorage.setItem('deepshell.aiChatMode', v); } catch (e) { /* ignore */ }
+        },
+        onChatKeydown: function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.aiChatSend();
+            }
+        },
+        aiChatSend: function () {
+            var t = this.activeTab;
+            if (!t || t.chatBusy) {
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var text = (t.chatInput || '').trim();
+            if (!text) {
+                return;
+            }
+            t.chatMsgs.push({ role: 'user', text: text });
+            t.chatInput = '';
+            t.chatStop = false;
+            t.chatStep = 0;
+            t.chatBusy = true;
+            t.chatRun = (t.chatRun || 0) + 1;
+            saveAiChat(t.connId, t.chatMsgs);
+            this.aiChatLoop(t, t.chatRun);
+        },
+        aiChatStop: function () {
+            var t = this.activeTab;
+            if (!t || !t.chatBusy) {
+                return;
+            }
+            t.chatStop = true;
+            var waitingConfirm = false;
+            (t.chatMsgs || []).forEach(function (m) {
+                if (m.state === 'confirm') {
+                    m.state = 'skipped';
+                    waitingConfirm = true;
+                }
+            });
+            if (waitingConfirm) {
+                // 没有请求在途，等待中的确认直接取消
+                this.aiChatFinish(t, '已停止');
+            } else {
+                // 请求在途（命令可能已执行），等结果返回后收尾
+                t.chatPhase = '正在停止…';
+                saveAiChat(t.connId, t.chatMsgs);
+            }
+        },
+        aiChatClear: function () {
+            var t = this.activeTab;
+            if (!t || t.chatBusy) {
+                return;
+            }
+            var self = this;
+            this.$confirm('清空「' + t.title + '」的 AI 对话记录？', '清空对话', { type: 'warning' })
+                .then(function () {
+                    t.chatMsgs.splice(0, t.chatMsgs.length);
+                    t.chatCwd = null;
+                    t.chatStep = 0;
+                    saveAiChat(t.connId, []);
+                    saveAiCwd(t.connId, null);
+                    self.scrollAiChat();
+                })
+                .catch(function () { /* 取消 */ });
+        },
+        aiChatLoop: function (t, run) {
+            var self = this;
+            if (run !== t.chatRun) {
+                return;
+            }
+            if (t.chatStop) {
+                this.aiChatFinish(t, '已停止');
+                return;
+            }
+            if (t.chatStep >= 15) {
+                this.aiChatFinish(t, '已达单轮 15 步上限，如任务未完成请继续发消息说明');
+                return;
+            }
+            t.chatStep++;
+            t.chatPhase = 'AI 正在思考…';
+            this.scrollAiChat();
+            http.post('/api/ai/agent/step', {
+                sessionId: t.sessionId,
+                cwd: t.chatCwd || '',
+                auto: t.chatMode !== 'manual',
+                messages: this.aiBuildHistory(t)
+            }).then(function (r) {
+                if (run !== t.chatRun) {
+                    return;
+                }
+                if (!r || !r.kind) {
+                    self.aiChatFinish(t, 'AI 未返回有效内容');
+                    return;
+                }
+                if (r.kind === 'reply') {
+                    t.chatMsgs.push({ role: 'ai', text: r.text || '（无内容）' });
+                    self.aiChatFinish(t, '');
+                    return;
+                }
+                // 字段需一次性建全：Vue 2 对后加的属性不做响应式
+                var m = {
+                    role: 'ai', cmd: r.command, note: r.note || '', danger: r.danger || '',
+                    state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: ''
+                };
+                if (r.needConfirm) {
+                    m.state = 'confirm';
+                    t.chatMsgs.push(m);
+                    if (t.chatStop) {
+                        m.state = 'skipped';
+                        self.aiChatFinish(t, '已停止');
+                        return;
+                    }
+                    t.chatPhase = '等待你确认命令…';
+                    saveAiChat(t.connId, t.chatMsgs);
+                    self.scrollAiChat();
+                    return;
+                }
+                self.aiFillCard(t, m, r);
+                t.chatMsgs.push(m);
+                saveAiChat(t.connId, t.chatMsgs);
+                if (t.chatStop) {
+                    self.aiChatFinish(t, '已停止（本轮命令已执行完）');
+                    return;
+                }
+                self.aiChatLoop(t, run);
+            }).catch(function (e) {
+                if (run !== t.chatRun) {
+                    return;
+                }
+                t.chatMsgs.push({ role: 'ai', text: '请求失败：' + ((e && e.message) || '未知错误') });
+                self.aiChatFinish(t, '');
+            });
+        },
+        aiChatConfirm: function (m, allow) {
+            var t = this.activeTab;
+            if (!t || !t.chatBusy || !m || m.state !== 'confirm') {
+                return;
+            }
+            if (!allow) {
+                m.state = 'skipped';
+                saveAiChat(t.connId, t.chatMsgs);
+                this.aiChatLoop(t, t.chatRun);
+                return;
+            }
+            var self = this;
+            var run = t.chatRun;
+            m.state = 'running';
+            t.chatPhase = '正在执行命令…';
+            saveAiChat(t.connId, t.chatMsgs);
+            this.scrollAiChat();
+            http.post('/api/ai/agent/exec', {
+                sessionId: t.sessionId,
+                cwd: t.chatCwd || '',
+                command: m.cmd
+            }).then(function (r) {
+                if (run !== t.chatRun) {
+                    return;
+                }
+                self.aiFillCard(t, m, r || {});
+                saveAiChat(t.connId, t.chatMsgs);
+                if (t.chatStop) {
+                    self.aiChatFinish(t, '已停止（本轮命令已执行完）');
+                    return;
+                }
+                self.aiChatLoop(t, run);
+            }).catch(function (e) {
+                if (run !== t.chatRun) {
+                    return;
+                }
+                m.state = 'done';
+                m.error = '命令执行失败：' + ((e && e.message) || '未知错误');
+                saveAiChat(t.connId, t.chatMsgs);
+                self.aiChatFinish(t, '');
+            });
+        },
+        aiFillCard: function (t, m, r) {
+            m.state = 'done';
+            m.output = r.output || '';
+            m.rc = (r.exitCode == null) ? null : r.exitCode;
+            m.truncated = !!r.truncated;
+            m.timedOut = !!r.timedOut;
+            m.error = r.error || '';
+            if (!m.note && r.note) {
+                m.note = r.note;
+            }
+            if (r.cwd) {
+                t.chatCwd = r.cwd;
+                saveAiCwd(t.connId, r.cwd);
+            }
+            this.scrollAiChat();
+        },
+        aiChatFinish: function (t, note) {
+            t.chatBusy = false;
+            t.chatStop = false;
+            t.chatPhase = '';
+            if (note) {
+                t.chatMsgs.push({ role: 'note', text: note });
+            }
+            saveAiChat(t.connId, t.chatMsgs);
+            this.scrollAiChat();
+        },
+        /* 把界面记录拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
+        aiBuildHistory: function (t) {
+            var self = this;
+            var out = [];
+            (t.chatMsgs || []).forEach(function (m) {
+                if (m.role === 'user') {
+                    out.push({ role: 'user', content: m.text || '' });
+                } else if (m.role === 'ai' && m.cmd) {
+                    out.push({
+                        role: 'assistant',
+                        content: JSON.stringify({ cmd: m.cmd, note: m.note || '' })
+                    });
+                    if (m.state === 'done') {
+                        out.push({ role: 'user', content: self.aiToolResult(m) });
+                    } else if (m.state === 'skipped') {
+                        out.push({
+                            role: 'user',
+                            content: '（用户跳过了这条命令）请不要重复执行它，换一种方式或先向用户说明。'
+                        });
+                    }
+                } else if (m.role === 'ai' && m.text) {
+                    out.push({ role: 'assistant', content: m.text });
+                }
+            });
+            return out;
+        },
+        aiToolResult: function (m) {
+            var lines = ['[命令执行结果]', '$ ' + m.cmd, '退出码: ' + (m.rc == null ? '未知' : m.rc)];
+            if (m.cwd) {
+                lines.push('执行后目录: ' + m.cwd);
+            }
+            var out = m.error ? m.error : (m.output || '');
+            if (!out.trim()) {
+                out = '（无输出）';
+            } else if (out.length > 4500) {
+                out = out.slice(0, 3000) + '\n…（中间省略 ' + (out.length - 4500) + ' 字）…\n' + out.slice(-1500);
+            }
+            lines.push(out);
+            return lines.join('\n');
+        },
+        scrollAiChat: function () {
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.aiChatList;
+                if (el) {
+                    el.scrollTop = el.scrollHeight;
+                }
             });
         },
         /* ---------- 系统信息（标签右键） ---------- */
@@ -2178,10 +2512,13 @@ new Vue({
 
         /* ---------- 进程管理 ---------- */
         onPanelTabClick: function (pane) {
-            if (pane && (pane.name === 'process' || pane.name === 'disk')) {
+            if (pane && (pane.name === 'process' || pane.name === 'disk' || pane.name === 'ai')) {
                 this.ensurePanelWide();
                 if (pane.name === 'process' && this.activeTab && this.activeTab.sessionId) {
                     this.loadProcesses(this.activeTab);
+                }
+                if (pane.name === 'ai' && this.activeTab) {
+                    this.scrollAiChat();
                 }
             }
         },

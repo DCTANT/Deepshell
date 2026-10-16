@@ -178,6 +178,83 @@
         <div class="ws-splitter" v-if="panelVisible && activeTab" @mousedown.prevent="startResize"></div>
         <div class="ws-panel" :style="{ width: panelWidth + 'px' }" v-if="panelVisible && activeTab">
             <el-tabs v-model="panelTab" stretch class="panel-tabs" @tab-click="onPanelTabClick">
+                <el-tab-pane label="AI终端" name="ai">
+                    <div class="aichat" v-if="activeTab.sessionId">
+                        <div class="aichat-toolbar">
+                            <el-radio-group v-model="activeTab.chatMode" size="mini"
+                                            @change="onChatModeChange">
+                                <el-radio-button label="auto">自动执行</el-radio-button>
+                                <el-radio-button label="manual">每步确认</el-radio-button>
+                            </el-radio-group>
+                            <span class="aichat-step" v-if="activeTab.chatBusy">
+                                <i class="el-icon-loading"></i> {{ activeTab.chatPhase }}
+                            </span>
+                            <span class="spacer"></span>
+                            <el-button size="mini" icon="el-icon-delete" title="清空该连接的对话记录"
+                                       :disabled="activeTab.chatBusy" @click="aiChatClear">清空</el-button>
+                        </div>
+                        <div class="aichat-list" ref="aiChatList">
+                            <div v-if="!activeTab.chatMsgs.length && !activeTab.chatBusy" class="aichat-empty">
+                                <i class="el-icon-chat-dot-round"></i>
+                                <p>用自然语言描述你想做的事，AI 会以当前登录用户（{{ activeTab.host }}）的身份
+                                    直接在服务器上执行命令完成它</p>
+                                <div class="aichat-egs">
+                                    <span v-for="eg in chatExamples" :key="eg" class="aichat-eg"
+                                          @click="activeTab.chatInput = eg">{{ eg }}</span>
+                                </div>
+                                <p class="aichat-hint">自动执行模式下，删除 / 格式化 / 重启等高风险命令会先暂停，
+                                    等你点击确认后才执行</p>
+                            </div>
+                            <div v-for="(m, i) in activeTab.chatMsgs" :key="i" class="aichat-msg"
+                                 :class="m.role">
+                                <div v-if="m.text" class="aichat-bubble">{{ m.text }}</div>
+                                <div v-if="m.cmd" class="aicard">
+                                    <div class="aicard-head">
+                                        <i class="el-icon-caret-right aicard-ico"></i>
+                                        <span class="aicard-cmd" :title="m.cmd">{{ m.cmd }}</span>
+                                        <span v-if="m.state === 'done' && !m.error && m.rc != null"
+                                              class="aicard-rc" :class="m.rc === 0 ? 'ok' : 'bad'">
+                                            {{ m.rc === 0 ? '成功' : 'rc=' + m.rc }}</span>
+                                        <span v-else-if="m.state === 'running'" class="aicard-rc run">执行中</span>
+                                        <span v-else-if="m.state === 'confirm'" class="aicard-rc warn">待确认</span>
+                                        <span v-else-if="m.state === 'skipped'" class="aicard-rc dim">已跳过</span>
+                                        <span v-else-if="m.error" class="aicard-rc bad">失败</span>
+                                        <i class="el-icon-document-copy aicard-copy" title="复制命令"
+                                           @click="copyText(m.cmd)"></i>
+                                    </div>
+                                    <div v-if="m.note" class="aicard-note">{{ m.note }}</div>
+                                    <div v-if="m.state === 'confirm'" class="aicard-confirm">
+                                        <i class="el-icon-warning-outline"></i>
+                                        <span>高风险操作{{ m.danger ? '（' + m.danger + '）' : '' }}，是否执行？</span>
+                                        <el-button size="mini" type="danger"
+                                                   @click="aiChatConfirm(m, true)">执行</el-button>
+                                        <el-button size="mini" @click="aiChatConfirm(m, false)">跳过</el-button>
+                                    </div>
+                                    <pre v-if="m.output" class="aicard-out">{{ m.output }}</pre>
+                                    <div v-if="m.state === 'done'" class="aicard-meta">
+                                        <span v-if="m.error" class="aicard-warn">{{ m.error }}</span>
+                                        <span v-else-if="m.timedOut" class="aicard-warn">命令超时未结束（可能仍在后台运行）</span>
+                                        <span v-else-if="m.truncated" class="aicard-warn">输出过长，已截断</span>
+                                        <span v-else-if="!m.output" class="dim">（无输出）</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="aichat-input">
+                            <el-input type="textarea" size="mini" v-model="activeTab.chatInput" :rows="2"
+                                      :placeholder="activeTab.chatBusy
+                                          ? 'AI 正在处理…'
+                                          : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行）'"
+                                      @keydown.native="onChatKeydown"></el-input>
+                            <el-button v-if="!activeTab.chatBusy" size="mini" type="primary" class="aichat-send"
+                                       @click="aiChatSend">发送</el-button>
+                            <el-button v-else size="mini" type="danger" class="aichat-send"
+                                       @click="aiChatStop">停止</el-button>
+                        </div>
+                    </div>
+                    <div v-else class="panel-tip">连接建立后即可使用 AI 终端</div>
+                </el-tab-pane>
+
                 <el-tab-pane label="文件 SFTP" name="file">
                     <div class="sftp" v-if="activeTab.sessionId">
                         <div class="sftp-path">
@@ -685,7 +762,7 @@
         </div>
         <div class="set-hint" style="margin-top:10px;line-height:1.9">
             · 兼容 OpenAI Chat Completions 协议：DeepSeek 默认地址 https://api.deepseek.com（Key 在 platform.deepseek.com 获取），也可填任意兼容服务地址<br>
-            · 配置保存在本机 ~/.deepshell/ai.properties，仅在点击「AI 生成命令」时随需求描述发送到该接口
+            · 配置保存在数据目录下的 ai.properties，仅在点击「AI 生成命令」时随需求描述发送到该接口
         </div>
         <div slot="footer">
             <el-button size="small" @click="aiSetVisible = false">取消</el-button>
@@ -891,6 +968,16 @@
                 </ul>
             </div>
             <div class="help-section">
+                <div class="help-title"><i class="el-icon-chat-dot-round"></i>AI 终端（右侧面板）</div>
+                <ul>
+                    <li>用自然语言描述需求，AI 会以当前会话的<b>登录用户身份</b>在服务器上自动执行命令、读取输出并逐步推进，直到任务完成；命令与输出以卡片形式展示（含退出码，可复制）</li>
+                    <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
+                    <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
+                    <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
+                    <li>对话记录按连接保存在本地，可用面板右上角「清空」重置（含 AI 的工作目录）</li>
+                </ul>
+            </div>
+            <div class="help-section">
                 <div class="help-title"><i class="el-icon-folder-opened"></i>文件 SFTP（右侧面板）</div>
                 <ul>
                     <li>双击目录进入 / 双击文件在线编辑；点击列头排序（名称 / 大小 / 修改时间）</li>
@@ -934,7 +1021,7 @@
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-folder"></i>数据与安全</div>
                 <ul>
-                    <li>连接、密码（AES 加密）、快捷命令与背景图存放于 <b>~/.deepshell</b>，拷贝该目录即可迁移</li>
+                    <li>连接、密码（AES 加密）、快捷命令与背景图存放于数据目录（分发包为程序目录下 <b>data/</b>），拷贝该目录即可迁移</li>
                     <li>本工具设计为本机使用，请勿直接暴露到公网</li>
                 </ul>
             </div>
@@ -946,7 +1033,7 @@
         <div class="about-box">
             <div class="about-logo">Deep<b>Shell</b></div>
             <div class="about-line">版本 {{ appInfo.version }} · 现代化 Web 终端工具</div>
-            <div class="about-line">SSH 终端 · SFTP · 实时监控 · AI 命令助手</div>
+            <div class="about-line">SSH 终端 · SFTP · 实时监控 · AI 运维助手</div>
             <div class="about-line">SpringBoot + Thymeleaf + ElementUI + xterm.js</div>
             <el-divider></el-divider>
             <div class="about-line dim">运行环境：Java {{ appInfo.java }} ｜ {{ appInfo.os }}</div>
