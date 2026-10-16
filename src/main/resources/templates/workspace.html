@@ -190,66 +190,87 @@
                                 <i class="el-icon-loading"></i> {{ activeTab.chatPhase }}
                             </span>
                             <span class="spacer"></span>
-                            <el-button size="mini" icon="el-icon-delete" title="清空该连接的对话记录"
-                                       :disabled="activeTab.chatBusy" @click="aiChatClear">清空</el-button>
+                            <el-button size="mini" icon="el-icon-plus" title="开始一个新对话"
+                                       :disabled="activeTab.chatBusy || activeTab.chatLoading"
+                                       @click="aiConvNew">新对话</el-button>
                         </div>
-                        <div class="aichat-list" ref="aiChatList">
-                            <div v-if="!activeTab.chatMsgs.length && !activeTab.chatBusy" class="aichat-empty">
-                                <i class="el-icon-chat-dot-round"></i>
-                                <p>用自然语言描述你想做的事，AI 会以当前登录用户（{{ activeTab.host }}）的身份
-                                    直接在服务器上执行命令完成它</p>
-                                <div class="aichat-egs">
-                                    <span v-for="eg in chatExamples" :key="eg" class="aichat-eg"
-                                          @click="activeTab.chatInput = eg">{{ eg }}</span>
-                                </div>
-                                <p class="aichat-hint">自动执行模式下，删除 / 格式化 / 重启等高风险命令会先暂停，
-                                    等你点击确认后才执行</p>
-                            </div>
-                            <div v-for="(m, i) in activeTab.chatMsgs" :key="i" class="aichat-msg"
-                                 :class="m.role">
-                                <div v-if="m.text" class="aichat-bubble">{{ m.text }}</div>
-                                <div v-if="m.cmd" class="aicard">
-                                    <div class="aicard-head">
-                                        <i class="el-icon-caret-right aicard-ico"></i>
-                                        <span class="aicard-cmd" :title="m.cmd">{{ m.cmd }}</span>
-                                        <span v-if="m.state === 'done' && !m.error && m.rc != null"
-                                              class="aicard-rc" :class="m.rc === 0 ? 'ok' : 'bad'">
-                                            {{ m.rc === 0 ? '成功' : 'rc=' + m.rc }}</span>
-                                        <span v-else-if="m.state === 'running'" class="aicard-rc run">执行中</span>
-                                        <span v-else-if="m.state === 'confirm'" class="aicard-rc warn">待确认</span>
-                                        <span v-else-if="m.state === 'skipped'" class="aicard-rc dim">已跳过</span>
-                                        <span v-else-if="m.error" class="aicard-rc bad">失败</span>
-                                        <i class="el-icon-document-copy aicard-copy" title="复制命令"
-                                           @click="copyText(m.cmd)"></i>
-                                    </div>
-                                    <div v-if="m.note" class="aicard-note">{{ m.note }}</div>
-                                    <div v-if="m.state === 'confirm'" class="aicard-confirm">
-                                        <i class="el-icon-warning-outline"></i>
-                                        <span>高风险操作{{ m.danger ? '（' + m.danger + '）' : '' }}，是否执行？</span>
-                                        <el-button size="mini" type="danger"
-                                                   @click="aiChatConfirm(m, true)">执行</el-button>
-                                        <el-button size="mini" @click="aiChatConfirm(m, false)">跳过</el-button>
-                                    </div>
-                                    <pre v-if="m.output" class="aicard-out">{{ m.output }}</pre>
-                                    <div v-if="m.state === 'done'" class="aicard-meta">
-                                        <span v-if="m.error" class="aicard-warn">{{ m.error }}</span>
-                                        <span v-else-if="m.timedOut" class="aicard-warn">命令超时未结束（可能仍在后台运行）</span>
-                                        <span v-else-if="m.truncated" class="aicard-warn">输出过长，已截断</span>
-                                        <span v-else-if="!m.output" class="dim">（无输出）</span>
-                                    </div>
+                        <div class="aichat-body">
+                            <div class="aichat-convs">
+                                <div v-for="c in chatConvList" :key="c.id" class="aichat-conv"
+                                     :class="{ active: c.id === activeTab.chatConvId }"
+                                     :title="c.title" @click="aiConvSwitch(c)">
+                                    <span class="aichat-conv-title">{{ c.title }}</span>
+                                    <span class="aichat-conv-time">{{ fmtChatTime(c.updatedAt) }}</span>
+                                    <i class="el-icon-close aichat-conv-del" title="删除对话"
+                                       @click.stop="aiConvDelete(c)"></i>
                                 </div>
                             </div>
-                        </div>
-                        <div class="aichat-input">
-                            <el-input type="textarea" size="mini" v-model="activeTab.chatInput" :rows="2"
-                                      :placeholder="activeTab.chatBusy
-                                          ? 'AI 正在处理…'
-                                          : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行）'"
-                                      @keydown.native="onChatKeydown"></el-input>
-                            <el-button v-if="!activeTab.chatBusy" size="mini" type="primary" class="aichat-send"
-                                       @click="aiChatSend">发送</el-button>
-                            <el-button v-else size="mini" type="danger" class="aichat-send"
-                                       @click="aiChatStop">停止</el-button>
+                            <div class="aichat-main">
+                                <div class="aichat-list" ref="aiChatList">
+                                    <div v-if="activeTab.chatLoading" class="aichat-empty">
+                                        <i class="el-icon-loading"></i>
+                                        <p>正在加载对话记录…</p>
+                                    </div>
+                                    <div v-if="!activeTab.chatMsgs.length && !activeTab.chatBusy
+                                               && !activeTab.chatLoading" class="aichat-empty">
+                                        <i class="el-icon-chat-dot-round"></i>
+                                        <p>用自然语言描述你想做的事，AI 会以当前登录用户（{{ activeTab.host }}）的身份
+                                            直接在服务器上执行命令完成它</p>
+                                        <div class="aichat-egs">
+                                            <span v-for="eg in chatExamples" :key="eg" class="aichat-eg"
+                                                  @click="activeTab.chatInput = eg">{{ eg }}</span>
+                                        </div>
+                                        <p class="aichat-hint">自动执行模式下，删除 / 格式化 / 重启等高风险命令会先暂停，
+                                            等你点击确认后才执行</p>
+                                    </div>
+                                    <div v-for="(m, i) in activeTab.chatMsgs" :key="i" class="aichat-msg"
+                                         :class="m.role">
+                                        <div v-if="m.text" class="aichat-bubble">{{ m.text }}</div>
+                                        <div v-if="m.cmd" class="aicard">
+                                            <div class="aicard-head">
+                                                <i class="el-icon-caret-right aicard-ico"></i>
+                                                <span class="aicard-cmd" :title="m.cmd">{{ m.cmd }}</span>
+                                                <span v-if="m.state === 'done' && !m.error && m.rc != null"
+                                                      class="aicard-rc" :class="m.rc === 0 ? 'ok' : 'bad'">
+                                                    {{ m.rc === 0 ? '成功' : 'rc=' + m.rc }}</span>
+                                                <span v-else-if="m.state === 'running'" class="aicard-rc run">执行中</span>
+                                                <span v-else-if="m.state === 'confirm'" class="aicard-rc warn">待确认</span>
+                                                <span v-else-if="m.state === 'skipped'" class="aicard-rc dim">已跳过</span>
+                                                <span v-else-if="m.error" class="aicard-rc bad">失败</span>
+                                                <i class="el-icon-document-copy aicard-copy" title="复制命令"
+                                                   @click="copyText(m.cmd)"></i>
+                                            </div>
+                                            <div v-if="m.note" class="aicard-note">{{ m.note }}</div>
+                                            <div v-if="m.state === 'confirm'" class="aicard-confirm">
+                                                <i class="el-icon-warning-outline"></i>
+                                                <span>高风险操作{{ m.danger ? '（' + m.danger + '）' : '' }}，是否执行？</span>
+                                                <el-button size="mini" type="danger"
+                                                           @click="aiChatConfirm(m, true)">执行</el-button>
+                                                <el-button size="mini"
+                                                           @click="aiChatConfirm(m, false)">跳过</el-button>
+                                            </div>
+                                            <pre v-if="m.output" class="aicard-out">{{ m.output }}</pre>
+                                            <div v-if="m.state === 'done'" class="aicard-meta">
+                                                <span v-if="m.error" class="aicard-warn">{{ m.error }}</span>
+                                                <span v-else-if="m.timedOut" class="aicard-warn">命令超时未结束（可能仍在后台运行）</span>
+                                                <span v-else-if="m.truncated" class="aicard-warn">输出过长，已截断</span>
+                                                <span v-else-if="!m.output" class="dim">（无输出）</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="aichat-input">
+                                    <el-input type="textarea" size="mini" v-model="activeTab.chatInput" :rows="2"
+                                              :placeholder="activeTab.chatBusy
+                                                  ? 'AI 正在处理…'
+                                                  : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行）'"
+                                              @keydown.native="onChatKeydown"></el-input>
+                                    <el-button v-if="!activeTab.chatBusy" size="mini" type="primary"
+                                               class="aichat-send" @click="aiChatSend">发送</el-button>
+                                    <el-button v-else size="mini" type="danger" class="aichat-send"
+                                               @click="aiChatStop">停止</el-button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div v-else class="panel-tip">连接建立后即可使用 AI 终端</div>
@@ -838,11 +859,12 @@
     <!-- 系统信息 -->
     <el-dialog :title="sysInfoTitle ? ('系统信息 · ' + sysInfoTitle) : '系统信息'"
                :visible.sync="sysInfoVisible" width="780px" append-to-body>
-        <div v-if="sysInfoLoading" class="sysinfo-tip">
+        <div v-if="sysInfoLoading && !sysInfo" class="sysinfo-tip">
             <i class="el-icon-loading"></i> 正在采集系统信息…
         </div>
-        <div v-else-if="sysInfoError" class="sysinfo-tip sysinfo-err">{{ sysInfoError }}</div>
+        <div v-else-if="sysInfoError && !sysInfo" class="sysinfo-tip sysinfo-err">{{ sysInfoError }}</div>
         <div v-else class="sysinfo-list">
+            <div v-if="sysInfoError" class="sysinfo-tip sysinfo-err sysinfo-err-inline">刷新失败：{{ sysInfoError }}（内容为上次采集结果）</div>
             <template v-if="sysInfo">
                 <div class="sysinfo-sec">基础信息</div>
                 <div class="sysinfo-row" v-for="row in sysInfo.basic" :key="'b' + row.label">
@@ -911,8 +933,9 @@
             <div v-if="!sysInfo" class="sysinfo-tip">未获取到系统信息</div>
         </div>
         <div slot="footer">
-            <el-switch v-model="sysInfoAuto" size="mini" active-text="自动刷新（5s）" class="sysinfo-auto"></el-switch>
-            <el-button size="small" :disabled="sysInfoLoading" icon="el-icon-refresh"
+            <el-switch v-model="sysInfoAuto" size="mini" active-text="自动刷新（10s）" class="sysinfo-auto"></el-switch>
+            <el-button size="small" :disabled="sysInfoLoading"
+                       :icon="sysInfoLoading ? 'el-icon-loading' : 'el-icon-refresh'"
                        @click="loadSysInfo">刷新</el-button>
             <el-button size="small" type="primary" @click="sysInfoVisible = false">关闭</el-button>
         </div>
@@ -974,7 +997,7 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li>对话记录按连接保存在本地，可用面板右上角「清空」重置（含 AI 的工作目录）</li>
+                    <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>
                 </ul>
             </div>
             <div class="help-section">

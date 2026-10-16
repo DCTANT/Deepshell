@@ -944,6 +944,10 @@ body.resizing .term-host {
     word-break: break-all;
 }
 
+.sysinfo-err-inline {
+    padding: 8px 4px 2px;
+}
+
 .sysinfo-list {
     max-height: 56vh;
     overflow-y: auto;
@@ -1982,6 +1986,83 @@ body.resizing .term-host {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.aichat-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    gap: 8px;
+}
+
+/* 左侧对话列表 */
+.aichat-convs {
+    flex: 0 0 116px;
+    width: 116px;
+    overflow-y: auto;
+    border-right: 1px solid #232b3a;
+    padding-right: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.aichat-conv {
+    position: relative;
+    padding: 6px 18px 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #9aa7bd;
+}
+
+.aichat-conv:hover {
+    background: #1b2230;
+    color: #c7d6ee;
+}
+
+.aichat-conv.active {
+    background: #22314a;
+    color: #e8effc;
+}
+
+.aichat-conv-title {
+    display: block;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.aichat-conv-time {
+    display: block;
+    font-size: 11px;
+    color: #6b7890;
+    margin-top: 2px;
+}
+
+.aichat-conv-del {
+    position: absolute;
+    right: 4px;
+    top: 6px;
+    font-size: 12px;
+    color: #6b7890;
+    display: none;
+}
+
+.aichat-conv:hover .aichat-conv-del {
+    display: inline;
+}
+
+.aichat-conv-del:hover {
+    color: #e8898f;
+}
+
+.aichat-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .aichat-list {

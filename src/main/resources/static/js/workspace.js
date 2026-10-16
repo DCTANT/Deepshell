@@ -79,43 +79,49 @@ function loadSftpFollow() {
     return true;
 }
 
-/* ---------- AI 终端对话记录（按连接保存，最近 40 条，超长文本截断后保存） ---------- */
-var AI_CHAT_MAX = 40;
+/* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
+var AI_CHAT_MAX = 40;   // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
 
-function loadAiChat(connId) {
+/* 读取浏览器里旧存的对话（新格式 deepshell.aiConv / 更早的单对话格式），返回待上传数组或 [] */
+function readStoredAiConvs(connId) {
     try {
-        var s = localStorage.getItem('deepshell.aiChat.' + connId);
+        var s = localStorage.getItem('deepshell.aiConv.' + connId);
         if (s) {
-            var a = JSON.parse(s);
-            if (Array.isArray(a)) {
-                // 刷新前处于执行中/待确认的卡片，恢复后不再继续，标记为已跳过
-                a.forEach(function (m) {
-                    if (m && (m.state === 'running' || m.state === 'confirm')) {
-                        m.state = 'skipped';
-                    }
+            var d = JSON.parse(s);
+            if (d && Array.isArray(d.convs) && d.convs.length) {
+                return d.convs.map(function (c) {
+                    return {
+                        title: c.title || '新对话',
+                        cwd: c.cwd || null,
+                        active: c.id === d.activeId,
+                        msgs: Array.isArray(c.msgs) ? c.msgs.slice(-AI_CHAT_MAX) : []
+                    };
                 });
-                return a.slice(-AI_CHAT_MAX);
             }
+        }
+    } catch (e) { /* ignore */ }
+    try {
+        var oldRaw = localStorage.getItem('deepshell.aiChat.' + connId);
+        var oldMsgs = oldRaw ? JSON.parse(oldRaw) : null;
+        if (Array.isArray(oldMsgs) && oldMsgs.length) {
+            var msgs = oldMsgs.slice(-AI_CHAT_MAX);
+            var first = msgs.find(function (m) { return m.role === 'user' && m.text; });
+            return [{
+                title: first ? first.text.slice(0, 20) : '新对话',
+                cwd: localStorage.getItem('deepshell.aiCwd.' + connId) || null,
+                active: true,
+                msgs: msgs
+            }];
         }
     } catch (e) { /* ignore */ }
     return [];
 }
 
-function saveAiChat(connId, msgs) {
+function clearStoredAiConvs(connId) {
     try {
-        var capped = (msgs || []).slice(-AI_CHAT_MAX).map(function (m) {
-            var o = {};
-            for (var k in m) {
-                if (Object.prototype.hasOwnProperty.call(m, k)) { o[k] = m[k]; }
-            }
-            ['text', 'output'].forEach(function (f) {
-                if (typeof o[f] === 'string' && o[f].length > 3000) {
-                    o[f] = o[f].slice(0, 3000) + '…（已截断）';
-                }
-            });
-            return o;
-        });
-        localStorage.setItem('deepshell.aiChat.' + connId, JSON.stringify(capped));
+        localStorage.removeItem('deepshell.aiConv.' + connId);
+        localStorage.removeItem('deepshell.aiChat.' + connId);
+        localStorage.removeItem('deepshell.aiCwd.' + connId);
     } catch (e) { /* ignore */ }
 }
 
@@ -126,24 +132,6 @@ function loadAiChatMode() {
         }
     } catch (e) { /* ignore */ }
     return 'auto';
-}
-
-/* AI 自己跟踪的工作目录（刷新后仍在，命令继续在该目录执行） */
-function loadAiCwd(connId) {
-    try {
-        return localStorage.getItem('deepshell.aiCwd.' + connId) || null;
-    } catch (e) { /* ignore */ }
-    return null;
-}
-
-function saveAiCwd(connId, cwd) {
-    try {
-        if (cwd) {
-            localStorage.setItem('deepshell.aiCwd.' + connId, cwd);
-        } else {
-            localStorage.removeItem('deepshell.aiCwd.' + connId);
-        }
-    } catch (e) { /* ignore */ }
 }
 
 /* 记住当前窗口打开的会话标签（sessionStorage 天然按浏览器标签页隔离），用于 F5 后恢复 */
@@ -329,6 +317,16 @@ new Vue({
                 return (p.comm + ' ' + p.user + ' ' + p.pid + ' ' + (p.args || '')).toLowerCase().indexOf(k) >= 0;
             });
         },
+        /* AI 终端的对话列表（最近使用的在前） */
+        chatConvList: function () {
+            var t = this.activeTab;
+            if (!t || !t.chatConvs) {
+                return [];
+            }
+            return t.chatConvs.slice().sort(function (a, b) {
+                return (b.updatedAt || 0) - (a.updatedAt || 0);
+            });
+        },
         /* 「打开连接」弹窗的树形列表：置顶区 + 文件夹层级 + 根级连接 */
         connRows: function () {
             var self = this;
@@ -467,12 +465,15 @@ new Vue({
                 aiVisible: false,
                 aiText: '',
                 aiLoading: false,
-                chatMsgs: loadAiChat(connId),
+                chatConvs: [],
+                chatConvId: null,
+                chatMsgs: [],
                 chatInput: '',
                 chatBusy: false,
+                chatBusyConvId: null,
                 chatPhase: '',
+                chatLoading: true,
                 chatMode: loadAiChatMode(),
-                chatCwd: loadAiCwd(connId),
                 chatStop: false,
                 chatStep: 0,
                 chatRun: 0
@@ -489,6 +490,7 @@ new Vue({
             }
             this.$nextTick(function () {
                 self.initTerminal(tab);
+                self.loadAiConvs(tab);
             });
         },
         loadConnections: function () {
@@ -887,7 +889,7 @@ new Vue({
                 t.aiLoading = false;
             });
         },
-        /* ---------- AI 终端（对话式：AI 自动执行命令，独立通道） ---------- */
+        /* ---------- AI 终端（对话式：AI 自动执行命令，独立通道；每连接多个对话） ---------- */
         onChatModeChange: function (v) {
             try { localStorage.setItem('deepshell.aiChatMode', v); } catch (e) { /* ignore */ }
         },
@@ -897,9 +899,156 @@ new Vue({
                 this.aiChatSend();
             }
         },
+        aiConvById: function (t, id) {
+            return (t.chatConvs || []).find(function (c) { return c.id === id; }) || null;
+        },
+        aiActiveConv: function (t) {
+            return this.aiConvById(t, t.chatConvId) || (t.chatConvs && t.chatConvs[0]) || null;
+        },
+        /* 保存一条对话（服务端钳制消息数与长度）；失败时内存数据不丢，下次保存重试 */
+        saveConv: function (t, conv) {
+            if (!conv || conv.id == null) {
+                return;
+            }
+            http.put('/api/ai/convs/' + conv.id, {
+                title: conv.title,
+                cwd: conv.cwd,
+                msgs: conv.msgs
+            }).catch(function () { /* 拦截器已提示 */ });
+        },
+        /* 打开连接时加载该连接的对话列表（服务端没有则迁移浏览器旧数据或新建） */
+        loadAiConvs: function (t) {
+            var self = this;
+            t.chatLoading = true;
+            http.get('/api/ai/convs', { params: { connId: t.connId } }).then(function (list) {
+                if (list && list.length) {
+                    self.applyAiConvs(t, list);
+                    return;
+                }
+                var stored = readStoredAiConvs(t.connId);
+                if (stored.length) {
+                    self.migrateStoredAiConvs(t, stored);
+                    return;
+                }
+                return self.aiConvCreateRemote(t);
+            }).catch(function () { /* 拦截器已提示 */ }).then(function () {
+                t.chatLoading = false;
+            });
+        },
+        applyAiConvs: function (t, list) {
+            t.chatConvs = list || [];
+            var act = t.chatConvs.find(function (c) { return c.active; }) || t.chatConvs[0] || null;
+            t.chatConvId = act ? act.id : null;
+            t.chatMsgs = act && act.msgs ? act.msgs : [];
+            this.scrollAiChat();
+        },
+        /* 浏览器里的旧对话一次性上传到服务端，成功后清理本地存储 */
+        migrateStoredAiConvs: function (t, stored) {
+            var self = this;
+            var created = [];
+            var chain = Promise.resolve();
+            stored.forEach(function (c) {
+                chain = chain.then(function () {
+                    return http.post('/api/ai/convs', { connId: t.connId }).then(function (nc) {
+                        created.push({ id: nc.id, data: c });
+                    });
+                });
+            });
+            // 先写入内容（不带 active），最后再单独标记选中的那个，避免被后续创建覆盖
+            chain = chain.then(function () {
+                var inner = Promise.resolve();
+                created.forEach(function (x) {
+                    inner = inner.then(function () {
+                        return http.put('/api/ai/convs/' + x.id, {
+                            title: x.data.title, cwd: x.data.cwd, msgs: x.data.msgs
+                        });
+                    });
+                });
+                return inner;
+            });
+            chain = chain.then(function () {
+                var act = created.find(function (x) { return x.data.active; }) || created[created.length - 1];
+                return act ? http.put('/api/ai/convs/' + act.id, { active: true }) : null;
+            });
+            return chain.then(function () {
+                clearStoredAiConvs(t.connId);
+                return http.get('/api/ai/convs', { params: { connId: t.connId } });
+            }).then(function (list) {
+                self.applyAiConvs(t, list);
+            }).catch(function () { /* 迁移失败保留本地数据，下次打开重试 */ });
+        },
+        aiConvCreateRemote: function (t) {
+            var self = this;
+            return http.post('/api/ai/convs', { connId: t.connId }).then(function (c) {
+                if (!c) {
+                    return null;
+                }
+                t.chatConvs.forEach(function (x) { x.active = false; });
+                t.chatConvs.push(c);
+                t.chatConvId = c.id;
+                t.chatMsgs = c.msgs || [];
+                self.scrollAiChat();
+                return c;
+            });
+        },
+        aiConvNew: function () {
+            var t = this.activeTab;
+            if (!t || t.chatBusy || t.chatLoading) {
+                return;
+            }
+            this.aiConvCreateRemote(t).catch(function () { /* 拦截器已提示 */ });
+        },
+        aiConvSwitch: function (c) {
+            var t = this.activeTab;
+            if (!t || !c || c.id === t.chatConvId) {
+                return;
+            }
+            t.chatConvId = c.id;
+            t.chatMsgs = c.msgs || [];
+            // 服务端记住当前对话（纯切换不刷新时间，失败不影响使用）
+            http.put('/api/ai/convs/' + c.id, { active: true }).catch(function () { /* ignore */ });
+            this.scrollAiChat();
+        },
+        aiConvDelete: function (c) {
+            var t = this.activeTab;
+            if (!t || !c) {
+                return;
+            }
+            if (t.chatBusy && t.chatBusyConvId === c.id) {
+                ELEMENT.Message.warning('该对话正在执行中，请先停止再删除');
+                return;
+            }
+            var self = this;
+            this.$confirm('删除对话「' + c.title + '」及其记录？', '删除对话', { type: 'warning' })
+                .then(function () {
+                    return http.delete('/api/ai/convs/' + c.id);
+                })
+                .then(function () {
+                    var i = t.chatConvs.indexOf(c);
+                    if (i >= 0) {
+                        t.chatConvs.splice(i, 1);
+                    }
+                    if (!t.chatConvs.length) {
+                        // 删光了就再建一个空对话
+                        return self.aiConvCreateRemote(t);
+                    }
+                    if (c.id === t.chatConvId) {
+                        var nc = self.chatConvList[0];
+                        t.chatConvId = nc.id;
+                        t.chatMsgs = nc.msgs || [];
+                        http.put('/api/ai/convs/' + nc.id, { active: true }).catch(function () { /* ignore */ });
+                    }
+                    self.scrollAiChat();
+                })
+                .catch(function () { /* 取消或失败（已提示） */ });
+        },
         aiChatSend: function () {
             var t = this.activeTab;
             if (!t || t.chatBusy) {
+                return;
+            }
+            if (t.chatLoading) {
+                ELEMENT.Message.info('对话正在加载，请稍候');
                 return;
             }
             if (!t.sessionId) {
@@ -910,14 +1059,24 @@ new Vue({
             if (!text) {
                 return;
             }
-            t.chatMsgs.push({ role: 'user', text: text });
+            var conv = this.aiActiveConv(t);
+            if (!conv) {
+                ELEMENT.Message.warning('对话未加载成功，请刷新页面或重开标签');
+                return;
+            }
+            conv.msgs.push({ role: 'user', text: text });
+            if (!conv.title || conv.title === '新对话') {
+                conv.title = text.slice(0, 20);
+            }
+            conv.updatedAt = Date.now();
             t.chatInput = '';
             t.chatStop = false;
             t.chatStep = 0;
             t.chatBusy = true;
+            t.chatBusyConvId = conv.id;
             t.chatRun = (t.chatRun || 0) + 1;
-            saveAiChat(t.connId, t.chatMsgs);
-            this.aiChatLoop(t, t.chatRun);
+            this.saveConv(t, conv);
+            this.aiChatLoop(t, conv, t.chatRun);
         },
         aiChatStop: function () {
             var t = this.activeTab;
@@ -925,8 +1084,9 @@ new Vue({
                 return;
             }
             t.chatStop = true;
+            var conv = this.aiConvById(t, t.chatBusyConvId) || this.aiActiveConv(t);
             var waitingConfirm = false;
-            (t.chatMsgs || []).forEach(function (m) {
+            (conv.msgs || []).forEach(function (m) {
                 if (m.state === 'confirm') {
                     m.state = 'skipped';
                     waitingConfirm = true;
@@ -934,41 +1094,24 @@ new Vue({
             });
             if (waitingConfirm) {
                 // 没有请求在途，等待中的确认直接取消
-                this.aiChatFinish(t, '已停止');
+                this.aiChatFinish(t, conv, '已停止');
             } else {
                 // 请求在途（命令可能已执行），等结果返回后收尾
                 t.chatPhase = '正在停止…';
-                saveAiChat(t.connId, t.chatMsgs);
+                this.saveConv(t, conv);
             }
         },
-        aiChatClear: function () {
-            var t = this.activeTab;
-            if (!t || t.chatBusy) {
-                return;
-            }
-            var self = this;
-            this.$confirm('清空「' + t.title + '」的 AI 对话记录？', '清空对话', { type: 'warning' })
-                .then(function () {
-                    t.chatMsgs.splice(0, t.chatMsgs.length);
-                    t.chatCwd = null;
-                    t.chatStep = 0;
-                    saveAiChat(t.connId, []);
-                    saveAiCwd(t.connId, null);
-                    self.scrollAiChat();
-                })
-                .catch(function () { /* 取消 */ });
-        },
-        aiChatLoop: function (t, run) {
+        aiChatLoop: function (t, conv, run) {
             var self = this;
             if (run !== t.chatRun) {
                 return;
             }
             if (t.chatStop) {
-                this.aiChatFinish(t, '已停止');
+                this.aiChatFinish(t, conv, '已停止');
                 return;
             }
             if (t.chatStep >= 15) {
-                this.aiChatFinish(t, '已达单轮 15 步上限，如任务未完成请继续发消息说明');
+                this.aiChatFinish(t, conv, '已达单轮 15 步上限，如任务未完成请继续发消息说明');
                 return;
             }
             t.chatStep++;
@@ -976,20 +1119,20 @@ new Vue({
             this.scrollAiChat();
             http.post('/api/ai/agent/step', {
                 sessionId: t.sessionId,
-                cwd: t.chatCwd || '',
+                cwd: conv.cwd || '',
                 auto: t.chatMode !== 'manual',
-                messages: this.aiBuildHistory(t)
+                messages: this.aiBuildHistory(conv)
             }).then(function (r) {
                 if (run !== t.chatRun) {
                     return;
                 }
                 if (!r || !r.kind) {
-                    self.aiChatFinish(t, 'AI 未返回有效内容');
+                    self.aiChatFinish(t, conv, 'AI 未返回有效内容');
                     return;
                 }
                 if (r.kind === 'reply') {
-                    t.chatMsgs.push({ role: 'ai', text: r.text || '（无内容）' });
-                    self.aiChatFinish(t, '');
+                    conv.msgs.push({ role: 'ai', text: r.text || '（无内容）' });
+                    self.aiChatFinish(t, conv, '');
                     return;
                 }
                 // 字段需一次性建全：Vue 2 对后加的属性不做响应式
@@ -999,31 +1142,33 @@ new Vue({
                 };
                 if (r.needConfirm) {
                     m.state = 'confirm';
-                    t.chatMsgs.push(m);
+                    conv.msgs.push(m);
+                    conv.updatedAt = Date.now();
                     if (t.chatStop) {
                         m.state = 'skipped';
-                        self.aiChatFinish(t, '已停止');
+                        self.aiChatFinish(t, conv, '已停止');
                         return;
                     }
                     t.chatPhase = '等待你确认命令…';
-                    saveAiChat(t.connId, t.chatMsgs);
+                    self.saveConv(t, conv);
                     self.scrollAiChat();
                     return;
                 }
-                self.aiFillCard(t, m, r);
-                t.chatMsgs.push(m);
-                saveAiChat(t.connId, t.chatMsgs);
+                self.aiFillCard(conv, m, r);
+                conv.msgs.push(m);
+                conv.updatedAt = Date.now();
+                self.saveConv(t, conv);
                 if (t.chatStop) {
-                    self.aiChatFinish(t, '已停止（本轮命令已执行完）');
+                    self.aiChatFinish(t, conv, '已停止（本轮命令已执行完）');
                     return;
                 }
-                self.aiChatLoop(t, run);
+                self.aiChatLoop(t, conv, run);
             }).catch(function (e) {
                 if (run !== t.chatRun) {
                     return;
                 }
-                t.chatMsgs.push({ role: 'ai', text: '请求失败：' + ((e && e.message) || '未知错误') });
-                self.aiChatFinish(t, '');
+                conv.msgs.push({ role: 'ai', text: '请求失败：' + ((e && e.message) || '未知错误') });
+                self.aiChatFinish(t, conv, '');
             });
         },
         aiChatConfirm: function (m, allow) {
@@ -1031,44 +1176,56 @@ new Vue({
             if (!t || !t.chatBusy || !m || m.state !== 'confirm') {
                 return;
             }
+            var conv = null;
+            (t.chatConvs || []).some(function (c) {
+                if (c.msgs && c.msgs.indexOf(m) >= 0) {
+                    conv = c;
+                    return true;
+                }
+                return false;
+            });
+            if (!conv) {
+                return;
+            }
             if (!allow) {
                 m.state = 'skipped';
-                saveAiChat(t.connId, t.chatMsgs);
-                this.aiChatLoop(t, t.chatRun);
+                this.saveConv(t, conv);
+                this.aiChatLoop(t, conv, t.chatRun);
                 return;
             }
             var self = this;
             var run = t.chatRun;
             m.state = 'running';
             t.chatPhase = '正在执行命令…';
-            saveAiChat(t.connId, t.chatMsgs);
+            this.saveConv(t, conv);
             this.scrollAiChat();
             http.post('/api/ai/agent/exec', {
                 sessionId: t.sessionId,
-                cwd: t.chatCwd || '',
+                cwd: conv.cwd || '',
                 command: m.cmd
             }).then(function (r) {
                 if (run !== t.chatRun) {
                     return;
                 }
-                self.aiFillCard(t, m, r || {});
-                saveAiChat(t.connId, t.chatMsgs);
+                self.aiFillCard(conv, m, r || {});
+                conv.updatedAt = Date.now();
+                self.saveConv(t, conv);
                 if (t.chatStop) {
-                    self.aiChatFinish(t, '已停止（本轮命令已执行完）');
+                    self.aiChatFinish(t, conv, '已停止（本轮命令已执行完）');
                     return;
                 }
-                self.aiChatLoop(t, run);
+                self.aiChatLoop(t, conv, run);
             }).catch(function (e) {
                 if (run !== t.chatRun) {
                     return;
                 }
                 m.state = 'done';
                 m.error = '命令执行失败：' + ((e && e.message) || '未知错误');
-                saveAiChat(t.connId, t.chatMsgs);
-                self.aiChatFinish(t, '');
+                self.saveConv(t, conv);
+                self.aiChatFinish(t, conv, '');
             });
         },
-        aiFillCard: function (t, m, r) {
+        aiFillCard: function (conv, m, r) {
             m.state = 'done';
             m.output = r.output || '';
             m.rc = (r.exitCode == null) ? null : r.exitCode;
@@ -1079,26 +1236,29 @@ new Vue({
                 m.note = r.note;
             }
             if (r.cwd) {
-                t.chatCwd = r.cwd;
-                saveAiCwd(t.connId, r.cwd);
+                conv.cwd = r.cwd;
             }
             this.scrollAiChat();
         },
-        aiChatFinish: function (t, note) {
+        aiChatFinish: function (t, conv, note) {
             t.chatBusy = false;
             t.chatStop = false;
             t.chatPhase = '';
-            if (note) {
-                t.chatMsgs.push({ role: 'note', text: note });
+            t.chatBusyConvId = '';
+            if (conv) {
+                if (note) {
+                    conv.msgs.push({ role: 'note', text: note });
+                }
+                conv.updatedAt = Date.now();
             }
-            saveAiChat(t.connId, t.chatMsgs);
+            this.saveConv(t, conv);
             this.scrollAiChat();
         },
-        /* 把界面记录拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
-        aiBuildHistory: function (t) {
+        /* 把某个对话拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
+        aiBuildHistory: function (conv) {
             var self = this;
             var out = [];
-            (t.chatMsgs || []).forEach(function (m) {
+            ((conv && conv.msgs) || []).forEach(function (m) {
                 if (m.role === 'user') {
                     out.push({ role: 'user', content: m.text || '' });
                 } else if (m.role === 'ai' && m.cmd) {
@@ -1134,6 +1294,19 @@ new Vue({
             lines.push(out);
             return lines.join('\n');
         },
+        fmtChatTime: function (ms) {
+            if (!ms) {
+                return '';
+            }
+            var d = new Date(ms);
+            var n = new Date();
+            var p = function (x) { return (x < 10 ? '0' : '') + x; };
+            var hm = p(d.getHours()) + ':' + p(d.getMinutes());
+            if (d.toDateString() === n.toDateString()) {
+                return hm;
+            }
+            return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
+        },
         scrollAiChat: function () {
             var self = this;
             this.$nextTick(function () {
@@ -1156,7 +1329,7 @@ new Vue({
                         return;
                     }
                     self.loadSysInfo();
-                }, 5000);
+                }, 10000);
             }
         },
         loadSysInfo: function () {
