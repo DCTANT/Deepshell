@@ -3,12 +3,12 @@ package com.itdct.deepshell.dto;
 import lombok.Data;
 
 /**
- * 服务器监控快照（CPU/内存/网络），首轮采样的差分类指标为 null
+ * 服务器监控快照（CPU/内存/网络），首轮采样或数据源不可用的指标为 null
  */
 @Data
 public class StatsSnapshot {
 
-    /** CPU 使用率（%），首轮为 null */
+    /** CPU 使用率（%），首轮或不可用时为 null；Android/Termux 上为 cpufreq 频率估算值 */
     private Integer cpu;
     /** 内存使用率（%） */
     private Integer memPct;
@@ -18,9 +18,9 @@ public class StatsSnapshot {
     private Integer swapPct;
     private Long swapUsedMb;
     private Long swapTotalMb;
-    /** 网络下行速率（字节/秒），首轮为 null */
+    /** 网络下行速率（字节/秒），首轮或不可用（如 Android）为 null */
     private Long rxRate;
-    /** 网络上行速率（字节/秒），首轮为 null */
+    /** 网络上行速率（字节/秒），首轮或不可用（如 Android）为 null */
     private Long txRate;
     private String load1;
     private Long uptimeSecs;
