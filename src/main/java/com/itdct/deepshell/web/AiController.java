@@ -8,12 +8,15 @@ import com.itdct.deepshell.service.AiConfigService;
 import com.itdct.deepshell.service.AiConversationService;
 import com.itdct.deepshell.service.AiModelCatalogService;
 import lombok.Data;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 @RestController
 @RequestMapping("/api/ai")
@@ -81,6 +84,52 @@ public class AiController {
         return R.ok(agentService.step(form.getSessionId(), form.getCwd(), form.isAuto(), form.getMessages()));
     }
 
+    /**
+     * AI 终端：流式一轮对话（SSE）。
+     * 事件：delta（模型回复增量文本）→ result（完整结果，含命令/执行输出）或 error。
+     */
+    @PostMapping(value = "/agent/step/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter agentStepStream(@RequestBody AgentStepForm form) {
+        // 模型生成 + 单条命令最长执行 120s，留足余量；超时由容器断开
+        SseEmitter emitter = new SseEmitter(600_000L);
+        emitter.onTimeout(emitter::complete);
+        Thread worker = new Thread(() -> {
+            try {
+                AiAgentService.AgentResult r = agentService.stepStream(
+                        form.getSessionId(), form.getCwd(), form.isAuto(), form.getMessages(),
+                        new Consumer<String>() {
+                            @Override
+                            public void accept(String text) {
+                                Map<String, Object> ev = new LinkedHashMap<>();
+                                ev.put("type", "delta");
+                                ev.put("text", text);
+                                sendEvent(emitter, ev);
+                            }
+                        });
+                Map<String, Object> ev = new LinkedHashMap<>();
+                ev.put("type", "result");
+                ev.put("result", r);
+                sendEvent(emitter, ev);
+                emitter.complete();
+            } catch (Throwable e) {
+                String msg = (e.getMessage() == null || e.getMessage().isEmpty())
+                        ? e.toString() : e.getMessage();
+                try {
+                    Map<String, Object> ev = new LinkedHashMap<>();
+                    ev.put("type", "error");
+                    ev.put("message", msg);
+                    sendEvent(emitter, ev);
+                } catch (Throwable ignore) {
+                    // 客户端已断开
+                }
+                emitter.complete();
+            }
+        }, "ai-agent-stream");
+        worker.setDaemon(true);
+        worker.start();
+        return emitter;
+    }
+
     /** AI 终端：用户确认后执行指定命令 */
     @PostMapping("/agent/exec")
     public R<AiAgentService.AgentResult> agentExec(@RequestBody AgentExecForm form) {
@@ -113,6 +162,14 @@ public class AiController {
     public R<Void> convDelete(@PathVariable Long id) {
         convService.delete(id);
         return R.ok();
+    }
+
+    private static void sendEvent(SseEmitter emitter, Map<String, Object> event) {
+        try {
+            emitter.send(SseEmitter.event().data(event, MediaType.APPLICATION_JSON));
+        } catch (Exception e) {
+            throw new IllegalStateException("连接已断开", e);
+        }
     }
 
     private Map<String, Object> current() {

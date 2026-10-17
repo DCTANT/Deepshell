@@ -262,6 +262,12 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div v-if="activeTab.chatStreamText
+                                               && activeTab.chatStreamConvId === activeTab.chatConvId"
+                                         class="aichat-msg ai aichat-streaming">
+                                        <div class="aichat-bubble">{{ activeTab.chatStreamText }}<i
+                                                class="aichat-cursor"></i></div>
+                                    </div>
                                 </div>
                                 <div class="aichat-input">
                                     <el-input type="textarea" size="mini" v-model="activeTab.chatInput" :rows="2"

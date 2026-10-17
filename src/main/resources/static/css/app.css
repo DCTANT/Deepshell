@@ -2163,6 +2163,27 @@ body.resizing .term-host {
     color: #d7dde8;
 }
 
+/* 流式输出中的实时气泡：末尾闪烁光标，提示仍在生成 */
+.aichat-streaming .aichat-bubble {
+    border: 1px solid rgba(76, 141, 255, .25);
+}
+
+.aichat-cursor {
+    display: inline-block;
+    width: 6px;
+    height: 13px;
+    margin-left: 3px;
+    vertical-align: -2px;
+    background: #4c8dff;
+    animation: aichat-cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes aichat-cursor-blink {
+    to {
+        visibility: hidden;
+    }
+}
+
 .aichat-msg.note .aichat-bubble {
     background: transparent;
     color: #6b7890;

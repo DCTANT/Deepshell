@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -68,6 +69,32 @@ public class AiAgentService {
         SshSessionManager.SshSession s = sessions.get(sessionId);
         List<Map<String, String>> messages = sanitize(history);
         String content = chatClient.complete(systemPrompt(s, cwd), messages);
+        return handleContent(s, cwd, auto, content);
+    }
+
+    /**
+     * 一轮对话（流式）：模型输出边生成边通过 onTextDelta 推送可展示的回复文本；
+     * 生成结束后的解析与命令执行结果与 {@link #step} 一致。
+     */
+    public AgentResult stepStream(String sessionId, String cwd, boolean auto, List<AgentMessage> history,
+                                  Consumer<String> onTextDelta) {
+        SshSessionManager.SshSession s = sessions.get(sessionId);
+        List<Map<String, String>> messages = sanitize(history);
+        final StringBuilder acc = new StringBuilder();
+        final String[] shown = {""};
+        String content = chatClient.stream(systemPrompt(s, cwd), messages, delta -> {
+            acc.append(delta);
+            String visible = visibleReplyText(acc.toString());
+            if (visible.length() > shown[0].length() && visible.startsWith(shown[0])) {
+                onTextDelta.accept(visible.substring(shown[0].length()));
+                shown[0] = visible;
+            }
+        });
+        return handleContent(s, cwd, auto, content);
+    }
+
+    /** 把模型输出解析为回复或命令，并按自动模式策略执行 */
+    private AgentResult handleContent(SshSessionManager.SshSession s, String cwd, boolean auto, String content) {
         Parsed parsed = parse(content);
 
         AgentResult r = new AgentResult();
@@ -161,6 +188,119 @@ public class AiAgentService {
         String command;
         String note;
         String reply;
+    }
+
+    /**
+     * 从流式累积的模型输出中提取「可以立刻展示」的回复文本：
+     * 模型按要求输出 JSON，这里在 reply 字段尚未输出完整时就逐段解码，供前端打字机式展示；
+     * 命令类输出（cmd）不展示原始 JSON，等生成结束后由前端画命令卡片。
+     */
+    static String visibleReplyText(String content) {
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        String reply = partialJsonString(content, "reply");
+        if (reply != null) {
+            return reply;
+        }
+        if (content.indexOf("\"cmd\"") >= 0) {
+            return "";
+        }
+        String t = stripLeadingFence(content);
+        // 看起来是 JSON 但关键字段还没出现时先不展示，避免闪出 {"re
+        if (t.trim().startsWith("{")) {
+            return "";
+        }
+        return t;
+    }
+
+    /** 解析 JSON 字符串字段的当前前缀（流式场景下引号 / 转义可能尚未闭合） */
+    static String partialJsonString(String content, String key) {
+        String token = "\"" + key + "\"";
+        int at = content.indexOf(token);
+        if (at < 0) {
+            return null;
+        }
+        int colon = content.indexOf(':', at + token.length());
+        if (colon < 0) {
+            return null;
+        }
+        int i = colon + 1;
+        while (i < content.length() && Character.isWhitespace(content.charAt(i))) {
+            i++;
+        }
+        if (i >= content.length()) {
+            return "";
+        }
+        if (content.charAt(i) != '"') {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int j = i + 1; j < content.length(); j++) {
+            char c = content.charAt(j);
+            if (c == '\\') {
+                if (j + 1 >= content.length()) {
+                    break;
+                }
+                char e = content.charAt(++j);
+                switch (e) {
+                    case 'n':
+                        sb.append('\n');
+                        break;
+                    case 't':
+                        sb.append('\t');
+                        break;
+                    case 'r':
+                        sb.append('\r');
+                        break;
+                    case 'b':
+                        sb.append('\b');
+                        break;
+                    case 'f':
+                        sb.append('\f');
+                        break;
+                    case '"':
+                    case '\\':
+                    case '/':
+                        sb.append(e);
+                        break;
+                    case 'u':
+                        if (j + 4 >= content.length()) {
+                            return sb.toString();
+                        }
+                        try {
+                            sb.append((char) Integer.parseInt(content.substring(j + 1, j + 5), 16));
+                        } catch (NumberFormatException ex) {
+                            return sb.toString();
+                        }
+                        j += 4;
+                        break;
+                    default:
+                        sb.append(e);
+                }
+            } else if (c == '"') {
+                return sb.toString();
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 去掉模型可能加在开头的 markdown 代码围栏 */
+    static String stripLeadingFence(String content) {
+        String t = content;
+        if (!t.isEmpty() && t.charAt(0) == '\uFEFF') {
+            t = t.substring(1);
+        }
+        String stripped = t.replaceFirst("^\\s*```[a-zA-Z0-9_-]*[ \\t]*\\r?\\n", "");
+        if (!stripped.equals(t)) {
+            return stripped.replaceFirst("\\s*```\\s*$", "");
+        }
+        if (t.trim().startsWith("```")) {
+            return "";
+        }
+        return t;
     }
 
     /** 解析模型输出：优先 JSON 的 cmd / reply；解析失败时整段作为回复展示 */

@@ -914,6 +914,8 @@ new Vue({
                 chatInput: '',
                 chatBusy: false,
                 chatBusyConvId: null,
+                chatStreamText: '',
+                chatStreamConvId: null,
                 chatPhase: '',
                 chatLoading: true,
                 chatMode: loadAiChatMode(),
@@ -1641,6 +1643,8 @@ new Vue({
                 return;
             }
             t.chatStop = true;
+            t.chatStreamText = '';
+            t.chatStreamConvId = null;
             var conv = this.aiConvById(t, t.chatBusyConvId) || this.aiActiveConv(t);
             var waitingConfirm = false;
             (conv.msgs || []).forEach(function (m) {
@@ -1672,14 +1676,18 @@ new Vue({
                 return;
             }
             t.chatStep++;
-            t.chatPhase = 'AI 正在思考…';
+            t.chatPhase = 'AI 正在生成…';
+            t.chatStreamText = '';
+            t.chatStreamConvId = conv.id;
             this.scrollAiChat();
-            http.post('/api/ai/agent/step', {
+            this.aiAgentStream(t, conv, run, {
                 sessionId: t.sessionId,
                 cwd: conv.cwd || '',
                 auto: t.chatMode !== 'manual',
                 messages: this.aiBuildHistory(conv)
             }).then(function (r) {
+                t.chatStreamText = '';
+                t.chatStreamConvId = null;
                 if (run !== t.chatRun) {
                     return;
                 }
@@ -1722,12 +1730,123 @@ new Vue({
                 }
                 self.aiChatLoop(t, conv, run);
             }).catch(function (e) {
+                t.chatStreamText = '';
+                t.chatStreamConvId = null;
                 if (run !== t.chatRun) {
                     return;
                 }
                 conv.msgs.push({ role: 'ai', text: '请求失败：' + ((e && e.message) || '未知错误') });
                 self.aiChatFinish(t, conv, '');
             });
+        },
+        /* 流式请求一轮 AI 对话：边读 SSE 边更新预览文本，返回最终结果 */
+        aiAgentStream: function (t, conv, run, payload) {
+            var self = this;
+            if (typeof fetch !== 'function' || typeof TextDecoder === 'undefined') {
+                return Promise.reject(new Error('当前浏览器不支持流式输出，请升级浏览器'));
+            }
+            return fetch('/api/ai/agent/step/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                body: JSON.stringify(payload)
+            }).then(function (resp) {
+                if (resp.status === 401) {
+                    redirectToLogin();
+                    throw new Error('登录已过期，请重新登录');
+                }
+                var ct = (resp.headers.get('content-type') || '').toLowerCase();
+                if (!resp.ok || ct.indexOf('text/event-stream') < 0) {
+                    return resp.text().then(function (txt) {
+                        throw new Error(self.aiErrorText(txt) || ('HTTP ' + resp.status));
+                    });
+                }
+                if (!resp.body || !resp.body.getReader) {
+                    throw new Error('当前浏览器不支持流式输出，请升级浏览器');
+                }
+                var reader = resp.body.getReader();
+                var decoder = new TextDecoder('utf-8');
+                var buf = '';
+                var result = null;
+                var failure = '';
+                var lastScroll = 0;
+
+                function handleBlock(block) {
+                    var lines = block.split(/\r?\n/);
+                    var data = [];
+                    lines.forEach(function (line) {
+                        if (line.indexOf('data:') === 0) {
+                            data.push(line.slice(5).replace(/^ /, ''));
+                        }
+                    });
+                    if (!data.length) {
+                        return;
+                    }
+                    var ev;
+                    try {
+                        ev = JSON.parse(data.join('\n'));
+                    } catch (e) {
+                        return;
+                    }
+                    if (ev.type === 'result') {
+                        result = ev.result;
+                    } else if (ev.type === 'error') {
+                        failure = ev.message || 'AI 请求失败';
+                    } else if (ev.type === 'delta' && typeof ev.text === 'string') {
+                        if (run !== t.chatRun || t.chatStop) {
+                            return;
+                        }
+                        if (t.chatStreamConvId !== conv.id) {
+                            t.chatStreamConvId = conv.id;
+                            t.chatStreamText = '';
+                        }
+                        t.chatStreamText += ev.text;
+                        var now = Date.now();
+                        if (now - lastScroll > 60) {
+                            lastScroll = now;
+                            self.scrollAiChat();
+                        }
+                    }
+                }
+
+                function pump() {
+                    return reader.read().then(function (r) {
+                        if (r.done) {
+                            buf += decoder.decode();
+                            if (buf.trim()) {
+                                handleBlock(buf);
+                            }
+                            if (failure) {
+                                throw new Error(failure);
+                            }
+                            if (!result) {
+                                throw new Error('流式响应中断，未收到结果');
+                            }
+                            return result;
+                        }
+                        buf += decoder.decode(r.value, { stream: true });
+                        buf = buf.replace(/\r\n/g, '\n');
+                        var idx;
+                        while ((idx = buf.indexOf('\n\n')) >= 0) {
+                            handleBlock(buf.slice(0, idx));
+                            buf = buf.slice(idx + 2);
+                        }
+                        return pump();
+                    });
+                }
+
+                return pump();
+            });
+        },
+        aiErrorText: function (txt) {
+            if (!txt) {
+                return '';
+            }
+            try {
+                var d = JSON.parse(txt);
+                return d.msg || (d.error && d.error.message) || '';
+            } catch (e) {
+                return txt.length > 300 ? txt.slice(0, 300) + '…' : txt;
+            }
         },
         aiChatConfirm: function (m, allow) {
             var t = this.activeTab;
@@ -1804,6 +1923,8 @@ new Vue({
             t.chatStop = false;
             t.chatPhase = '';
             t.chatBusyConvId = '';
+            t.chatStreamText = '';
+            t.chatStreamConvId = null;
             if (conv) {
                 if (note) {
                     conv.msgs.push({ role: 'note', text: note });
