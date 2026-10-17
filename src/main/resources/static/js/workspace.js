@@ -79,6 +79,17 @@ function loadSftpFollow() {
     return true;
 }
 
+/* AI 可视化桌面：记住上次使用的图标视图 */
+function loadDesktopView() {
+    try {
+        var v = localStorage.getItem('deepshell.desktopView');
+        if (v === 'large' || v === 'medium' || v === 'small' || v === 'list') {
+            return v;
+        }
+    } catch (e) { /* ignore */ }
+    return 'large';
+}
+
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
 var AI_CHAT_MAX = 40;   // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
 
@@ -198,6 +209,61 @@ new Vue({
         panelVisible: true,
         panelTab: 'file',
         panelWidth: 480,
+        /* AI 可视化桌面 */
+        desktopViews: [
+            { id: 'large', label: '大图标', icon: 'el-icon-s-grid' },
+            { id: 'medium', label: '中图标', icon: 'el-icon-menu' },
+            { id: 'small', label: '小图标', icon: 'el-icon-grid' },
+            { id: 'list', label: '详细列表', icon: 'el-icon-tickets' }
+        ],
+        desktopTaskApps: [
+            { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round' },
+            { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder' },
+            { id: 'process', label: '进程', icon: 'el-icon-cpu' },
+            { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart' }
+        ],
+        desktopStartApps: [
+            { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+            { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
+            { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
+            { id: 'process', label: '进程', icon: 'el-icon-cpu', color: '#e06c75' },
+            { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
+            { id: 'settings', label: 'AI 设置', icon: 'el-icon-magic-stick', color: '#7c4dff' },
+            { id: 'connect', label: '连接管理', icon: 'el-icon-monitor', color: '#2f8fce' }
+        ],
+        desktop: {
+            visible: false,
+            tabKey: '',
+            path: '',
+            pathInput: '',
+            pathEditing: false,
+            entries: [],
+            loading: false,
+            error: '',
+            history: [],
+            viewMode: loadDesktopView(),
+            sortBy: 'name',
+            sortDir: 'asc',
+            keyword: '',
+            selected: [],
+            lastSelected: '',
+            menu: { visible: false, x: 0, y: 0, target: null },
+            propsVisible: false,
+            props: null,
+            dragNames: [],
+            dropTarget: '',
+            fileDragOver: false,
+            startOpen: false,
+            startSearch: '',
+            startSearching: false,
+            startSearched: false,
+            startResults: [],
+            startError: '',
+            clockNow: Date.now(),
+            pendingSelect: '',
+            pendingOpen: false
+        },
         connectDialogVisible: false,
         connFilter: 'all',
         connKeyword: '',
@@ -302,6 +368,20 @@ new Vue({
             if (this.sysInfoVisible) {
                 this.refreshSysInfoTimer(v);
             }
+        },
+        'desktop.startSearch': function () {
+            // 关键字变化后旧的递归搜索结果立即失效
+            this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
+            this.desktop.startSearching = false;
+            this.desktop.startSearched = false;
+            this.desktop.startResults = [];
+            this.desktop.startError = '';
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopStartBody) {
+                    self.$refs.desktopStartBody.scrollTop = 0;
+                }
+            });
         }
     },
     computed: {
@@ -317,6 +397,147 @@ new Vue({
         },
         activeTab: function () {
             return this.tabs.find(function (t) { return t.key === this.activeKey; }, this) || null;
+        },
+        /* ---------- AI 可视化桌面 ---------- */
+        desktopTab: function () {
+            var self = this;
+            return this.tabs.find(function (t) { return t.key === self.desktop.tabKey; }, this)
+                || this.activeTab || null;
+        },
+        desktopAiDir: function () {
+            var t = this.desktopTab;
+            if (!t) {
+                return '';
+            }
+            var conv = this.aiActiveConv(t);
+            return (conv && conv.cwd) || '';
+        },
+        desktopHomeDir: function () {
+            var t = this.desktopTab;
+            return t && t.sftpHome ? t.sftpHome : '';
+        },
+        desktopQuickDirs: function () {
+            return [
+                { label: 'home', path: '/home' },
+                { label: 'tmp', path: '/tmp' },
+                { label: '日志', path: '/var/log' },
+                { label: '配置', path: '/etc' },
+                { label: '应用', path: '/opt' }
+            ];
+        },
+        desktopCrumbs: function () {
+            var p = this.desktop.path;
+            if (!p) {
+                return [];
+            }
+            var out = [{ name: '/', path: '/' }];
+            var segs = p.split('/').filter(function (s) { return !!s; });
+            var acc = '';
+            segs.forEach(function (s) {
+                acc += '/' + s;
+                out.push({ name: s, path: acc });
+            });
+            return out;
+        },
+        isDesktopGrid: function () {
+            return this.desktop.viewMode !== 'list';
+        },
+        desktopShownEntries: function () {
+            var kw = (this.desktop.keyword || '').trim().toLowerCase();
+            var rows = (this.desktop.entries || []).filter(function (r) {
+                return !kw || String(r.name).toLowerCase().indexOf(kw) >= 0;
+            });
+            var by = this.desktop.sortBy;
+            var dir = this.desktop.sortDir === 'desc' ? -1 : 1;
+            rows.sort(function (a, b) {
+                if (a.dir !== b.dir) {
+                    return a.dir ? -1 : 1;
+                }
+                var v;
+                if (by === 'size') {
+                    v = (a.size || 0) - (b.size || 0);
+                } else if (by === 'mtime') {
+                    v = (a.mtime || 0) - (b.mtime || 0);
+                } else {
+                    v = String(a.name).localeCompare(String(b.name), 'zh-CN', {
+                        numeric: true,
+                        sensitivity: 'base'
+                    });
+                }
+                return v * dir;
+            });
+            return rows;
+        },
+        desktopSortLabel: function () {
+            var map = { name: '名称', size: '大小', mtime: '修改时间' };
+            return map[this.desktop.sortBy] + (this.desktop.sortDir === 'asc' ? ' ↑' : ' ↓');
+        },
+        desktopMenuMulti: function () {
+            return this.desktop.selected.length > 1;
+        },
+        desktopMenuHasFile: function () {
+            return this.desktopSelectedRows().some(function (r) { return !r.dir; });
+        },
+        desktopMenuTitle: function () {
+            if (this.desktopMenuMulti) {
+                return '已选择 ' + this.desktop.selected.length + ' 项';
+            }
+            var r = this.desktop.menu.target;
+            return r ? (r.dir ? '文件夹 · ' + r.name : '文件 · ' + r.name) : '当前目录';
+        },
+        desktopStartQuery: function () {
+            return (this.desktop.startSearch || '').trim();
+        },
+        desktopStartAppMatches: function () {
+            var q = this.desktopStartQuery.toLowerCase();
+            if (!q) {
+                return [];
+            }
+            return this.desktopStartApps.filter(function (a) {
+                return a.label.toLowerCase().indexOf(q) >= 0 || a.id.indexOf(q) >= 0;
+            });
+        },
+        desktopStartEntryMatches: function () {
+            var q = this.desktopStartQuery.toLowerCase();
+            if (!q) {
+                return [];
+            }
+            return (this.desktop.entries || []).filter(function (r) {
+                return String(r.name).toLowerCase().indexOf(q) >= 0;
+            }).slice(0, 8);
+        },
+        desktopStartPlaces: function () {
+            var out = [];
+            var seen = {};
+            var add = function (label, path, icon) {
+                if (!path || seen[path]) {
+                    return;
+                }
+                seen[path] = true;
+                out.push({ label: label, path: path, icon: icon });
+            };
+            add('AI 当前目录', this.desktopAiDir, 'el-icon-cpu');
+            add('主目录', this.desktopHomeDir, 'el-icon-user');
+            add('根目录', '/', 'el-icon-office-building');
+            (this.commonDirs || []).forEach(function (d) {
+                add(d.path, d.path, 'el-icon-star-off');
+            });
+            return out.slice(0, 8);
+        },
+        desktopClockTime: function () {
+            var d = new Date(this.desktop.clockNow);
+            var p = function (x) { return (x < 10 ? '0' : '') + x; };
+            return p(d.getHours()) + ':' + p(d.getMinutes());
+        },
+        desktopClockDate: function () {
+            var d = new Date(this.desktop.clockNow);
+            return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
+        },
+        desktopClockFull: function () {
+            var d = new Date(this.desktop.clockNow);
+            var p = function (x) { return (x < 10 ? '0' : '') + x; };
+            return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 '
+                + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         },
         filteredProcRows: function () {
             var t = this.activeTab;
@@ -1281,6 +1502,7 @@ new Vue({
                     return;
                 }
                 self.aiFillCard(conv, m, r);
+                self.onAiDesktopMaybeRefresh(t, conv);
                 conv.msgs.push(m);
                 conv.updatedAt = Date.now();
                 self.saveConv(t, conv);
@@ -1334,6 +1556,7 @@ new Vue({
                     return;
                 }
                 self.aiFillCard(conv, m, r || {});
+                self.onAiDesktopMaybeRefresh(t, conv);
                 conv.updatedAt = Date.now();
                 self.saveConv(t, conv);
                 if (t.chatStop) {
@@ -1442,6 +1665,1208 @@ new Vue({
                 }
             });
         },
+
+        /* ---------- AI 可视化桌面（Windows 资源管理器式文件页） ---------- */
+        openAiDesktop: function () {
+            var t = this.activeTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var conv = this.aiActiveConv(t);
+            var p = (conv && conv.cwd) || t.termCwd || t.sftpPath || t.sftpHome || '/';
+            this.desktop.tabKey = t.key;
+            this.desktop.visible = true;
+            this.desktop.history = [];
+            this.desktop.selected = [];
+            this.desktop.lastSelected = '';
+            this.desktop.keyword = '';
+            this.desktop.error = '';
+            this.desktop.pathEditing = false;
+            this.desktop.menu.visible = false;
+            this.desktop.dragNames = [];
+            this.desktop.dropTarget = '';
+            this.desktop.fileDragOver = false;
+            this.desktop.startOpen = false;
+            this.desktop.startSearch = '';
+            this.desktop.startResults = [];
+            this.desktop.startSearched = false;
+            this.desktop.startError = '';
+            this.desktop.startSearching = false;
+            this.desktop.pendingSelect = '';
+            this.desktop.pendingOpen = false;
+            this.loadDesktopDir(p);
+            this.startDesktopClock();
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+        },
+        closeAiDesktop: function () {
+            this.stopDesktopDragScroll();
+            this.stopDesktopClock();
+            this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
+            this.desktop.visible = false;
+            this.desktop.menu.visible = false;
+            this.desktop.pathEditing = false;
+            this.desktop.dragNames = [];
+            this.desktop.dropTarget = '';
+            this.desktop.fileDragOver = false;
+            this.desktop.startOpen = false;
+            this.desktop.startSearch = '';
+            this.desktop.startResults = [];
+            this.desktop.startSearched = false;
+            this.desktop.startError = '';
+            this.desktop.startSearching = false;
+            this.desktop.pendingSelect = '';
+            this.desktop.pendingOpen = false;
+            var self = this;
+            this.$nextTick(function () {
+                var t = self.activeTab;
+                if (t && t.term) {
+                    try { t.term.focus(); } catch (e) { /* ignore */ }
+                }
+                // 桌面里可能新建 / 删除 / 移动过文件，返回时刷新 SFTP 面板
+                if (t && t.sessionId && t.sftpPath) {
+                    self.loadDir(t.sftpPath, t);
+                }
+            });
+        },
+        startDesktopClock: function () {
+            this.stopDesktopClock();
+            this.desktop.clockNow = Date.now();
+            var self = this;
+            this._deskClockTimer = setInterval(function () {
+                self.desktop.clockNow = Date.now();
+            }, 1000);
+        },
+        stopDesktopClock: function () {
+            if (this._deskClockTimer) {
+                clearInterval(this._deskClockTimer);
+                this._deskClockTimer = null;
+            }
+        },
+        normalizeDesktopPath: function (path) {
+            var p = (path == null ? '' : String(path)).trim();
+            var home = this.desktopHomeDir;
+            if (!p) {
+                p = this.desktop.path || home || '/';
+            } else if (p === '~') {
+                p = home || '/';
+            } else if (p.indexOf('~/') === 0) {
+                p = this.pathJoin(home || '/', p.slice(2));
+            } else if (p.charAt(0) !== '/') {
+                p = this.pathJoin(this.desktop.path || home || '/', p);
+            }
+            p = p.replace(/\/{2,}/g, '/');
+            while (p.length > 1 && p.charAt(p.length - 1) === '/') {
+                p = p.slice(0, -1);
+            }
+            return p;
+        },
+        loadDesktopDir: function (path, nav) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            var target = this.normalizeDesktopPath(path);
+            var prevPath = this.desktop.path;
+            var seq = (this._deskLoadSeq || 0) + 1;
+            this._deskLoadSeq = seq;
+            this.desktop.loading = true;
+            this.desktop.error = '';
+            this.desktop.pathEditing = false;
+            http.get('/api/sftp/list', { params: { sessionId: t.sessionId, path: target } }).then(function (list) {
+                if (seq !== self._deskLoadSeq) {
+                    return;
+                }
+                if (nav !== 'back' && prevPath && target !== prevPath
+                        && self.desktop.history[self.desktop.history.length - 1] !== prevPath) {
+                    self.desktop.history.push(prevPath);
+                    if (self.desktop.history.length > 50) {
+                        self.desktop.history.shift();
+                    }
+                }
+                if (target !== prevPath) {
+                    self.desktop.selected = [];
+                    self.desktop.lastSelected = '';
+                } else {
+                    // 刷新后保留仍然存在的选中项
+                    var names = (list || []).map(function (r) { return r.name; });
+                    self.desktop.selected = self.desktop.selected.filter(function (n) {
+                        return names.indexOf(n) >= 0;
+                    });
+                }
+                self.desktop.entries = list || [];
+                self.desktop.path = target;
+                self.desktop.pathInput = target;
+                self.desktop.loading = false;
+                var pendingName = self.desktop.pendingSelect;
+                var pendingOpen = self.desktop.pendingOpen;
+                self.desktop.pendingSelect = '';
+                self.desktop.pendingOpen = false;
+                var pendingHit = null;
+                if (pendingName) {
+                    pendingHit = (list || []).find(function (r) { return r.name === pendingName; });
+                    if (pendingHit) {
+                        self.desktop.selected = [pendingName];
+                        self.desktop.lastSelected = pendingName;
+                    }
+                }
+                if (pendingHit) {
+                    self.scrollDesktopEntry(pendingName);
+                    if (pendingOpen) {
+                        self.desktopOpenEntry(pendingHit);
+                    }
+                } else {
+                    self.$nextTick(function () {
+                        if (self.$refs.deskFiles) {
+                            self.$refs.deskFiles.scrollTop = 0;
+                        }
+                    });
+                }
+            }).catch(function (e) {
+                if (seq !== self._deskLoadSeq) {
+                    return;
+                }
+                if (nav === 'back' && self.desktop.history[self.desktop.history.length - 1] === target) {
+                    self.desktop.history.push(target);
+                }
+                if (!self.desktop.path) {
+                    self.desktop.path = target;
+                    self.desktop.pathInput = target;
+                }
+                self.desktop.pendingSelect = '';
+                self.desktop.pendingOpen = false;
+                self.desktop.error = '无法读取目录：' + target
+                    + (e && e.message ? '（' + e.message + '）' : '（路径不存在或无权限）');
+                self.desktop.loading = false;
+            });
+        },
+        desktopGo: function (path) {
+            var p = this.normalizeDesktopPath(path);
+            if (!p) {
+                return;
+            }
+            if (p === this.desktop.path && !this.desktop.error) {
+                return;
+            }
+            this.loadDesktopDir(p);
+        },
+        desktopRefresh: function () {
+            if (!this.desktop.path) {
+                return;
+            }
+            this.loadDesktopDir(this.desktop.path, 'refresh');
+        },
+        desktopGoBack: function () {
+            if (!this.desktop.history.length) {
+                return;
+            }
+            var p = this.desktop.history.pop();
+            this.loadDesktopDir(p, 'back');
+        },
+        desktopUp: function () {
+            var p = this.desktop.path || '/';
+            if (p === '/') {
+                return;
+            }
+            var idx = p.lastIndexOf('/');
+            this.loadDesktopDir(idx <= 0 ? '/' : p.substring(0, idx));
+        },
+        desktopGoHome: function () {
+            this.loadDesktopDir(this.desktopHomeDir || '/');
+        },
+        startDesktopPathEdit: function () {
+            this.desktop.pathInput = this.desktop.path;
+            this.desktop.pathEditing = true;
+            var self = this;
+            this.$nextTick(function () {
+                var r = self.$refs.deskPathInput;
+                if (r) {
+                    r.focus();
+                    if (r.select) {
+                        r.select();
+                    }
+                }
+            });
+        },
+        commitDesktopPathEdit: function () {
+            if (!this.desktop.pathEditing) {
+                return;
+            }
+            this.desktop.pathEditing = false;
+            var p = this.normalizeDesktopPath(this.desktop.pathInput);
+            if (!p) {
+                return;
+            }
+            if (p === this.desktop.path) {
+                this.desktopRefresh();
+            } else {
+                this.loadDesktopDir(p);
+            }
+        },
+        setDesktopView: function (v) {
+            this.desktop.viewMode = v;
+            try { localStorage.setItem('deepshell.desktopView', v); } catch (e) { /* ignore */ }
+        },
+        desktopSortBy: function (field) {
+            if (this.desktop.sortBy === field) {
+                this.desktop.sortDir = this.desktop.sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.desktop.sortBy = field;
+                this.desktop.sortDir = field === 'name' ? 'asc' : 'desc';
+            }
+        },
+        desktopSortCommand: function (cmd) {
+            if (cmd === 'name' || cmd === 'size' || cmd === 'mtime') {
+                this.desktopSortBy(cmd);
+            }
+        },
+        desktopSortIcon: function (field) {
+            if (this.desktop.sortBy !== field) {
+                return '';
+            }
+            return this.desktop.sortDir === 'asc' ? 'el-icon-top' : 'el-icon-bottom';
+        },
+        desktopClearSelection: function () {
+            this.desktop.selected = [];
+            this.desktop.lastSelected = '';
+        },
+        onDesktopFilesClick: function (ev) {
+            var el = ev && ev.target;
+            if (el && el.closest && (el.closest('.dsk-item') || el.closest('.dsk-row')
+                    || el.closest('.dsk-list-head'))) {
+                return;
+            }
+            this.desktopClearSelection();
+        },
+        scrollDesktopEntry: function (name) {
+            this.$nextTick(function () {
+                var els = document.querySelectorAll('.dsk-item, .dsk-row');
+                for (var i = 0; i < els.length; i++) {
+                    if (els[i].getAttribute('data-name') === name) {
+                        try {
+                            els[i].scrollIntoView({ block: 'nearest' });
+                        } catch (e) { /* ignore */ }
+                        break;
+                    }
+                }
+            });
+        },
+        isDesktopSelected: function (row) {
+            return this.desktop.selected.indexOf(row.name) >= 0;
+        },
+        isDesktopDragging: function (row) {
+            return this.desktop.dragNames.indexOf(row.name) >= 0;
+        },
+        desktopSelect: function (row, ev) {
+            var rows = this.desktopShownEntries;
+            var sel = this.desktop.selected.slice();
+            if (ev && ev.shiftKey && this.desktop.lastSelected) {
+                var a = -1;
+                var b = -1;
+                rows.forEach(function (r, i) {
+                    if (r.name === this.desktop.lastSelected) {
+                        a = i;
+                    }
+                    if (r.name === row.name) {
+                        b = i;
+                    }
+                }, this);
+                if (a >= 0 && b >= 0) {
+                    var range = rows.slice(Math.min(a, b), Math.max(a, b) + 1).map(function (r) {
+                        return r.name;
+                    });
+                    if (ev.ctrlKey || ev.metaKey) {
+                        range.forEach(function (n) {
+                            if (sel.indexOf(n) < 0) {
+                                sel.push(n);
+                            }
+                        });
+                    } else {
+                        sel = range;
+                    }
+                }
+            } else if (ev && (ev.ctrlKey || ev.metaKey)) {
+                var i = sel.indexOf(row.name);
+                if (i >= 0) {
+                    sel.splice(i, 1);
+                } else {
+                    sel.push(row.name);
+                }
+            } else {
+                sel = [row.name];
+            }
+            this.desktop.selected = sel;
+            this.desktop.lastSelected = row.name;
+            this.desktop.menu.visible = false;
+        },
+        desktopSelectAll: function () {
+            this.desktop.selected = this.desktopShownEntries.map(function (r) { return r.name; });
+        },
+        desktopSelectedRows: function () {
+            var names = this.desktop.selected;
+            return (this.desktop.entries || []).filter(function (r) {
+                return names.indexOf(r.name) >= 0;
+            });
+        },
+        desktopTargetRows: function () {
+            var rows = this.desktopSelectedRows();
+            if (rows.length) {
+                return rows;
+            }
+            var target = this.desktop.menu.target;
+            return target ? [target] : [];
+        },
+        desktopOpenEntry: function (row) {
+            if (!row) {
+                return;
+            }
+            if (row.dir) {
+                this.desktopGo(this.pathJoin(this.desktop.path, row.name));
+            } else {
+                this.desktopOpenEdit(row);
+            }
+        },
+        desktopEntryPath: function (row) {
+            return this.pathJoin(this.desktop.path, row.name);
+        },
+        desktopEntryContextMenu: function (ev, row) {
+            this.desktop.startOpen = false;
+            if (!this.isDesktopSelected(row)) {
+                this.desktop.selected = [row.name];
+                this.desktop.lastSelected = row.name;
+            }
+            this.openDesktopMenu(ev, row);
+        },
+        desktopBlankContextMenu: function (ev) {
+            this.desktop.startOpen = false;
+            this.desktop.selected = [];
+            this.desktop.lastSelected = '';
+            this.openDesktopMenu(ev, null);
+        },
+        openDesktopMenu: function (ev, target) {
+            var self = this;
+            var x = ev.clientX;
+            var y = ev.clientY;
+            this.desktop.menu = {
+                visible: true,
+                x: Math.max(8, Math.min(x, window.innerWidth - 232)),
+                y: Math.max(8, Math.min(y, window.innerHeight - 320)),
+                target: target
+            };
+            this.$nextTick(function () {
+                var el = self.$refs.deskMenu;
+                if (!el || !self.desktop.menu.visible) {
+                    return;
+                }
+                var w = el.offsetWidth || 224;
+                var h = el.offsetHeight || 320;
+                self.desktop.menu.x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+                self.desktop.menu.y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+            });
+        },
+        onDesktopSurfaceClick: function () {
+            if (this.desktop.menu.visible) {
+                this.desktop.menu.visible = false;
+            }
+            if (this.desktop.startOpen) {
+                this.desktop.startOpen = false;
+            }
+        },
+        desktopMenuAction: function (action) {
+            var target = this.desktop.menu.target;
+            var rows = this.desktopTargetRows();
+            this.desktop.menu.visible = false;
+            var self = this;
+            if (action === 'open') {
+                this.desktopOpenEntry(target || rows[0]);
+            } else if (action === 'edit') {
+                if (target && !target.dir) {
+                    this.desktopOpenEdit(target);
+                }
+            } else if (action === 'vscode') {
+                if (target && !target.dir) {
+                    this.openVscodeEdit(this.desktopTab, this.desktopEntryPath(target));
+                }
+            } else if (action === 'download') {
+                this.desktopDownloadRows(rows);
+            } else if (action === 'copyPath') {
+                this.copyText(rows.map(function (r) {
+                    return self.desktopEntryPath(r);
+                }).join('\n'));
+            } else if (action === 'rename') {
+                if (target) {
+                    this.desktopRename(target);
+                }
+            } else if (action === 'delete') {
+                this.desktopDeleteRows(rows);
+            } else if (action === 'props') {
+                if (target) {
+                    this.desktopShowProps(target);
+                }
+            } else if (action === 'terminal') {
+                this.desktopOpenTerminal(target || rows[0]);
+            } else if (action === 'terminalHere') {
+                this.desktopOpenTerminal(null);
+            } else if (action === 'copyCurrentPath') {
+                this.copyText(this.desktop.path);
+            } else if (action === 'newFolder') {
+                this.desktopNewFolder();
+            } else if (action === 'newFile') {
+                this.desktopNewFile();
+            } else if (action === 'upload') {
+                this.pickDesktopUpload();
+            } else if (action === 'refresh') {
+                this.desktopRefresh();
+            } else if (action === 'sortName') {
+                this.desktopSortBy('name');
+            } else if (action === 'sortSize') {
+                this.desktopSortBy('size');
+            } else if (action === 'sortMtime') {
+                this.desktopSortBy('mtime');
+            }
+        },
+        desktopDownloadRows: function (rows) {
+            var files = (rows || []).filter(function (r) { return !r.dir; });
+            if (!files.length) {
+                ELEMENT.Message.info('文件夹不支持直接下载，请选择文件');
+                return;
+            }
+            var self = this;
+            files.forEach(function (r, i) {
+                setTimeout(function () {
+                    self.desktopDownloadOne(r);
+                }, i * 300);
+            });
+        },
+        desktopDownloadOne: function (row) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var url = '/api/sftp/download?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(this.desktopEntryPath(row));
+            var a = document.createElement('a');
+            a.href = url;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        },
+        desktopDeleteRows: function (rows) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !rows || !rows.length) {
+                return;
+            }
+            var self = this;
+            var label = rows.length === 1
+                ? ('「' + rows[0].name + '」' + (rows[0].dir ? '及其全部内容' : ''))
+                : (rows.length + ' 个项目');
+            this.$confirm('确定删除' + label + '？删除后不可恢复。', '危险操作', {
+                type: 'warning',
+                confirmButtonText: '删除',
+                cancelButtonText: '取消'
+            }).then(function () {
+                var chain = Promise.resolve();
+                var ok = 0;
+                var fail = 0;
+                rows.forEach(function (r) {
+                    chain = chain.then(function () {
+                        return http.post('/api/sftp/delete', {
+                            sessionId: t.sessionId,
+                            path: self.desktopEntryPath(r)
+                        }).then(function () {
+                            ok++;
+                        }).catch(function () {
+                            fail++;
+                        });
+                    });
+                });
+                return chain.then(function () {
+                    if (fail === 0) {
+                        ELEMENT.Message.success('已删除 ' + ok + ' 项');
+                    } else {
+                        ELEMENT.Message.warning('删除完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
+                    }
+                    self.desktopRefresh();
+                    self.desktopClearSelection();
+                });
+            }).catch(function () { /* 取消或失败（已提示） */ });
+        },
+        desktopRename: function (row) {
+            if (!row) {
+                return;
+            }
+            this.renameForm = {
+                path: this.desktopEntryPath(row),
+                newName: row.name,
+                desktop: true
+            };
+            this.renameVisible = true;
+        },
+        desktopShowProps: function (row) {
+            var p = this.desktopEntryPath(row);
+            var idx = p.lastIndexOf('/');
+            this.desktop.props = {
+                name: row.name,
+                path: p,
+                parent: idx <= 0 ? '/' : p.substring(0, idx),
+                dir: !!row.dir,
+                link: !!row.link,
+                size: row.size,
+                mtime: row.mtime,
+                perms: row.perms,
+                kind: this.desktopFileKind(row),
+                ext: this.desktopExtLabel(row),
+                typeText: this.desktopTypeText(row)
+            };
+            this.desktop.propsVisible = true;
+        },
+        desktopFileExt: function (name) {
+            var s = String(name || '');
+            var i = s.lastIndexOf('.');
+            if (i <= 0 || i === s.length - 1) {
+                return '';
+            }
+            return s.substring(i + 1).toLowerCase();
+        },
+        desktopFileKind: function (row) {
+            if (row && row.dir) {
+                return 'folder';
+            }
+            var e = this.desktopFileExt(row && row.name);
+            if (!e) {
+                return 'other';
+            }
+            if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tif', 'tiff', 'avif', 'heic'].indexOf(e) >= 0) {
+                return 'img';
+            }
+            if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'rmvb', 'ts'].indexOf(e) >= 0) {
+                return 'video';
+            }
+            if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'opus'].indexOf(e) >= 0) {
+                return 'audio';
+            }
+            if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz', 'zst', 'jar', 'war'].indexOf(e) >= 0) {
+                return 'archive';
+            }
+            if (['js', 'ts', 'jsx', 'tsx', 'java', 'py', 'go', 'rs', 'c', 'h', 'cpp', 'hpp', 'cs', 'php', 'rb', 'lua', 'sh', 'bash', 'zsh', 'sql', 'html', 'htm', 'css', 'scss', 'less', 'vue', 'json', 'xml', 'yml', 'yaml', 'toml', 'ini', 'conf', 'properties'].indexOf(e) >= 0) {
+                return 'code';
+            }
+            if (['txt', 'log', 'md', 'markdown', 'csv', 'tsv', 'rst'].indexOf(e) >= 0) {
+                return 'text';
+            }
+            if (e === 'pdf') {
+                return 'pdf';
+            }
+            if (['doc', 'docx', 'rtf', 'odt'].indexOf(e) >= 0) {
+                return 'doc';
+            }
+            if (['xls', 'xlsx', 'ods'].indexOf(e) >= 0) {
+                return 'sheet';
+            }
+            if (['ppt', 'pptx', 'odp', 'key'].indexOf(e) >= 0) {
+                return 'slides';
+            }
+            if (['exe', 'msi', 'dll', 'so', 'bin', 'deb', 'rpm', 'apk', 'appimage', 'dmg', 'iso'].indexOf(e) >= 0) {
+                return 'exec';
+            }
+            return 'other';
+        },
+        desktopExtLabel: function (row) {
+            if (row && row.dir) {
+                return '';
+            }
+            var e = this.desktopFileExt(row && row.name);
+            if (!e) {
+                return 'FILE';
+            }
+            var u = e.toUpperCase();
+            return u.length > 5 ? u.slice(0, 5) : u;
+        },
+        desktopTypeText: function (row) {
+            if (row && row.dir) {
+                return row.link ? '文件夹（符号链接）' : '文件夹';
+            }
+            var kindMap = {
+                img: '图片', video: '视频', audio: '音频', archive: '压缩包',
+                code: '源代码', text: '文本文件', pdf: 'PDF 文档', doc: 'Word 文档',
+                sheet: '表格', slides: '演示文稿', exec: '可执行文件 / 安装包', other: '文件'
+            };
+            var e = this.desktopFileExt(row && row.name);
+            var kind = kindMap[this.desktopFileKind(row)] || '文件';
+            return (e ? e.toUpperCase() + ' ' : '') + kind + (row && row.link ? '（符号链接）' : '');
+        },
+        desktopNewFolder: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            this.$prompt('请输入文件夹名称', '新建文件夹', {
+                inputPattern: /^[^/\\]+$/,
+                inputErrorMessage: '名称不合法'
+            }).then(function (result) {
+                var name = (result.value || '').trim();
+                if (!name) {
+                    return null;
+                }
+                return http.post('/api/sftp/mkdir', {
+                    sessionId: t.sessionId,
+                    path: self.pathJoin(self.desktop.path, name)
+                }).then(function () {
+                    ELEMENT.Message.success('已创建文件夹：' + name);
+                    self.desktopRefresh();
+                });
+            }).catch(function () { /* 取消或失败（已提示） */ });
+        },
+        desktopNewFile: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            this.$prompt('请输入文件名（如 notes.txt）', '新建文件', {
+                inputPattern: /^[^/\\]+$/,
+                inputErrorMessage: '文件名不合法'
+            }).then(function (result) {
+                var name = (result.value || '').trim();
+                if (!name) {
+                    return null;
+                }
+                var path = self.pathJoin(self.desktop.path, name);
+                return http.post('/api/sftp/touch', {
+                    sessionId: t.sessionId,
+                    path: path
+                }).then(function () {
+                    ELEMENT.Message.success('已创建 ' + name);
+                    self.desktopRefresh();
+                    self.openRemoteEdit(t, path);
+                });
+            }).catch(function () { /* 取消或失败（已提示） */ });
+        },
+        desktopOpenEdit: function (row) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !row) {
+                return;
+            }
+            this.openRemoteEdit(t, this.desktopEntryPath(row));
+        },
+        desktopOpenTerminal: function (row) {
+            var t = this.desktopTab;
+            if (!t || !t.ws || t.ws.readyState !== 1 || t.status !== 'open') {
+                ELEMENT.Message.warning('当前终端未连接，无法在终端中打开');
+                return;
+            }
+            var dir = this.desktop.path;
+            if (row) {
+                dir = row.dir ? this.desktopEntryPath(row) : this.desktop.path;
+            }
+            var self = this;
+            this.closeAiDesktop();
+            this.$nextTick(function () {
+                self.cdIntoDir({ path: dir });
+            });
+        },
+        pickDesktopUpload: function () {
+            var el = this.$refs.desktopUpload;
+            if (el) {
+                el.value = '';
+                el.click();
+            }
+        },
+        onDesktopUploadPick: function (ev) {
+            var input = ev.target;
+            var files = [];
+            for (var i = 0; input.files && i < input.files.length; i++) {
+                files.push(input.files[i]);
+            }
+            input.value = '';
+            this.desktopUploadFiles(files, this.desktop.path);
+        },
+        desktopUploadFiles: function (files, destDir) {
+            if (!files || !files.length) {
+                return Promise.resolve();
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return Promise.reject(new Error('session not ready'));
+            }
+            var self = this;
+            var dir = destDir || this.desktop.path;
+            var loading = ELEMENT.Message({
+                message: '正在上传 ' + files.length + ' 个文件到 ' + dir + ' …',
+                duration: 0,
+                iconClass: 'el-icon-loading'
+            });
+            var ok = 0;
+            var fail = 0;
+            var chain = Promise.resolve();
+            files.forEach(function (f) {
+                chain = chain.then(function () {
+                    return self.uploadOne(t, dir, f).then(function () {
+                        ok++;
+                    }).catch(function () {
+                        fail++;
+                    });
+                });
+            });
+            return chain.then(function () {
+                loading.close();
+                self.desktop.fileDragOver = false;
+                self._deskDragDepth = 0;
+                if (fail === 0) {
+                    ELEMENT.Message.success(files.length === 1
+                        ? ('文件上传成功：' + files[0].name)
+                        : ('文件上传成功：' + files.length + ' 个文件 → ' + dir));
+                } else if (ok > 0) {
+                    ELEMENT.Message.warning('上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个');
+                } else {
+                    ELEMENT.Message.error('上传失败');
+                }
+                self.desktopRefresh();
+            });
+        },
+        desktopAutoScroll: function (ev) {
+            var el = this.$refs.deskFiles;
+            if (!el || !ev) {
+                return;
+            }
+            var r = el.getBoundingClientRect();
+            var edge = 46;
+            var sp = 0;
+            if (ev.clientY - r.top < edge) {
+                sp = -Math.ceil((edge - (ev.clientY - r.top)) / 3);
+            } else if (r.bottom - ev.clientY < edge) {
+                sp = Math.ceil((edge - (r.bottom - ev.clientY)) / 3);
+            }
+            this._deskScrollSpeed = Math.max(-18, Math.min(18, sp));
+            if (sp && !this._deskScrollTimer) {
+                var self = this;
+                this._deskScrollTimer = setInterval(function () {
+                    var sc = self.$refs.deskFiles;
+                    if (!sc || !self._deskScrollSpeed) {
+                        clearInterval(self._deskScrollTimer);
+                        self._deskScrollTimer = null;
+                        return;
+                    }
+                    sc.scrollTop += self._deskScrollSpeed;
+                }, 16);
+            }
+        },
+        stopDesktopDragScroll: function () {
+            this._deskScrollSpeed = 0;
+            if (this._deskScrollTimer) {
+                clearInterval(this._deskScrollTimer);
+                this._deskScrollTimer = null;
+            }
+        },
+        onDesktopDragStart: function (ev, row) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ev.preventDefault();
+                return;
+            }
+            if (!this.isDesktopSelected(row)) {
+                this.desktop.selected = [row.name];
+                this.desktop.lastSelected = row.name;
+            }
+            var rows = this.desktopTargetRows();
+            if (!rows.length) {
+                rows = [row];
+            }
+            var self = this;
+            var paths = rows.map(function (r) { return self.desktopEntryPath(r); });
+            this.desktop.dragNames = rows.map(function (r) { return r.name; });
+            this.desktop.menu.visible = false;
+            if (ev.dataTransfer) {
+                ev.dataTransfer.effectAllowed = 'move';
+                try {
+                    ev.dataTransfer.setData('text/plain', paths[0] || '');
+                    ev.dataTransfer.setData('application/x-deepshell-paths', JSON.stringify(paths));
+                } catch (e) { /* ignore */ }
+            }
+        },
+        onDesktopDragEnd: function () {
+            this.desktop.dragNames = [];
+            this.desktop.dropTarget = '';
+            this.stopDesktopDragScroll();
+        },
+        onDesktopDragOver: function (ev, row) {
+            var extFiles = this.hasFileDrag(ev);
+            if (extFiles) {
+                if (ev.dataTransfer) {
+                    ev.dataTransfer.dropEffect = 'copy';
+                }
+                this.desktop.dropTarget = row && row.dir ? row.name : '';
+                this.desktop.fileDragOver = true;
+                this.desktopAutoScroll(ev);
+                return;
+            }
+            if (!this.desktop.dragNames.length) {
+                return;
+            }
+            if (!row || !row.dir || this.desktop.dragNames.indexOf(row.name) >= 0) {
+                this.desktop.dropTarget = '';
+                return;
+            }
+            var destPath = this.desktopEntryPath(row);
+            var self = this;
+            var invalid = this.desktop.dragNames.some(function (name) {
+                var src = self.pathJoin(self.desktop.path, name);
+                return destPath === src || destPath.indexOf(src + '/') === 0;
+            });
+            this.desktop.dropTarget = invalid ? '' : row.name;
+            this.desktopAutoScroll(ev);
+        },
+        onDesktopDragLeave: function (row) {
+            if (row && this.desktop.dropTarget === row.name) {
+                this.desktop.dropTarget = '';
+            }
+        },
+        onDesktopDrop: function (ev, row) {
+            var files = [];
+            if (ev.dataTransfer && ev.dataTransfer.files) {
+                for (var i = 0; i < ev.dataTransfer.files.length; i++) {
+                    files.push(ev.dataTransfer.files[i]);
+                }
+            }
+            var destDir = row && row.dir ? this.desktopEntryPath(row) : this.desktop.path;
+            this.desktop.dropTarget = '';
+            this.desktop.fileDragOver = false;
+            this._deskDragDepth = 0;
+            this.stopDesktopDragScroll();
+            if (files.length) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.desktop.dragNames = [];
+                this.desktopUploadFiles(files, destDir);
+                return;
+            }
+            if (!this.desktop.dragNames.length) {
+                return;
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
+            var self = this;
+            var sources = this.desktop.dragNames.map(function (name) {
+                return self.pathJoin(self.desktop.path, name);
+            });
+            this.desktop.dragNames = [];
+            this.desktopMoveTo(sources, destDir);
+        },
+        onDesktopSurfaceDragOver: function (ev) {
+            if (this.hasFileDrag(ev)) {
+                ev.preventDefault();
+                this.desktop.dropTarget = '';
+                this.desktopAutoScroll(ev);
+            }
+        },
+        onDesktopSurfaceDrop: function (ev) {
+            var files = [];
+            if (ev.dataTransfer && ev.dataTransfer.files) {
+                for (var i = 0; i < ev.dataTransfer.files.length; i++) {
+                    files.push(ev.dataTransfer.files[i]);
+                }
+            }
+            this.desktop.dropTarget = '';
+            this.desktop.fileDragOver = false;
+            this._deskDragDepth = 0;
+            this.stopDesktopDragScroll();
+            if (files.length) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.desktopUploadFiles(files, this.desktop.path);
+                return;
+            }
+            if (this.desktop.dragNames.length) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.desktop.dragNames = [];
+            }
+        },
+        onDesktopSurfaceDragLeave: function () {
+            this.desktop.dropTarget = '';
+        },
+        desktopMoveTo: function (sources, destDir) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !sources.length) {
+                return;
+            }
+            var self = this;
+            var dest = this.trimSlash(destDir);
+            var parentSame = sources.every(function (src) {
+                return self.trimSlash(src.substring(0, src.lastIndexOf('/')) || '/') === dest;
+            });
+            if (parentSame) {
+                ELEMENT.Message.info('文件已在该目录中');
+                return;
+            }
+            var invalid = sources.filter(function (src) {
+                return dest === src || dest.indexOf(src + '/') === 0;
+            });
+            if (invalid.length) {
+                ELEMENT.Message.warning('不能把文件夹移动到自身或其子目录');
+                return;
+            }
+            var names = sources.map(function (src) {
+                return src.substring(src.lastIndexOf('/') + 1);
+            });
+            var label = names.length === 1 ? ('「' + names[0] + '」') : (names.length + ' 个项目');
+            this.$confirm(
+                '即将把' + label + '移动到目录：「' + dest + '」，移动后原位置将不再保留。',
+                '确认移动文件',
+                { type: 'warning', confirmButtonText: '确认移动', cancelButtonText: '取消' }
+            ).then(function () {
+                var chain = Promise.resolve();
+                var ok = 0;
+                var fail = 0;
+                sources.forEach(function (src) {
+                    chain = chain.then(function () {
+                        return http.post('/api/sftp/move', {
+                            sessionId: t.sessionId,
+                            path: src,
+                            destDir: dest
+                        }).then(function () {
+                            ok++;
+                        }).catch(function () {
+                            fail++;
+                        });
+                    });
+                });
+                return chain.then(function () {
+                    if (fail === 0) {
+                        ELEMENT.Message.success('已移动 ' + ok + ' 项到 ' + dest);
+                    } else {
+                        ELEMENT.Message.warning('移动完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
+                    }
+                    self.desktopClearSelection();
+                    self.desktopRefresh();
+                });
+            }).catch(function () { /* 取消或失败（已提示） */ });
+        },
+        onDesktopKeydown: function (e) {
+            if (!this.desktop.visible) {
+                return;
+            }
+            var tag = (e.target && e.target.tagName ? e.target.tagName : '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea'
+                || (e.target && e.target.isContentEditable);
+            if (e.key === 'Escape') {
+                if (this.desktop.menu.visible) {
+                    this.desktop.menu.visible = false;
+                    e.preventDefault();
+                } else if (this.desktop.startOpen) {
+                    this.desktop.startOpen = false;
+                    e.preventDefault();
+                } else if (this.desktop.pathEditing) {
+                    this.desktop.pathEditing = false;
+                    e.preventDefault();
+                }
+                return;
+            }
+            if (typing) {
+                return;
+            }
+            var selected = this.desktopSelectedRows();
+            if (e.key === 'F2') {
+                if (selected.length === 1) {
+                    this.desktopRename(selected[0]);
+                    e.preventDefault();
+                }
+            } else if (e.key === 'Delete') {
+                if (selected.length) {
+                    this.desktopDeleteRows(selected);
+                    e.preventDefault();
+                }
+            } else if (e.key === 'Enter') {
+                if (selected.length === 1) {
+                    this.desktopOpenEntry(selected[0]);
+                    e.preventDefault();
+                }
+            } else if (e.key === 'Backspace') {
+                this.desktopUp();
+                e.preventDefault();
+            } else if (e.key === 'F5') {
+                this.desktopRefresh();
+                e.preventDefault();
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+                this.desktopSelectAll();
+                e.preventDefault();
+            }
+        },
+        onAiDesktopMaybeRefresh: function (t, conv) {
+            if (this.desktop.visible && this.desktopTab === t
+                    && conv && conv.cwd && conv.cwd === this.desktop.path) {
+                this.desktopRefresh();
+            }
+        },
+
+        /* ---------- 桌面任务栏 / 开始菜单 ---------- */
+        toggleDesktopStart: function () {
+            if (this.desktop.startOpen) {
+                this.desktop.startOpen = false;
+            } else {
+                this.openDesktopStart();
+            }
+        },
+        openDesktopStart: function () {
+            this.desktop.startOpen = true;
+            this.desktop.menu.visible = false;
+            var self = this;
+            this.$nextTick(function () {
+                var r = self.$refs.desktopStartSearch;
+                if (r) {
+                    r.focus();
+                }
+                if (self.$refs.desktopStartBody) {
+                    self.$refs.desktopStartBody.scrollTop = 0;
+                }
+            });
+        },
+        closeDesktopStart: function () {
+            this.desktop.startOpen = false;
+        },
+        desktopStartGo: function (path) {
+            this.desktop.startOpen = false;
+            this.desktopGo(path);
+        },
+        desktopLaunchApp: function (id) {
+            if (!id || id === 'desktop') {
+                return;
+            }
+            this.desktop.startOpen = false;
+            var self = this;
+            if (id === 'sysinfo') {
+                this.openDesktopSysInfo();
+                return;
+            }
+            if (id === 'settings' || id === 'connect' || id === 'help' || id === 'about') {
+                this.closeAiDesktop();
+                this.$nextTick(function () {
+                    if (id === 'connect') {
+                        self.openConnectDialog();
+                    } else if (id === 'settings') {
+                        self.onMenuCommand('ai');
+                    } else {
+                        self.onMenuCommand(id);
+                    }
+                });
+                return;
+            }
+            this.closeAiDesktop();
+            this.panelVisible = true;
+            this.panelTab = id;
+            if (id === 'ai' || id === 'process' || id === 'disk') {
+                this.ensurePanelWide();
+            }
+            if (id === 'ai') {
+                this.scrollAiChat();
+            }
+            if (id === 'process' && this.activeTab && this.activeTab.sessionId) {
+                this.loadProcesses(this.activeTab);
+            }
+        },
+        openDesktopSysInfo: function () {
+            this.desktop.startOpen = false;
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            this.sysInfoTitle = t.title;
+            this.sysInfoSessionId = t.sessionId;
+            this.sysInfo = null;
+            this.sysInfoError = '';
+            this.sysInfoVisible = true;
+        },
+        desktopSearchServer: function () {
+            var q = this.desktopStartQuery;
+            if (!q) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            var seq = (this._deskSearchSeq || 0) + 1;
+            this._deskSearchSeq = seq;
+            this.desktop.startSearching = true;
+            this.desktop.startSearched = false;
+            this.desktop.startError = '';
+            this.desktop.startResults = [];
+            http.get('/api/files/search', {
+                params: {
+                    sessionId: t.sessionId,
+                    root: this.desktop.path,
+                    keyword: q,
+                    limit: 100
+                }
+            }).then(function (list) {
+                if (seq !== self._deskSearchSeq) {
+                    return;
+                }
+                self.desktop.startResults = list || [];
+                self.desktop.startSearching = false;
+                self.desktop.startSearched = true;
+                self.$nextTick(function () {
+                    var body = self.$refs.desktopStartBody;
+                    if (!body) {
+                        return;
+                    }
+                    var box = body.querySelector('.dsk-start-server-results');
+                    if (box) {
+                        var delta = box.getBoundingClientRect().top - body.getBoundingClientRect().top;
+                        body.scrollTop = Math.max(0, body.scrollTop + delta - 8);
+                    }
+                });
+            }).catch(function (e) {
+                if (seq !== self._deskSearchSeq) {
+                    return;
+                }
+                self.desktop.startSearching = false;
+                self.desktop.startSearched = true;
+                self.desktop.startError = '搜索失败：' + ((e && e.message) || '未知错误');
+            });
+        },
+        desktopOpenLocalSearchResult: function (row) {
+            this.desktop.startOpen = false;
+            this.desktopOpenEntry(row);
+        },
+        desktopOpenSearchResult: function (row) {
+            if (!row) {
+                return;
+            }
+            this.desktop.startOpen = false;
+            if (row.dir) {
+                this.desktop.pendingSelect = '';
+                this.desktop.pendingOpen = false;
+                this.desktopGo(row.path);
+                return;
+            }
+            var p = row.path || '';
+            var idx = p.lastIndexOf('/');
+            var parent = idx <= 0 ? '/' : p.substring(0, idx);
+            var name = idx >= 0 ? p.substring(idx + 1) : p;
+            this.desktop.pendingSelect = name;
+            this.desktop.pendingOpen = true;
+            if (parent === this.desktop.path) {
+                this.desktopRefresh();
+            } else {
+                this.loadDesktopDir(parent);
+            }
+        },
+
         /* ---------- 系统信息（标签右键） ---------- */
         refreshSysInfoTimer: function (on) {
             if (this._sysInfoTimer) {
@@ -1849,6 +3274,9 @@ new Vue({
             });
         },
         closeTab: function (tab) {
+            if (this.desktop.visible && tab.key === this.desktop.tabKey) {
+                this.closeAiDesktop();
+            }
             if (tab.ws) {
                 try { tab.ws.close(); } catch (e) { /* ignore */ }
             }
@@ -2275,6 +3703,11 @@ new Vue({
             if (!this.hasFileDrag(e)) {
                 return;
             }
+            if (this.desktop.visible) {
+                this._deskDragDepth = (this._deskDragDepth || 0) + 1;
+                this.desktop.fileDragOver = true;
+                return;
+            }
             this._dragDepth = (this._dragDepth || 0) + 1;
             this.fileDragOver = true;
         },
@@ -2286,14 +3719,28 @@ new Vue({
             if (e.dataTransfer) {
                 e.dataTransfer.dropEffect = 'copy';
             }
-            this.fileDragOver = true;
+            if (this.desktop.visible) {
+                this.desktop.fileDragOver = true;
+            } else {
+                this.fileDragOver = true;
+            }
         },
         onWindowDragLeave: function (e) {
             if (!this.hasFileDrag(e)) {
                 return;
             }
+            if (this.desktop.visible) {
+                this._deskDragDepth = Math.max(0, (this._deskDragDepth || 1) - 1);
+                if (this._deskDragDepth === 0 || !e.relatedTarget) {
+                    this._deskDragDepth = 0;
+                    this.desktop.fileDragOver = false;
+                    this.stopDesktopDragScroll();
+                }
+                return;
+            }
             this._dragDepth = Math.max(0, (this._dragDepth || 1) - 1);
-            if (this._dragDepth === 0) {
+            if (this._dragDepth === 0 || !e.relatedTarget) {
+                this._dragDepth = 0;
                 this.fileDragOver = false;
             }
         },
@@ -2302,17 +3749,29 @@ new Vue({
                 return;
             }
             e.preventDefault();
-            this._dragDepth = 0;
-            this.fileDragOver = false;
             var files = [];
             var list = e.dataTransfer ? e.dataTransfer.files : null;
             for (var i = 0; list && i < list.length; i++) {
                 files.push(list[i]);
             }
+            this._dragDepth = 0;
+            this._deskDragDepth = 0;
+            this.fileDragOver = false;
+            if (this.desktop.visible) {
+                this.desktop.fileDragOver = false;
+                this.stopDesktopDragScroll();
+                this.desktopUploadFiles(files, this.desktop.path);
+                return;
+            }
+            this.desktop.fileDragOver = false;
             this.handleDroppedFiles(files);
         },
         handleDroppedFiles: function (files) {
             if (!files || !files.length) {
+                return;
+            }
+            if (this.desktop.visible) {
+                this.desktopUploadFiles(files, this.desktop.path);
                 return;
             }
             var t = this.activeTab;
@@ -2378,7 +3837,11 @@ new Vue({
                 .catch(function () { /* 取消或失败 */ });
         },
         openRename: function (row) {
-            this.renameForm = { path: this.pathJoin(this.activeTab.sftpPath, row.name), newName: row.name };
+            this.renameForm = {
+                path: this.pathJoin(this.activeTab.sftpPath, row.name),
+                newName: row.name,
+                desktop: false
+            };
             this.renameVisible = true;
         },
         createFile: function () {
@@ -2415,7 +3878,11 @@ new Vue({
             http.post('/api/sftp/rename', { sessionId: t.sessionId, path: f.path, newName: f.newName.trim() })
                 .then(function () {
                     self.renameVisible = false;
-                    self.loadDir(t.sftpPath, t);
+                    if (f.desktop) {
+                        self.desktopRefresh();
+                    } else {
+                        self.loadDir(t.sftpPath, t);
+                    }
                 })
                 .catch(function () { /* 已提示 */ });
         },
@@ -2443,7 +3910,13 @@ new Vue({
             if (!t || !t.sessionId) {
                 return;
             }
-            var path = this.pathJoin(t.sftpPath, row.name);
+            this.openRemoteEdit(t, this.pathJoin(t.sftpPath, row.name));
+        },
+        /* 通用：在线编辑任意远程文件（SFTP 面板与可视化桌面共用） */
+        openRemoteEdit: function (t, path) {
+            if (!t || !t.sessionId || !path) {
+                return;
+            }
             this.editForm = { path: path, content: '', loading: true, saving: false };
             this.editVisible = true;
             var self = this;
@@ -2467,7 +3940,12 @@ new Vue({
                 .then(function () {
                     ELEMENT.Message.success('已保存到远程');
                     self.editVisible = false;
-                    self.loadDir(t.sftpPath, t);
+                    if (t.sftpPath) {
+                        self.loadDir(t.sftpPath, t);
+                    }
+                    if (self.desktop.visible) {
+                        self.desktopRefresh();
+                    }
                 })
                 .catch(function () { /* 已提示 */ })
                 .then(function () {
@@ -2897,8 +4375,15 @@ new Vue({
             if (!t || !t.sessionId) {
                 return;
             }
+            this.openVscodeEdit(t, this.pathJoin(t.sftpPath, row.name));
+        },
+        /* 通用：下载到本机并用 VSCode 打开（保存后自动同步回服务器） */
+        openVscodeEdit: function (t, path) {
+            if (!t || !t.sessionId || !path) {
+                return;
+            }
             ELEMENT.Message.info('正在下载并用 VSCode 打开…');
-            http.post('/api/sftp/vscode', { sessionId: t.sessionId, path: this.pathJoin(t.sftpPath, row.name) })
+            http.post('/api/sftp/vscode', { sessionId: t.sessionId, path: path })
                 .then(function (r) {
                     ELEMENT.Message.success(r && r.message ? r.message : '已用 VSCode 打开');
                 })
@@ -3548,7 +5033,7 @@ new Vue({
                 var now = Date.now();
                 if (now - self._lastCtrl < 420 && !self._otherSinceCtrl) {
                     self._lastCtrl = 0;
-                    if (self.hotkeySettings.doubleCtrl) {
+                    if (self.hotkeySettings.doubleCtrl && !self.desktop.visible) {
                         self.toggleCmdBar();
                     }
                 } else {
@@ -3569,6 +5054,9 @@ new Vue({
             }
             if (self.folderMenu.visible) {
                 self.folderMenu.visible = false;
+            }
+            if (self.desktop.menu.visible) {
+                self.desktop.menu.visible = false;
             }
         });
         document.addEventListener('contextmenu', function (e) {
@@ -3594,6 +5082,10 @@ new Vue({
                 }
             }
         });
+        // 可视化桌面快捷键：F2 重命名 / Delete 删除 / Enter 打开 / Backspace 上级 / F5 刷新 / Ctrl+A 全选
+        document.addEventListener('keydown', function (e) {
+            self.onDesktopKeydown(e);
+        });
         window.addEventListener('blur', function () {
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
@@ -3603,6 +5095,9 @@ new Vue({
             }
             if (self.folderMenu.visible) {
                 self.folderMenu.visible = false;
+            }
+            if (self.desktop.menu.visible) {
+                self.desktop.menu.visible = false;
             }
         });
         setInterval(function () {

@@ -64,8 +64,25 @@ public class SftpService {
                     continue;
                 }
                 SftpATTRS a = e.getAttrs();
-                out.add(new SftpEntry(name, a.isDir(), a.isLink(), a.getSize(),
-                        a.getMTime() * 1000L, a.getPermissionsString()));
+                boolean link = a.isLink();
+                boolean dir = a.isDir();
+                long mtime = a.getMTime() * 1000L;
+                if (link && !dir) {
+                    // ls 返回的是链接自身属性（lstat）；跟随链接判断目标是否为目录，
+                    // 否则指向目录的符号链接会被当成文件，前端无法进入
+                    try {
+                        SftpATTRS target = c.stat(join(p, name));
+                        if (target.isDir()) {
+                            dir = true;
+                            mtime = target.getMTime() * 1000L;
+                        }
+                    } catch (SftpException ex) {
+                        // 失效链接或无权限访问目标：按普通文件展示，仍可重命名/删除
+                        log.debug("无法解析符号链接 {}: {}", join(p, name), ex.getMessage());
+                    }
+                }
+                out.add(new SftpEntry(name, dir, link, a.getSize(),
+                        mtime, a.getPermissionsString()));
             }
             out.sort((x, y) -> x.isDir() == y.isDir()
                     ? x.getName().compareToIgnoreCase(y.getName())
