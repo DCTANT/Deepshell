@@ -42,6 +42,8 @@ deepshell:
     password: deepshell
     # Token 默认有效期（小时），1 - 720；页面持续使用时会自动续期
     token-expire-hours: 6
+    # 同一 IP 连续登录失败达到该次数后，后续登录必须输入图形验证码；0 表示关闭
+    captcha-fail-times: 2
   # VSCode 命令行（默认 code；未加入 PATH 时可配完整路径，如 C:\Program Files\Microsoft VS Code\bin\code.cmd）
   vscode-command: code
   # 启动完成后自动打开浏览器访问首页（双击 jar 启动的默认体验；-Ddeepshell.open-browser=false 关闭；

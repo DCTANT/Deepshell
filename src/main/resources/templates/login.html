@@ -125,6 +125,35 @@
             box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.14);
         }
 
+        .captcha-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            animation: rise 0.22s ease-out both;
+        }
+
+        .captcha-row input {
+            flex: 1;
+            width: auto;
+            min-width: 0;
+        }
+
+        .captcha-row img {
+            display: block;
+            height: 43px;
+            width: auto;
+            max-width: 46%;
+            border: 1px solid rgba(255, 255, 255, 0.11);
+            border-radius: 10px;
+            background: rgba(7, 10, 15, 0.62);
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+
+        .captcha-row img:hover { opacity: 0.88; }
+        .captcha-row img.refreshing { opacity: 0.45; }
+        .captcha-row img:not([src]) { min-width: 118px; }
+
         .error {
             min-height: 20px;
             margin: 2px 0 12px;
@@ -224,6 +253,15 @@
             <input id="password" name="password" type="password" autocomplete="current-password"
                    placeholder="请输入密码" required>
         </div>
+        <div id="captchaField" class="field" hidden>
+            <label for="captchaCode">验证码</label>
+            <div class="captcha-row">
+                <input id="captchaCode" name="captchaCode" type="text" autocomplete="off"
+                       autocapitalize="off" spellcheck="false" maxlength="6"
+                       placeholder="请输入验证码">
+                <img id="captchaImg" alt="验证码" title="点击刷新验证码">
+            </div>
+        </div>
         <div id="error" class="error" role="alert" aria-live="polite"></div>
         <button id="submit" class="submit" type="submit">登 录</button>
     </form>
@@ -242,7 +280,13 @@
     var submit = document.getElementById('submit');
     var userInput = document.getElementById('username');
     var passInput = document.getElementById('password');
+    var captchaField = document.getElementById('captchaField');
+    var captchaImg = document.getElementById('captchaImg');
+    var captchaInput = document.getElementById('captchaCode');
     var submitting = false;
+    var captchaRequired = false;
+    var captchaId = '';
+    var captchaLoading = false;
 
     function target() {
         var raw;
@@ -270,6 +314,73 @@
     function showError(message) {
         errorBox.textContent = message || '';
     }
+
+    // 同一 IP 密码连续错误达到阈值后，后端会要求验证码
+    function setCaptchaRequired(required, message, forceRefresh) {
+        var changed = captchaRequired !== !!required;
+        captchaRequired = !!required;
+        captchaField.hidden = !captchaRequired;
+        if (!captchaRequired) {
+            captchaId = '';
+            captchaInput.value = '';
+            return;
+        }
+        if (changed || forceRefresh || !captchaImg.getAttribute('src')) {
+            loadCaptcha();
+        }
+        if (message) {
+            showError(message);
+        }
+    }
+
+    function loadCaptcha() {
+        if (captchaLoading) {
+            return;
+        }
+        captchaLoading = true;
+        captchaImg.classList.add('refreshing');
+        fetch('/api/auth/captcha', {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+        }).then(function (res) {
+            return res.json();
+        }).then(function (body) {
+            var data = (body && body.data) || {};
+            if (!body || body.code !== 0 || !data.captchaId || !data.imageBase64) {
+                throw new Error('验证码加载失败，请点击图片重试');
+            }
+            captchaId = data.captchaId;
+            captchaImg.src = 'data:image/jpeg;base64,' + data.imageBase64;
+            captchaInput.value = '';
+        }).catch(function (err) {
+            captchaId = '';
+            captchaImg.removeAttribute('src');
+            if (captchaRequired) {
+                showError((err && err.message) || '验证码加载失败，请点击图片重试');
+            }
+        }).finally(function () {
+            captchaLoading = false;
+            captchaImg.classList.remove('refreshing');
+            if (captchaRequired) {
+                captchaInput.focus();
+            }
+        });
+    }
+
+    captchaImg.addEventListener('click', function () {
+        if (!captchaRequired) {
+            return;
+        }
+        showError('');
+        loadCaptcha();
+    });
+
+    captchaInput.addEventListener('input', function () {
+        if (errorBox.textContent) {
+            showError('');
+        }
+    });
 
     function setBusy(busy) {
         submitting = busy;
@@ -300,6 +411,9 @@
                     'Token 当前 ' + data.tokenExpireHours + ' 小时有效，持续使用会自动续期';
             }
             showForm();
+            if (data.captchaRequired) {
+                setCaptchaRequired(true, '密码错误次数过多，请输入验证码');
+            }
         }).catch(function () {
             showForm();
             showError('无法获取登录状态，请确认 DeepShell 服务是否正常。');
@@ -323,13 +437,31 @@
             passInput.focus();
             return;
         }
+        var captchaCode = captchaInput.value.trim();
+        if (captchaRequired) {
+            if (!captchaCode) {
+                showError('请输入验证码');
+                captchaInput.focus();
+                return;
+            }
+            if (!captchaId) {
+                showError('验证码已失效，请点击图片刷新');
+                loadCaptcha();
+                return;
+            }
+        }
         showError('');
         setBusy(true);
+        var payload = { username: username, password: password };
+        if (captchaRequired) {
+            payload.captchaId = captchaId;
+            payload.captchaCode = captchaCode;
+        }
         fetch('/api/auth/login', {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify({ username: username, password: password })
+            body: JSON.stringify(payload)
         }).then(function (res) {
             return res.json().then(function (body) {
                 return { ok: res.ok, status: res.status, body: body };
@@ -337,13 +469,22 @@
         }).then(function (result) {
             var body = result.body || {};
             if (!result.ok || body.code !== 0) {
-                throw new Error(body.msg || (result.status === 401 ? '用户名或密码错误' : '登录失败'));
+                var error = new Error(body.msg || (result.status === 401 ? '用户名或密码错误' : '登录失败'));
+                error.captchaRequired = !!(body.data && body.data.captchaRequired);
+                throw error;
             }
             location.replace(target());
         }).catch(function (err) {
             setBusy(false);
-            showError(err && err.message ? err.message : '登录失败，请稍后重试');
-            passInput.select();
+            var needCaptcha = !!(err && err.captchaRequired);
+            // 验证码错误时后端已将它作废，这里强制换一张新图
+            setCaptchaRequired(needCaptcha, null, needCaptcha);
+            showError((err && err.message) || '登录失败，请稍后重试');
+            if (needCaptcha) {
+                captchaInput.focus();
+            } else {
+                passInput.select();
+            }
         });
     });
 

@@ -24,6 +24,7 @@ public class AuthWebConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/login",
                         "/api/auth/login",
+                        "/api/auth/captcha",
                         "/api/auth/status",
                         "/api/auth/logout",
                         "/css/**",
