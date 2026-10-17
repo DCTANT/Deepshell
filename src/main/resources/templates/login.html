@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepShell · 登录</title>
+    <style>
+        :root {
+            --bg: #0b0f14;
+            --card: rgba(19, 25, 35, 0.86);
+            --line: rgba(255, 255, 255, 0.09);
+            --text: #e8edf6;
+            --muted: #8c99ad;
+            --accent: #4c8dff;
+            --accent-2: #7c5cff;
+            --danger: #ff6b6b;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body { height: 100%; }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                "Microsoft YaHei", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .login-bg {
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(900px 600px at 12% 8%, rgba(76, 141, 255, 0.20), transparent 60%),
+                radial-gradient(800px 600px at 88% 92%, rgba(124, 92, 255, 0.16), transparent 62%),
+                linear-gradient(160deg, #0a0e14 0%, #0d1219 48%, #080b10 100%);
+        }
+
+        .login-bg::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+            background-size: 44px 44px;
+            mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 72%);
+            -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 0%, transparent 72%);
+        }
+
+        .login-card {
+            position: relative;
+            width: min(400px, calc(100vw - 40px));
+            padding: 38px 38px 30px;
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            background: var(--card);
+            box-shadow:
+                0 30px 80px rgba(0, 0, 0, 0.55),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            animation: rise 0.35s ease-out both;
+        }
+
+        @keyframes rise {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .brand {
+            font-size: 30px;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            line-height: 1.1;
+        }
+
+        .brand span {
+            background: linear-gradient(100deg, #59a6ff, #7c5cff 60%, #b06cff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .subtitle {
+            margin: 10px 0 30px;
+            color: var(--muted);
+            font-size: 13.5px;
+            line-height: 1.6;
+        }
+
+        .field { margin-bottom: 17px; }
+
+        .field label {
+            display: block;
+            margin-bottom: 7px;
+            color: #aab6c8;
+            font-size: 12.5px;
+            letter-spacing: 0.2px;
+        }
+
+        .field input {
+            width: 100%;
+            height: 43px;
+            padding: 0 13px;
+            border: 1px solid rgba(255, 255, 255, 0.11);
+            border-radius: 10px;
+            background: rgba(7, 10, 15, 0.62);
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
+        }
+
+        .field input::placeholder { color: #59667a; }
+
+        .field input:focus {
+            border-color: rgba(76, 141, 255, 0.72);
+            background: rgba(7, 10, 15, 0.82);
+            box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.14);
+        }
+
+        .error {
+            min-height: 20px;
+            margin: 2px 0 12px;
+            color: var(--danger);
+            font-size: 12.5px;
+            line-height: 1.5;
+        }
+
+        .submit {
+            width: 100%;
+            height: 44px;
+            border: 0;
+            border-radius: 10px;
+            background: linear-gradient(100deg, #3d7dff, #6b5bff);
+            color: #fff;
+            font-size: 14.5px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: filter 0.18s, transform 0.12s, opacity 0.18s;
+            box-shadow: 0 10px 28px rgba(59, 104, 255, 0.28);
+        }
+
+        .submit:hover:not(:disabled) { filter: brightness(1.08); }
+        .submit:active:not(:disabled) { transform: translateY(1px); }
+        .submit:disabled { cursor: default; opacity: 0.66; }
+
+        .submit.loading::after {
+            content: "";
+            display: inline-block;
+            width: 13px;
+            height: 13px;
+            margin-left: 9px;
+            vertical-align: -2px;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .footer {
+            margin-top: 22px;
+            padding-top: 17px;
+            border-top: 1px solid var(--line);
+            color: #6d7a8e;
+            font-size: 11.5px;
+            line-height: 1.7;
+            text-align: center;
+        }
+
+        .checking {
+            padding: 22px 0 8px;
+            color: var(--muted);
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .checking .spinner {
+            width: 20px;
+            height: 20px;
+            margin: 0 auto 12px;
+            border: 2px solid rgba(255, 255, 255, 0.12);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        [hidden] { display: none !important; }
+
+        @media (max-width: 480px) {
+            .login-card { padding: 30px 24px 24px; border-radius: 16px; }
+            .brand { font-size: 26px; }
+        }
+    </style>
+</head>
+<body>
+<div class="login-bg"></div>
+<main class="login-card">
+    <div class="brand">Deep<span>Shell</span></div>
+    <p class="subtitle">登录后继续访问你的终端与服务器工作台</p>
+
+    <div id="checking" class="checking">
+        <div class="spinner"></div>
+        正在检查登录状态…
+    </div>
+
+    <form id="loginForm" hidden novalidate>
+        <div class="field">
+            <label for="username">用户名</label>
+            <input id="username" name="username" type="text" autocomplete="username"
+                   placeholder="请输入用户名" spellcheck="false" required autofocus>
+        </div>
+        <div class="field">
+            <label for="password">密码</label>
+            <input id="password" name="password" type="password" autocomplete="current-password"
+                   placeholder="请输入密码" required>
+        </div>
+        <div id="error" class="error" role="alert" aria-live="polite"></div>
+        <button id="submit" class="submit" type="submit">登 录</button>
+    </form>
+
+    <div class="footer">
+        <span id="tokenHint">Token 默认 6 小时有效，持续使用会自动续期</span><br>
+        账号与登录开关由启动目录下的 application.yml 配置
+    </div>
+</main>
+
+<script>
+(function () {
+    var form = document.getElementById('loginForm');
+    var checking = document.getElementById('checking');
+    var errorBox = document.getElementById('error');
+    var submit = document.getElementById('submit');
+    var userInput = document.getElementById('username');
+    var passInput = document.getElementById('password');
+    var submitting = false;
+
+    function target() {
+        var raw;
+        try {
+            raw = new URLSearchParams(location.search).get('redirect') || '/';
+        } catch (e) {
+            return '/';
+        }
+        // 仅允许站内绝对路径，避免开放重定向
+        if (raw.charAt(0) !== '/' || raw.charAt(1) === '/' || raw.indexOf('\\') === 0) {
+            return '/';
+        }
+        if (raw === '/login' || raw.indexOf('/login?') === 0) {
+            return '/';
+        }
+        return raw;
+    }
+
+    function showForm() {
+        checking.hidden = true;
+        form.hidden = false;
+        userInput.focus();
+    }
+
+    function showError(message) {
+        errorBox.textContent = message || '';
+    }
+
+    function setBusy(busy) {
+        submitting = busy;
+        submit.disabled = busy;
+        submit.classList.toggle('loading', busy);
+        submit.textContent = busy ? '登录中' : '登 录';
+    }
+
+    function checkStatus() {
+        fetch('/api/auth/status', {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+        }).then(function (res) {
+            return res.json();
+        }).then(function (body) {
+            var data = (body && body.data) || {};
+            if (!data.enabled) {
+                location.replace('/');
+                return;
+            }
+            if (data.loggedIn) {
+                location.replace(target());
+                return;
+            }
+            if (data.tokenExpireHours) {
+                document.getElementById('tokenHint').textContent =
+                    'Token 当前 ' + data.tokenExpireHours + ' 小时有效，持续使用会自动续期';
+            }
+            showForm();
+        }).catch(function () {
+            showForm();
+            showError('无法获取登录状态，请确认 DeepShell 服务是否正常。');
+        });
+    }
+
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (submitting) {
+            return;
+        }
+        var username = userInput.value.trim();
+        var password = passInput.value;
+        if (!username) {
+            showError('请输入用户名');
+            userInput.focus();
+            return;
+        }
+        if (!password) {
+            showError('请输入密码');
+            passInput.focus();
+            return;
+        }
+        showError('');
+        setBusy(true);
+        fetch('/api/auth/login', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ username: username, password: password })
+        }).then(function (res) {
+            return res.json().then(function (body) {
+                return { ok: res.ok, status: res.status, body: body };
+            });
+        }).then(function (result) {
+            var body = result.body || {};
+            if (!result.ok || body.code !== 0) {
+                throw new Error(body.msg || (result.status === 401 ? '用户名或密码错误' : '登录失败'));
+            }
+            location.replace(target());
+        }).catch(function (err) {
+            setBusy(false);
+            showError(err && err.message ? err.message : '登录失败，请稍后重试');
+            passInput.select();
+        });
+    });
+
+    checkStatus();
+})();
+</script>
+</body>
+</html>

@@ -16,6 +16,13 @@
         }
         return d;
     }, function (err) {
+        if (err && err.response && err.response.status === 401) {
+            if (location.pathname !== '/login') {
+                var back = location.pathname + location.search;
+                location.href = '/login?redirect=' + encodeURIComponent(back);
+            }
+            return Promise.reject(err);
+        }
         ELEMENT.Message.error('网络错误: ' + (err.message || err));
         return Promise.reject(err);
     });

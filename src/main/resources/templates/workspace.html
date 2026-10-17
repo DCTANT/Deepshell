@@ -2010,7 +2010,45 @@
         <div class="set-hint" style="margin-top:10px;line-height:1.9">
             · 默认仅本机（127.0.0.1）可访问；开放并重启后，局域网内电脑可通过上方 IP 地址访问<br>
             · 首次开放如弹出 Windows 防火墙提示，请选择「允许访问」<br>
-            · 本工具无登录鉴权，请仅在可信局域网中开放
+            · 本工具默认无登录鉴权；开放局域网前，建议在 application.yml 中开启登录认证
+        </div>
+    </el-dialog>
+
+    <!-- 登录与安全 -->
+    <el-dialog title="登录与安全" :visible.sync="authSetVisible" width="520px" append-to-body>
+        <template v-if="authStatus.enabled">
+            <div class="set-row">
+                <span class="set-label" style="width: 88px">当前用户</span>
+                <span class="set-value">{{ authStatus.username }}</span>
+            </div>
+            <div class="set-row">
+                <span class="set-label" style="width: 88px">Token 有效期</span>
+                <el-input-number v-model="authSetHours" :min="1" :max="720" :step="1"
+                                 controls-position="right" size="small"
+                                 style="width: 150px"></el-input-number>
+                <span class="set-hint" style="margin-left: 8px">小时</span>
+            </div>
+            <div class="set-hint" style="line-height: 1.9; margin-top: 6px">
+                · 默认 6 小时；持续使用工作台时会自动续期，长时间无操作则到期退出<br>
+                · 修改后立即按新有效期重新签发 Token
+                <span v-if="authStatus.tokenRemainingSeconds != null">
+                    ；当前剩余约 {{ fmtTokenRemaining() }}
+                </span>
+            </div>
+        </template>
+        <div v-else class="set-hint" style="line-height: 1.9">
+            登录功能当前未启用。在启动目录的 application.yml 中设置：<br>
+            <code>deepshell.auth.enabled: true</code><br>
+            <code>deepshell.auth.username: admin</code><br>
+            <code>deepshell.auth.password: 你的密码</code><br>
+            重启应用后生效。
+        </div>
+        <div slot="footer">
+            <el-button v-if="authStatus.enabled" type="danger" plain size="small"
+                       @click="logout">退出登录</el-button>
+            <el-button size="small" @click="authSetVisible = false">关闭</el-button>
+            <el-button v-if="authStatus.enabled" type="primary" size="small"
+                       :loading="authSetSaving" @click="saveAuthSettings">保存</el-button>
         </div>
     </el-dialog>
 
@@ -2152,6 +2190,9 @@
         </div>
         <div class="tab-menu-item" @click="onMenuCommand('lan')">
             <i class="el-icon-share"></i>局域网访问
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('auth')">
+            <i class="el-icon-lock"></i>登录与安全
         </div>
         <div class="tab-menu-sep"></div>
         <div class="tab-menu-item" @click="onMenuCommand('help')">

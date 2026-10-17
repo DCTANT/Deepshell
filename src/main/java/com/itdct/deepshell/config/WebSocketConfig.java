@@ -13,14 +13,19 @@ import org.springframework.web.socket.server.standard.ServletServerContainerFact
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final SshWebSocketHandler handler;
+    private final AuthHandshakeInterceptor authHandshakeInterceptor;
 
-    public WebSocketConfig(SshWebSocketHandler handler) {
+    public WebSocketConfig(SshWebSocketHandler handler,
+                           AuthHandshakeInterceptor authHandshakeInterceptor) {
         this.handler = handler;
+        this.authHandshakeInterceptor = authHandshakeInterceptor;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(handler, "/ws/ssh").setAllowedOrigins("*");
+        registry.addHandler(handler, "/ws/ssh")
+                .addInterceptors(authHandshakeInterceptor)
+                .setAllowedOrigins("*");
     }
 
     @Bean

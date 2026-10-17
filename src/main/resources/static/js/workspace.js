@@ -1,4 +1,14 @@
 /* 终端工作台：多标签 xterm + WebSocket + SFTP 面板 + 快捷命令 */
+
+/* 登录过期统一跳转登录页，并带上当前地址以便登录后返回 */
+function redirectToLogin() {
+    if (location.pathname === '/login') {
+        return;
+    }
+    var back = location.pathname + location.search;
+    location.href = '/login?redirect=' + encodeURIComponent(back);
+}
+
 var http = axios.create({});
 http.interceptors.response.use(function (resp) {
     var d = resp.data;
@@ -11,6 +21,10 @@ http.interceptors.response.use(function (resp) {
     }
     return d;
 }, function (err) {
+    if (err && err.response && err.response.status === 401) {
+        redirectToLogin();
+        return Promise.reject(err);
+    }
     ELEMENT.Message.error('网络错误: ' + (err.message || err));
     return Promise.reject(err);
 });
@@ -397,6 +411,17 @@ new Vue({
         helpVisible: false,
         aboutVisible: false,
         lanVisible: false,
+        authSetVisible: false,
+        authSetSaving: false,
+        authSetHours: 6,
+        authStatus: {
+            enabled: false,
+            loggedIn: true,
+            username: '',
+            tokenExpireHours: 6,
+            defaultTokenExpireHours: 6,
+            tokenRemainingSeconds: null
+        },
         aiSetVisible: false,
         aiSetSaving: false,
         aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false },
@@ -1211,6 +1236,8 @@ new Vue({
             } else if (cmd === 'lan') {
                 this.loadLan();
                 this.lanVisible = true;
+            } else if (cmd === 'auth') {
+                this.openAuthSettings();
             } else if (cmd === 'ai') {
                 this.loadAiConfig();
                 this.aiSetVisible = true;
@@ -1944,8 +1971,9 @@ new Vue({
         },
         hasDesktopDialogOpen: function () {
             return this.fontVisible || this.hotkeyVisible || this.bgVisible || this.helpVisible
-                || this.aboutVisible || this.lanVisible || this.aiSetVisible || this.sysInfoVisible
-                || this.procDetailVisible || this.connectDialogVisible || this.connImportVisible
+                || this.aboutVisible || this.lanVisible || this.authSetVisible || this.aiSetVisible
+                || this.sysInfoVisible || this.procDetailVisible || this.connectDialogVisible
+                || this.connImportVisible
                 || this.connExportVisible || this.cmdEditDialog || this.editVisible || this.renameVisible;
         },
         checkDesktopIdle: function () {
@@ -3247,8 +3275,9 @@ new Vue({
                 if (e.key === 'Escape') {
                     // 有子弹窗时交给 Element 自己关闭，避免连同设置面板一起关掉
                     var subDialog = this.fontVisible || this.bgVisible || this.aiSetVisible
-                        || this.lanVisible || this.aboutVisible || this.sysInfoVisible
-                        || this.connectDialogVisible || this.helpVisible || this.hotkeyVisible;
+                        || this.lanVisible || this.authSetVisible || this.aboutVisible
+                        || this.sysInfoVisible || this.connectDialogVisible || this.helpVisible
+                        || this.hotkeyVisible;
                     if (!subDialog) {
                         this.closeDesktopSettings();
                         e.preventDefault();
@@ -3700,6 +3729,78 @@ new Vue({
                 ELEMENT.Message.success(r && r.message ? r.message : '已保存');
                 self.loadLan();
             }).catch(function () { /* 已由拦截器提示 */ });
+        },
+        /* ---------- 登录与 Token 设置 ---------- */
+        loadAuthStatus: function () {
+            var self = this;
+            return http.get('/api/auth/status').then(function (d) {
+                if (!d) {
+                    return;
+                }
+                self.authStatus = d;
+                self.authSetHours = d.tokenExpireHours || 6;
+                if (d.enabled && !d.loggedIn) {
+                    redirectToLogin();
+                }
+            }).catch(function () { /* 已由拦截器提示 */ });
+        },
+        openAuthSettings: function () {
+            var self = this;
+            return this.loadAuthStatus().then(function () {
+                self.authSetVisible = true;
+            });
+        },
+        saveAuthSettings: function () {
+            var hours = parseInt(this.authSetHours, 10);
+            if (!hours || hours < 1 || hours > 720) {
+                ELEMENT.Message.warning('Token 有效期需在 1 - 720 小时之间');
+                return;
+            }
+            var self = this;
+            this.authSetSaving = true;
+            http.put('/api/auth/settings', { tokenExpireHours: hours }).then(function (d) {
+                if (d) {
+                    self.authStatus = d;
+                    self.authSetHours = d.tokenExpireHours || hours;
+                }
+                ELEMENT.Message.success('已保存，Token 已按新有效期重新签发');
+            }).catch(function () { /* 已由拦截器提示 */ })
+                .then(function () {
+                    self.authSetSaving = false;
+                });
+        },
+        logout: function () {
+            http.post('/api/auth/logout').then(function () {
+                location.replace('/login');
+            }).catch(function () {
+                location.replace('/login');
+            });
+        },
+        pingAuth: function () {
+            var self = this;
+            if (!this.authStatus.enabled) {
+                return;
+            }
+            http.post('/api/auth/ping').then(function (d) {
+                if (d) {
+                    self.authStatus = d;
+                }
+            }).catch(function () { /* 401 时拦截器会跳转登录页 */ });
+        },
+        fmtTokenRemaining: function () {
+            var seconds = this.authStatus.tokenRemainingSeconds;
+            if (seconds == null) {
+                return '';
+            }
+            if (seconds <= 0) {
+                return '已过期';
+            }
+            var hours = Math.floor(seconds / 3600);
+            var minutes = Math.floor((seconds % 3600) / 60);
+            if (hours > 0) {
+                return minutes > 0 ? (hours + ' 小时 ' + minutes + ' 分钟') : (hours + ' 小时');
+            }
+            return Math.max(1, Math.round(seconds / 60)) + ' 分钟';
         },
         copyText: function (text) {
             var done = function () {
@@ -5682,6 +5783,39 @@ new Vue({
         self.loadCommonDirs();
         self.loadSnippets();
         self.loadAppInfo();
+        self.loadAuthStatus();
+        // 记录用户活跃时间：仅在页面可见且有近期操作时续期 Token，避免后台标签页永久保活
+        self._lastUserActivity = Date.now();
+        var markUserActivity = function () {
+            self._lastUserActivity = Date.now();
+        };
+        ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'touchmove'].forEach(function (evt) {
+            window.addEventListener(evt, markUserActivity, { passive: true });
+        });
+        setInterval(function () {
+            if (!self.authStatus.enabled || document.visibilityState === 'hidden') {
+                return;
+            }
+            if (Date.now() - (self._lastUserActivity || 0) > 30 * 60 * 1000) {
+                return;
+            }
+            self.pingAuth();
+        }, 5 * 60 * 1000);
+        // Token 到期检查：仍在活跃使用则先续期，否则回到登录页
+        setInterval(function () {
+            if (!self.authStatus.enabled || !self.authStatus.tokenExpiresAt) {
+                return;
+            }
+            if (Date.now() < self.authStatus.tokenExpiresAt - 60 * 1000) {
+                return;
+            }
+            if (document.visibilityState !== 'hidden'
+                    && Date.now() - (self._lastUserActivity || 0) <= 30 * 60 * 1000) {
+                self.pingAuth();
+            } else {
+                redirectToLogin();
+            }
+        }, 60 * 1000);
         window.addEventListener('resize', function () {
             self.fitActive();
         });

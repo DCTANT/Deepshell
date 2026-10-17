@@ -11,4 +11,10 @@ public class PageController {
     public String workspace() {
         return "workspace";
     }
+
+    /** 登录页（开启登录且未登录时由 AuthInterceptor 跳转到这里） */
+    @GetMapping("/login")
+    public String login() {
+        return "login";
+    }
 }
