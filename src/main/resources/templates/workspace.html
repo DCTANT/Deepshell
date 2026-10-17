@@ -1398,6 +1398,10 @@
                 <div class="dsk-menu-item" @click="desktopMenuAction('copyPath')">
                     <i class="el-icon-document-copy"></i>{{ desktopMenuMulti ? '复制选中路径' : '复制路径' }}
                 </div>
+                <div class="dsk-menu-item has-sub" @click.stop="openDesktopCompressSub($event)">
+                    <i class="el-icon-box"></i>压缩
+                    <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
+                </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('rename')">
                     <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
                 </div>
@@ -1445,6 +1449,22 @@
             </template>
         </div>
 
+        <!-- 右键「压缩」子菜单 -->
+        <div class="dsk-menu dsk-menu-sub" v-if="desktop.compressSub.visible"
+             :style="{ left: desktop.compressSub.x + 'px', top: desktop.compressSub.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">压缩为</div>
+            <div class="dsk-menu-item" v-for="f in archiveFormats" :key="'arcfmt' + f.id"
+                 @click="desktopMenuAction('compress:' + f.id)">
+                <i class="el-icon-document"></i>
+                <span class="dsk-menu-sub-name">{{ f.label }}</span>
+                <span class="dsk-menu-key">{{ f.ext }}</span>
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopMenuAction('compressDialog')">
+                <i class="el-icon-setting"></i>压缩设置…
+            </div>
+        </div>
     </div>
 
     <div class="file-drop-mask" v-if="fileDragOver">
@@ -1762,6 +1782,71 @@
         </div>
     </el-dialog>
 
+    <!-- 可视化桌面：压缩 -->
+    <el-dialog title="压缩" :visible.sync="archiveDialogVisible" width="600px" append-to-body
+               :close-on-click-modal="false" :close-on-press-escape="!archiveSaving"
+               :show-close="!archiveSaving">
+        <div class="arc-dlg">
+            <div class="arc-sources">
+                <div class="arc-sources-title">
+                    <i class="el-icon-folder-opened"></i>
+                    压缩 {{ archiveSources.length }} 项
+                    <span class="dim">到 {{ desktop.path }}</span>
+                </div>
+                <div class="arc-chips">
+                    <span v-for="r in archiveSources" :key="'arcsrc' + r.name" class="arc-chip">
+                        <i :class="r.dir ? 'el-icon-folder' : 'el-icon-document'"></i>{{ r.name }}
+                    </span>
+                </div>
+            </div>
+            <el-form label-width="88px" size="small" class="arc-form">
+                <el-form-item label="压缩包名称">
+                    <el-input v-model="archiveForm.name" placeholder="archive.zip"></el-input>
+                    <div class="arc-warn" v-if="archiveNameExists && !archiveForm.overwrite">
+                        当前目录已有同名文件，开始压缩时会询问是否覆盖
+                    </div>
+                </el-form-item>
+                <el-form-item label="格式">
+                    <el-select v-model="archiveForm.format" class="arc-select"
+                               @change="archiveFormatChanged">
+                        <el-option v-for="f in archiveFormats" :key="'arcopt' + f.id"
+                                   :label="f.label + '（' + f.ext + '）'" :value="f.id">
+                            <span>{{ f.label }}</span>
+                            <span class="arc-opt-desc">{{ f.desc }}</span>
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="压缩级别">
+                    <el-select v-model="archiveForm.level" class="arc-select">
+                        <el-option v-for="l in archiveLevels" :key="'arclvl' + l.id"
+                                   :label="l.label + '（' + l.desc + '）'" :value="l.id">
+                            <span>{{ l.label }}</span>
+                            <span class="arc-opt-desc">{{ l.desc }}</span>
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="输出目录">
+                    <span class="arc-path">{{ desktop.path }}</span>
+                </el-form-item>
+                <el-form-item label="覆盖同名">
+                    <el-switch v-model="archiveForm.overwrite" size="mini"></el-switch>
+                    <span class="set-hint" style="margin-left:8px">目标压缩包已存在时覆盖</span>
+                </el-form-item>
+            </el-form>
+            <div class="arc-note">
+                <i class="el-icon-info"></i>
+                使用服务器自带命令：ZIP / TAR / gzip / bzip2 / xz / 7z。7Z 需要服务器已安装 7z 或 7za。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" :disabled="archiveSaving"
+                       @click="archiveDialogVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="archiveSaving" @click="archiveCompress">
+                {{ archiveSaving ? '正在压缩…' : '开始压缩' }}
+            </el-button>
+        </div>
+    </el-dialog>
+
     <!-- 可视化桌面：文件属性 -->
     <el-dialog title="属性" :visible.sync="desktop.propsVisible" width="560px" append-to-body>
         <div class="dsk-props" v-if="desktop.props">
@@ -1957,7 +2042,7 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传；大 / 中图标视图会直接显示图片缩略图，<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传；大 / 中图标视图会直接显示图片缩略图，<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速切换到 AI 终端 / SFTP / 进程 / 磁盘，右侧显示 CPU / 内存 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
                     <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
                     <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>

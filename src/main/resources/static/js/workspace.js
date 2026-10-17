@@ -331,6 +331,7 @@ new Vue({
             thumbFailed: {},
             settingsVisible: false,
             settingsSection: 'appearance',
+            compressSub: { visible: false, x: 0, y: 0 },
             thumbnailsEnabled: loadDesktopThumbs(),
             showHidden: loadDesktopShowHidden(),
             clock24h: loadDesktopClock24h(),
@@ -348,6 +349,25 @@ new Vue({
         editForm: { path: '', content: '', loading: false, saving: false },
         renameVisible: false,
         renameForm: { path: '', newName: '' },
+        archiveDialogVisible: false,
+        archiveSaving: false,
+        archiveSources: [],
+        archiveLastFormat: 'zip',
+        archiveForm: { format: 'zip', name: '', level: 'normal', overwrite: false },
+        archiveFormats: [
+            { id: 'zip', label: 'ZIP', ext: '.zip', desc: 'Windows / Linux 通用' },
+            { id: '7z', label: '7Z', ext: '.7z', desc: '高压缩率，需服务器安装 7z' },
+            { id: 'tar', label: 'TAR', ext: '.tar', desc: '只打包，不压缩' },
+            { id: 'tar.gz', label: 'TAR.GZ', ext: '.tar.gz', desc: 'Linux 常用 gzip 压缩' },
+            { id: 'tar.bz2', label: 'TAR.BZ2', ext: '.tar.bz2', desc: 'bzip2 压缩' },
+            { id: 'tar.xz', label: 'TAR.XZ', ext: '.tar.xz', desc: 'xz 高压缩率' }
+        ],
+        archiveLevels: [
+            { id: 'store', label: '仅存储', desc: '最快，体积最大' },
+            { id: 'fastest', label: '快速', desc: '压缩快，体积较大' },
+            { id: 'normal', label: '标准', desc: '速度与体积均衡' },
+            { id: 'max', label: '极限', desc: '最慢，体积最小' }
+        ],
         newCmd: { name: '', command: '' },
         commonDirs: [],
         newDirPath: '',
@@ -576,6 +596,15 @@ new Vue({
         },
         desktopMenuHasFile: function () {
             return this.desktopSelectedRows().some(function (r) { return !r.dir; });
+        },
+        archiveNameExists: function () {
+            var name = (this.archiveForm.name || '').trim();
+            if (!name) {
+                return false;
+            }
+            return (this.desktop.entries || []).some(function (r) {
+                return r.name === name;
+            });
         },
         desktopMenuTitle: function () {
             if (this.desktopMenuMulti) {
@@ -1850,6 +1879,7 @@ new Vue({
             this.desktop.settingsVisible = false;
             this.desktop.pendingSelect = '';
             this.desktop.pendingOpen = false;
+            this.closeDesktopCompressSub();
             this.closeDesktopPreview();
             this.loadDesktopDir(p);
             this.startDesktopClock();
@@ -1879,6 +1909,7 @@ new Vue({
             this.desktop.settingsVisible = false;
             this.desktop.pendingSelect = '';
             this.desktop.pendingOpen = false;
+            this.closeDesktopCompressSub();
             this.closeDesktopPreview();
             var self = this;
             this.$nextTick(function () {
@@ -2264,6 +2295,7 @@ new Vue({
             }
             this.desktop.menu.visible = false;
             this.desktop.startOpen = false;
+            this.closeDesktopCompressSub();
             this.desktop.previewVisible = true;
             this.desktop.previewName = row.name;
             this.desktop.previewPath = this.desktopEntryPath(row);
@@ -2398,6 +2430,7 @@ new Vue({
             var self = this;
             var x = ev.clientX;
             var y = ev.clientY;
+            this.closeDesktopCompressSub();
             this.desktop.menu = {
                 visible: true,
                 x: Math.max(8, Math.min(x, window.innerWidth - 232)),
@@ -2419,6 +2452,7 @@ new Vue({
             if (this.desktop.menu.visible) {
                 this.desktop.menu.visible = false;
             }
+            this.closeDesktopCompressSub();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
             }
@@ -2427,9 +2461,14 @@ new Vue({
             var target = this.desktop.menu.target;
             var rows = this.desktopTargetRows();
             this.desktop.menu.visible = false;
+            this.closeDesktopCompressSub();
             var self = this;
             if (action === 'open') {
                 this.desktopOpenEntry(target || rows[0]);
+            } else if (action === 'compressDialog') {
+                this.desktopOpenArchiveDialog('zip');
+            } else if (action.indexOf('compress:') === 0) {
+                this.desktopOpenArchiveDialog(action.substring('compress:'.length));
             } else if (action === 'preview') {
                 if (target && this.isDesktopImage(target)) {
                     this.desktopOpenPreview(target);
@@ -2479,6 +2518,175 @@ new Vue({
             } else if (action === 'sortMtime') {
                 this.desktopSortBy('mtime');
             }
+        },
+        archiveFormatExt: function (format) {
+            for (var i = 0; i < this.archiveFormats.length; i++) {
+                if (this.archiveFormats[i].id === format) {
+                    return this.archiveFormats[i].ext;
+                }
+            }
+            return '.zip';
+        },
+        openDesktopCompressSub: function (ev) {
+            if (this.desktop.compressSub.visible) {
+                this.closeDesktopCompressSub();
+                return;
+            }
+            var item = ev && ev.currentTarget;
+            var menu = this.$refs.deskMenu;
+            if (!item || !menu) {
+                return;
+            }
+            var ir = item.getBoundingClientRect();
+            var mr = menu.getBoundingClientRect();
+            var w = 244;
+            var h = 320;
+            var x = mr.right - 4;
+            if (x + w > window.innerWidth - 8) {
+                x = Math.max(8, mr.left - w + 4);
+            }
+            var y = Math.max(8, Math.min(ir.top, window.innerHeight - h - 8));
+            this.desktop.compressSub = { visible: true, x: x, y: y };
+            var self = this;
+            this.$nextTick(function () {
+                var el = document.querySelector('.dsk-menu-sub');
+                if (el) {
+                    var er = el.getBoundingClientRect();
+                    if (er.bottom > window.innerHeight - 8) {
+                        self.desktop.compressSub.y = Math.max(8, window.innerHeight - er.height - 8);
+                    }
+                }
+            });
+        },
+        closeDesktopCompressSub: function () {
+            if (this.desktop.compressSub.visible) {
+                this.desktop.compressSub = { visible: false, x: 0, y: 0 };
+            }
+        },
+        desktopOpenArchiveDialog: function (format) {
+            var rows = this.desktopTargetRows();
+            if (!rows.length) {
+                return;
+            }
+            var fmt = format || 'zip';
+            var valid = this.archiveFormats.some(function (f) { return f.id === fmt; });
+            if (!valid) {
+                fmt = 'zip';
+            }
+            this.closeDesktopCompressSub();
+            this.desktop.menu.visible = false;
+            var ext = this.archiveFormatExt(fmt);
+            var base;
+            if (rows.length === 1) {
+                base = rows[0].name;
+                if (!rows[0].dir) {
+                    var idx = base.lastIndexOf('.');
+                    if (idx > 0) {
+                        base = base.substring(0, idx);
+                    }
+                }
+            } else {
+                base = 'archive';
+            }
+            if (!base) {
+                base = 'archive';
+            }
+            var candidate = base + ext;
+            var sourceNames = rows.map(function (r) { return r.name; });
+            if (sourceNames.indexOf(candidate) >= 0) {
+                candidate = base + '_1' + ext;
+            }
+            this.archiveForm = {
+                format: fmt,
+                name: candidate,
+                level: 'normal',
+                overwrite: false
+            };
+            this.archiveLastFormat = fmt;
+            this.archiveSources = rows.slice();
+            this.archiveDialogVisible = true;
+        },
+        archiveFormatChanged: function () {
+            var oldExt = this.archiveFormatExt(this.archiveLastFormat);
+            var newExt = this.archiveFormatExt(this.archiveForm.format);
+            var name = (this.archiveForm.name || '').trim() || 'archive';
+            if (oldExt && name.toLowerCase().endsWith(oldExt.toLowerCase())) {
+                name = name.substring(0, name.length - oldExt.length);
+            }
+            this.archiveForm.name = name + newExt;
+            this.archiveLastFormat = this.archiveForm.format;
+        },
+        archiveCompress: function () {
+            var f = this.archiveForm;
+            var name = (f.name || '').trim();
+            if (!name) {
+                ELEMENT.Message.warning('请输入压缩包名称');
+                return;
+            }
+            if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) {
+                ELEMENT.Message.warning('压缩包名称不能包含路径分隔符');
+                return;
+            }
+            if (!this.archiveSources.length) {
+                ELEMENT.Message.warning('没有要压缩的文件');
+                return;
+            }
+            var ext = this.archiveFormatExt(f.format);
+            if (!name.toLowerCase().endsWith(ext.toLowerCase())) {
+                name += ext;
+            }
+            f.name = name;
+            if (this.archiveNameExists && !f.overwrite) {
+                var self = this;
+                this.$confirm('当前目录已存在「' + name + '」，是否覆盖？', '覆盖压缩包', {
+                    type: 'warning',
+                    confirmButtonText: '覆盖并压缩',
+                    cancelButtonText: '取消'
+                }).then(function () {
+                    self.runArchiveCompress(true);
+                }).catch(function () { /* 取消 */ });
+                return;
+            }
+            this.runArchiveCompress(f.overwrite);
+        },
+        runArchiveCompress: function (overwrite) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            var form = this.archiveForm;
+            var rows = this.archiveSources;
+            var paths = rows.map(function (r) {
+                return self.pathJoin(self.desktop.path, r.name);
+            });
+            this.archiveSaving = true;
+            var loading = ELEMENT.Message({
+                message: '正在压缩 ' + rows.length + ' 项到 ' + form.name + ' …',
+                duration: 0,
+                iconClass: 'el-icon-loading'
+            });
+            http.post('/api/sftp/compress', {
+                sessionId: t.sessionId,
+                destDir: this.desktop.path,
+                paths: paths,
+                name: form.name,
+                format: form.format,
+                level: form.level,
+                overwrite: !!overwrite
+            }).then(function (d) {
+                loading.close();
+                self.archiveSaving = false;
+                self.archiveDialogVisible = false;
+                var finalName = d && d.name ? d.name : form.name;
+                ELEMENT.Message.success('压缩完成：' + finalName);
+                self.desktop.pendingSelect = finalName;
+                self.desktopRefresh();
+            }).catch(function () {
+                loading.close();
+                self.archiveSaving = false;
+            });
         },
         desktopDownloadRows: function (rows) {
             var files = (rows || []).filter(function (r) { return !r.dir; });
@@ -3052,7 +3260,10 @@ new Vue({
             var typing = tag === 'input' || tag === 'textarea'
                 || (e.target && e.target.isContentEditable);
             if (e.key === 'Escape') {
-                if (this.desktop.menu.visible) {
+                if (this.desktop.compressSub.visible) {
+                    this.closeDesktopCompressSub();
+                    e.preventDefault();
+                } else if (this.desktop.menu.visible) {
                     this.desktop.menu.visible = false;
                     e.preventDefault();
                 } else if (this.desktop.startOpen) {
@@ -3112,6 +3323,7 @@ new Vue({
         openDesktopStart: function () {
             this.desktop.startOpen = true;
             this.desktop.menu.visible = false;
+            this.closeDesktopCompressSub();
             var self = this;
             this.$nextTick(function () {
                 var r = self.$refs.desktopStartSearch;
@@ -3174,6 +3386,7 @@ new Vue({
         openDesktopSettings: function () {
             this.desktop.startOpen = false;
             this.desktop.menu.visible = false;
+            this.closeDesktopCompressSub();
             this.desktop.settingsVisible = true;
             this.desktop.settingsSection = 'appearance';
             this.loadAppInfo();
@@ -5518,6 +5731,9 @@ new Vue({
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
             }
+            if (self.desktop.compressSub.visible) {
+                self.closeDesktopCompressSub();
+            }
         });
         document.addEventListener('contextmenu', function (e) {
             if (self.tabMenu.visible
@@ -5558,6 +5774,9 @@ new Vue({
             }
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
+            }
+            if (self.desktop.compressSub.visible) {
+                self.closeDesktopCompressSub();
             }
         });
         setInterval(function () {

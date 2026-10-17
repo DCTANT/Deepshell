@@ -4672,3 +4672,129 @@ body.resizing .term-host {
     width: 148px;
     flex: 0 0 auto;
 }
+
+/* 右键压缩子菜单与压缩窗口 */
+.dsk-menu-item.has-sub {
+    position: relative;
+}
+
+.dsk-menu-sub-arrow {
+    margin-left: auto;
+    padding-left: 12px;
+    color: #a4adba;
+    font-size: 11px;
+}
+
+.dsk-menu-sub {
+    z-index: 4610;
+    min-width: 236px;
+}
+
+.dsk-menu-sub-name {
+    flex: 1;
+}
+
+.arc-dlg {
+    font-size: 12.5px;
+}
+
+.arc-sources {
+    padding: 10px 12px;
+    border: 1px solid #e5eaf2;
+    border-radius: 8px;
+    background: #f8fafd;
+    margin-bottom: 14px;
+}
+
+.arc-sources-title {
+    color: #3c4a5c;
+    font-size: 12.5px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.arc-sources-title > i {
+    color: #e6a23c;
+    margin-right: 4px;
+}
+
+.arc-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 92px;
+    overflow-y: auto;
+}
+
+.arc-chip {
+    max-width: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border: 1px solid #e1e8f2;
+    border-radius: 5px;
+    background: #fff;
+    color: #55657a;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.arc-chip > i {
+    color: #7f8ea5;
+    flex: 0 0 auto;
+}
+
+.arc-form .el-form-item {
+    margin-bottom: 15px;
+}
+
+.arc-select {
+    width: 100%;
+}
+
+.arc-opt-desc {
+    float: right;
+    margin-left: 14px;
+    color: #9aa4b2;
+    font-size: 11px;
+}
+
+.arc-path {
+    display: block;
+    padding: 6px 9px;
+    border: 1px solid #e6ebf3;
+    border-radius: 5px;
+    background: #f7f9fc;
+    color: #66768a;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11.5px;
+    word-break: break-all;
+}
+
+.arc-warn {
+    margin-top: 5px;
+    color: #d18b16;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.arc-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 9px 11px;
+    border-radius: 7px;
+    background: #f6f8fb;
+    color: #7f8a99;
+    font-size: 11px;
+    line-height: 1.7;
+}
+
+.arc-note > i {
+    flex: 0 0 auto;
+    margin-top: 2px;
+    color: #6ea8ff;
+}

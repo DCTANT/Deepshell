@@ -1,8 +1,10 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.dto.ArchiveReq;
 import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
+import com.itdct.deepshell.service.ArchiveService;
 import com.itdct.deepshell.service.SftpService;
 import com.itdct.deepshell.service.VscodeEditService;
 import org.springframework.web.bind.annotation.*;
@@ -19,10 +21,13 @@ public class SftpController {
 
     private final SftpService sftp;
     private final VscodeEditService vscodeEditService;
+    private final ArchiveService archiveService;
 
-    public SftpController(SftpService sftp, VscodeEditService vscodeEditService) {
+    public SftpController(SftpService sftp, VscodeEditService vscodeEditService,
+                          ArchiveService archiveService) {
         this.sftp = sftp;
         this.vscodeEditService = vscodeEditService;
+        this.archiveService = archiveService;
     }
 
     @GetMapping("/list")
@@ -160,5 +165,11 @@ public class SftpController {
     @PostMapping("/vscode")
     public R<Map<String, Object>> vscode(@RequestBody SftpReq req) throws Exception {
         return R.ok(vscodeEditService.open(req.getSessionId(), req.getPath()));
+    }
+
+    /** 压缩当前目录下的文件 / 文件夹（调用服务器 zip / tar / 7z） */
+    @PostMapping("/compress")
+    public R<Map<String, Object>> compress(@RequestBody ArchiveReq req) throws Exception {
+        return R.ok(archiveService.compress(req));
     }
 }
