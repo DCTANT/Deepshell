@@ -72,7 +72,7 @@ public class AiAgentService {
         SshSessionManager.SshSession s = sessions.get(sessionId);
         List<Map<String, String>> messages = sanitize(history);
         String content = chatClient.complete(systemPrompt(s, cwd), messages);
-        return handleContent(s, cwd, auto, content);
+        return handleContent(s, cwd, auto, content, new AiCancellationToken());
     }
 
     /**
@@ -81,23 +81,42 @@ public class AiAgentService {
      */
     public AgentResult stepStream(String sessionId, String cwd, boolean auto, List<AgentMessage> history,
                                   Consumer<String> onTextDelta) {
+        return stepStream(sessionId, cwd, auto, history, onTextDelta, new AiCancellationToken());
+    }
+
+    /**
+     * 可取消的流式一轮对话：停止令牌置位后断开模型连接，
+     * 并在解析/执行命令前再次检查，保证不会在用户停止后继续执行新命令。
+     */
+    public AgentResult stepStream(String sessionId, String cwd, boolean auto, List<AgentMessage> history,
+                                  Consumer<String> onTextDelta, AiCancellationToken token) {
+        if (token.isCancelled()) {
+            throw new AiCancellationToken.CancelledException();
+        }
         SshSessionManager.SshSession s = sessions.get(sessionId);
         List<Map<String, String>> messages = sanitize(history);
         final StringBuilder acc = new StringBuilder();
         final String[] shown = {""};
         String content = chatClient.stream(systemPrompt(s, cwd), messages, delta -> {
+            if (token.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
             acc.append(delta);
             String visible = visibleReplyText(acc.toString());
             if (visible.length() > shown[0].length() && visible.startsWith(shown[0])) {
                 onTextDelta.accept(visible.substring(shown[0].length()));
                 shown[0] = visible;
             }
-        });
-        return handleContent(s, cwd, auto, content);
+        }, token);
+        if (token.isCancelled()) {
+            throw new AiCancellationToken.CancelledException();
+        }
+        return handleContent(s, cwd, auto, content, token);
     }
 
     /** 把模型输出解析为回复或命令，并按自动模式策略执行 */
-    private AgentResult handleContent(SshSessionManager.SshSession s, String cwd, boolean auto, String content) {
+    private AgentResult handleContent(SshSessionManager.SshSession s, String cwd, boolean auto,
+                                      String content, AiCancellationToken token) {
         Parsed parsed = parse(content);
 
         AgentResult r = new AgentResult();
@@ -105,6 +124,11 @@ public class AiAgentService {
             r.kind = "cmd";
             r.command = parsed.command;
             r.note = parsed.note;
+            if (token.isCancelled()) {
+                r.kind = "reply";
+                r.text = "已停止";
+                return r;
+            }
             String danger = dangerReason(parsed.command);
             if (danger != null) {
                 r.needConfirm = true;
@@ -117,7 +141,7 @@ public class AiAgentService {
                 audit.record("AI_COMMAND", parsed.command, "CONFIRM", "手动确认模式");
                 return r;
             }
-            fillExec(r, s, parsed.command, cwd);
+            fillExec(r, s, parsed.command, cwd, token);
             return r;
         }
         r.kind = "reply";
@@ -127,6 +151,11 @@ public class AiAgentService {
 
     /** 用户确认（或手动模式放行）后执行指定命令 */
     public AgentResult exec(String sessionId, String cwd, String command) {
+        return exec(sessionId, cwd, command, new AiCancellationToken());
+    }
+
+    /** 可取消的命令执行：停止令牌置位后断开 exec 通道 */
+    public AgentResult exec(String sessionId, String cwd, String command, AiCancellationToken token) {
         if (command == null || command.trim().isEmpty()) {
             throw new IllegalArgumentException("缺少要执行的命令");
         }
@@ -134,24 +163,43 @@ public class AiAgentService {
         AgentResult r = new AgentResult();
         r.kind = "cmd";
         r.command = command.trim();
-        fillExec(r, s, r.command, cwd);
+        fillExec(r, s, r.command, cwd, token);
         return r;
     }
 
-    private void fillExec(AgentResult r, SshSessionManager.SshSession s, String command, String cwd) {
+    private void fillExec(AgentResult r, SshSessionManager.SshSession s, String command,
+                          String cwd, AiCancellationToken token) {
+        if (token.isCancelled()) {
+            r.executed = false;
+            r.error = "已停止";
+            audit.record("AI_COMMAND", command, "CANCELLED", "用户停止");
+            return;
+        }
         try {
             SshSessionManager.ExecResult res =
-                    sessions.execInShell(s, command, cwd, EXEC_TIMEOUT_MS, MAX_OUTPUT_BYTES);
+                    sessions.execInShell(s, command, cwd, EXEC_TIMEOUT_MS, MAX_OUTPUT_BYTES,
+                            token::isCancelled);
             r.executed = true;
             r.output = cleanTerminalText(res.output);
             r.exitCode = res.exitCode;
             r.cwd = res.cwd;
             r.truncated = res.truncated;
             r.timedOut = res.timedOut;
+            if (res.cancelled || token.isCancelled()) {
+                r.error = "已停止";
+                audit.record("AI_COMMAND", command, "CANCELLED", "用户停止");
+                return;
+            }
             audit.record("AI_COMMAND", command,
                     r.exitCode != null && r.exitCode != 0 ? "FAIL" : "OK",
                     "exit=" + r.exitCode + (r.timedOut ? " timeout" : ""));
         } catch (Exception e) {
+            if (token.isCancelled()) {
+                r.executed = false;
+                r.error = "已停止";
+                audit.record("AI_COMMAND", command, "CANCELLED", "用户停止");
+                return;
+            }
             log.warn("AI 终端命令执行失败: {}", e.toString());
             r.executed = false;
             r.error = "命令执行失败：" + e.getMessage();

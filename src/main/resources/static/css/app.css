@@ -4959,3 +4959,5 @@ body.resizing .term-host {
 .audit-ok { background: #e8f7ee; color: #1f9d55; }
 .audit-fail { background: #fdecec; color: #d64545; }
 .audit-confirm { background: #fff5e6; color: #b7791f; }
+
+.audit-cancelled { background: #f4f4f5; color: #909399; }

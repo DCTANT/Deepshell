@@ -213,6 +213,11 @@ function newSessionKey() {
     return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 }
 
+/* 每次 AI 请求的 runId：前端停止时用它通知服务端取消模型/命令 */
+function newAiRunId() {
+    return 'ai' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
 /* 自动重连延迟（毫秒），超过次数后停止并提示手动重连 */
 var RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 20000, 30000, 30000, 30000];
 var UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -1032,7 +1037,10 @@ new Vue({
                 chatMode: loadAiChatMode(),
                 chatStop: false,
                 chatStep: 0,
-                chatRun: 0
+                chatRun: 0,
+                chatAbortController: null,
+                chatExecController: null,
+                chatRequestId: ''
             };
             tab.sendTargets = [tab.key];
             this.tabs.push(tab);
@@ -1744,6 +1752,9 @@ new Vue({
             t.chatInput = '';
             t.chatStop = false;
             t.chatStep = 0;
+            t.chatRequestId = '';
+            t.chatAbortController = null;
+            t.chatExecController = null;
             t.chatBusy = true;
             t.chatBusyConvId = conv.id;
             t.chatRun = (t.chatRun || 0) + 1;
@@ -1756,6 +1767,22 @@ new Vue({
                 return;
             }
             t.chatStop = true;
+            // 先通知服务端取消：断模型连接 / 断 exec 通道，再 abort 浏览器请求
+            if (t.chatRequestId) {
+                var runId = t.chatRequestId;
+                t.chatRequestId = '';
+                http.post('/api/ai/agent/cancel', { runId: runId }).catch(function () { /* ignore */ });
+            }
+            var abortStream = t.chatAbortController;
+            t.chatAbortController = null;
+            if (abortStream) {
+                try { abortStream.abort(); } catch (e) { /* ignore */ }
+            }
+            var abortExec = t.chatExecController;
+            t.chatExecController = null;
+            if (abortExec) {
+                try { abortExec.abort(); } catch (e) { /* ignore */ }
+            }
             t.chatStreamText = '';
             t.chatStreamConvId = null;
             var conv = this.aiConvById(t, t.chatBusyConvId) || this.aiActiveConv(t);
@@ -1792,13 +1819,19 @@ new Vue({
             t.chatPhase = 'AI 正在生成…';
             t.chatStreamText = '';
             t.chatStreamConvId = conv.id;
+            var requestId = newAiRunId();
+            t.chatRequestId = requestId;
             this.scrollAiChat();
             this.aiAgentStream(t, conv, run, {
                 sessionId: t.sessionId,
                 cwd: conv.cwd || '',
                 auto: t.chatMode !== 'manual',
+                runId: requestId,
                 messages: this.aiBuildHistory(conv)
             }).then(function (r) {
+                if (t.chatRequestId === requestId) {
+                    t.chatRequestId = '';
+                }
                 t.chatStreamText = '';
                 t.chatStreamConvId = null;
                 if (run !== t.chatRun) {
@@ -1843,9 +1876,16 @@ new Vue({
                 }
                 self.aiChatLoop(t, conv, run);
             }).catch(function (e) {
+                if (t.chatRequestId === requestId) {
+                    t.chatRequestId = '';
+                }
                 t.chatStreamText = '';
                 t.chatStreamConvId = null;
                 if (run !== t.chatRun) {
+                    return;
+                }
+                if (t.chatStop || (e && (e.name === 'AbortError' || e.code === 'ERR_CANCELED'))) {
+                    self.aiChatFinish(t, conv, '已停止');
                     return;
                 }
                 conv.msgs.push({ role: 'ai', text: '请求失败：' + ((e && e.message) || '未知错误') });
@@ -1858,10 +1898,13 @@ new Vue({
             if (typeof fetch !== 'function' || typeof TextDecoder === 'undefined') {
                 return Promise.reject(new Error('当前浏览器不支持流式输出，请升级浏览器'));
             }
-            return fetch('/api/ai/agent/step/stream', {
+            var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            t.chatAbortController = controller;
+            var promise = fetch('/api/ai/agent/step/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                signal: controller ? controller.signal : undefined
             }).then(function (resp) {
                 if (resp.status === 401) {
                     redirectToLogin();
@@ -1949,6 +1992,17 @@ new Vue({
 
                 return pump();
             });
+            return promise.then(function (r) {
+                if (t.chatAbortController === controller) {
+                    t.chatAbortController = null;
+                }
+                return r;
+            }, function (e) {
+                if (t.chatAbortController === controller) {
+                    t.chatAbortController = null;
+                }
+                throw e;
+            });
         },
         aiErrorText: function (txt) {
             if (!txt) {
@@ -1987,13 +2041,24 @@ new Vue({
             var run = t.chatRun;
             m.state = 'running';
             t.chatPhase = '正在执行命令…';
+            var requestId = newAiRunId();
+            t.chatRequestId = requestId;
+            var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            t.chatExecController = controller;
             this.saveConv(t, conv);
             this.scrollAiChat();
             http.post('/api/ai/agent/exec', {
                 sessionId: t.sessionId,
                 cwd: conv.cwd || '',
-                command: m.cmd
-            }).then(function (r) {
+                command: m.cmd,
+                runId: requestId
+            }, controller ? { signal: controller.signal } : undefined).then(function (r) {
+                if (t.chatExecController === controller) {
+                    t.chatExecController = null;
+                }
+                if (t.chatRequestId === requestId) {
+                    t.chatRequestId = '';
+                }
                 if (run !== t.chatRun) {
                     return;
                 }
@@ -2002,12 +2067,25 @@ new Vue({
                 conv.updatedAt = Date.now();
                 self.saveConv(t, conv);
                 if (t.chatStop) {
-                    self.aiChatFinish(t, conv, '已停止（本轮命令已执行完）');
+                    self.aiChatFinish(t, conv, '已停止');
                     return;
                 }
                 self.aiChatLoop(t, conv, run);
             }).catch(function (e) {
+                if (t.chatExecController === controller) {
+                    t.chatExecController = null;
+                }
+                if (t.chatRequestId === requestId) {
+                    t.chatRequestId = '';
+                }
                 if (run !== t.chatRun) {
+                    return;
+                }
+                if (t.chatStop || (e && (e.name === 'CanceledError' || e.code === 'ERR_CANCELED' || e.name === 'AbortError'))) {
+                    m.state = 'done';
+                    m.error = '已停止';
+                    self.saveConv(t, conv);
+                    self.aiChatFinish(t, conv, '已停止');
                     return;
                 }
                 m.state = 'done';
@@ -2038,6 +2116,9 @@ new Vue({
             t.chatBusyConvId = '';
             t.chatStreamText = '';
             t.chatStreamConvId = null;
+            t.chatRequestId = '';
+            t.chatAbortController = null;
+            t.chatExecController = null;
             if (conv) {
                 if (note) {
                     conv.msgs.push({ role: 'note', text: note });

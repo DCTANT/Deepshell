@@ -3,6 +3,7 @@ package com.itdct.deepshell.web;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.service.AiAgentService;
+import com.itdct.deepshell.service.AiCancellationToken;
 import com.itdct.deepshell.service.AiCommandService;
 import com.itdct.deepshell.service.AiConfigService;
 import com.itdct.deepshell.service.AiConversationService;
@@ -12,10 +13,16 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import javax.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 @RestController
@@ -28,6 +35,15 @@ public class AiController {
     private final AiConversationService convService;
     private final AiModelCatalogService catalog;
 
+    /** runId -> 取消令牌：前端停止时可直接取消服务端生成/命令执行 */
+    private final Map<String, AiCancellationToken> activeRuns = new ConcurrentHashMap<>();
+    /** SSE 心跳：探测客户端断开，并避免代理因长时间无数据关闭连接 */
+    private final ScheduledExecutorService sseHeartbeat = Executors.newScheduledThreadPool(1, r -> {
+        Thread t = new Thread(r, "ai-sse-heartbeat");
+        t.setDaemon(true);
+        return t;
+    });
+
     public AiController(AiConfigService config, AiCommandService commandService,
                         AiAgentService agentService, AiConversationService convService,
                         AiModelCatalogService catalog) {
@@ -36,6 +52,11 @@ public class AiController {
         this.agentService = agentService;
         this.convService = convService;
         this.catalog = catalog;
+    }
+
+    @PreDestroy
+    void shutdown() {
+        sseHeartbeat.shutdownNow();
     }
 
     @GetMapping("/config")
@@ -90,9 +111,44 @@ public class AiController {
      */
     @PostMapping(value = "/agent/step/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter agentStepStream(@RequestBody AgentStepForm form) {
+        final String runId = form.getRunId();
+        final AiCancellationToken token = new AiCancellationToken();
+        if (runId != null && !runId.isEmpty()) {
+            activeRuns.put(runId, token);
+        }
         // 模型生成 + 单条命令最长执行 120s，留足余量；超时由容器断开
-        SseEmitter emitter = new SseEmitter(600_000L);
-        emitter.onTimeout(emitter::complete);
+        final SseEmitter emitter = new SseEmitter(600_000L);
+        emitter.onTimeout(() -> {
+            token.cancel();
+            try { emitter.complete(); } catch (Exception ignore) { /* ignore */ }
+        });
+        emitter.onError(e -> {
+            token.cancel();
+            removeRun(runId, token);
+        });
+        emitter.onCompletion(() -> {
+            token.cancel();
+            removeRun(runId, token);
+        });
+        // 模型长时间不吐字时也能及时发现浏览器已断开，避免后台继续生成
+        ScheduledFuture<?> heartbeat = sseHeartbeat.scheduleAtFixedRate(() -> {
+            if (token.isCancelled()) {
+                return;
+            }
+            try {
+                synchronized (emitter) {
+                    emitter.send(SseEmitter.event().comment("ping"));
+                }
+            } catch (Exception e) {
+                token.cancel();
+                try {
+                    emitter.completeWithError(e);
+                } catch (Exception ignore) {
+                    // 客户端已断开
+                }
+            }
+        }, 15, 15, TimeUnit.SECONDS);
+
         Thread worker = new Thread(() -> {
             try {
                 AiAgentService.AgentResult r = agentService.stepStream(
@@ -100,29 +156,46 @@ public class AiController {
                         new Consumer<String>() {
                             @Override
                             public void accept(String text) {
+                                if (token.isCancelled()) {
+                                    throw new AiCancellationToken.CancelledException();
+                                }
                                 Map<String, Object> ev = new LinkedHashMap<>();
                                 ev.put("type", "delta");
                                 ev.put("text", text);
-                                sendEvent(emitter, ev);
+                                sendEvent(emitter, ev, token);
                             }
-                        });
+                        }, token);
+                if (token.isCancelled()) {
+                    completeQuietly(emitter);
+                    return;
+                }
                 Map<String, Object> ev = new LinkedHashMap<>();
                 ev.put("type", "result");
                 ev.put("result", r);
-                sendEvent(emitter, ev);
+                sendEvent(emitter, ev, token);
                 emitter.complete();
+            } catch (AiCancellationToken.CancelledException e) {
+                // 用户停止或连接断开：安静收尾，不再回传错误
+                completeQuietly(emitter);
             } catch (Throwable e) {
+                if (token.isCancelled()) {
+                    completeQuietly(emitter);
+                    return;
+                }
                 String msg = (e.getMessage() == null || e.getMessage().isEmpty())
                         ? e.toString() : e.getMessage();
                 try {
                     Map<String, Object> ev = new LinkedHashMap<>();
                     ev.put("type", "error");
                     ev.put("message", msg);
-                    sendEvent(emitter, ev);
+                    sendEvent(emitter, ev, token);
                 } catch (Throwable ignore) {
                     // 客户端已断开
                 }
-                emitter.complete();
+                completeQuietly(emitter);
+            } finally {
+                heartbeat.cancel(false);
+                removeRun(runId, token);
             }
         }, "ai-agent-stream");
         worker.setDaemon(true);
@@ -130,10 +203,32 @@ public class AiController {
         return emitter;
     }
 
-    /** AI 终端：用户确认后执行指定命令 */
+    /** AI 终端：用户确认后执行指定命令（支持按 runId 取消） */
     @PostMapping("/agent/exec")
     public R<AiAgentService.AgentResult> agentExec(@RequestBody AgentExecForm form) {
-        return R.ok(agentService.exec(form.getSessionId(), form.getCwd(), form.getCommand()));
+        final String runId = form.getRunId();
+        final AiCancellationToken token = new AiCancellationToken();
+        if (runId != null && !runId.isEmpty()) {
+            activeRuns.put(runId, token);
+        }
+        try {
+            return R.ok(agentService.exec(form.getSessionId(), form.getCwd(),
+                    form.getCommand(), token));
+        } finally {
+            removeRun(runId, token);
+        }
+    }
+
+    /** 前端点「停止」时调用：取消模型生成，并终止正在执行的 AI 命令 */
+    @PostMapping("/agent/cancel")
+    public R<Void> agentCancel(@RequestBody Map<String, String> body) {
+        String runId = body == null ? null : body.get("runId");
+        AiCancellationToken token = (runId == null || runId.isEmpty())
+                ? null : activeRuns.remove(runId);
+        if (token != null) {
+            token.cancel();
+        }
+        return R.ok();
     }
 
     /* ---------- AI 终端对话（SQLite 持久化） ---------- */
@@ -164,11 +259,32 @@ public class AiController {
         return R.ok();
     }
 
-    private static void sendEvent(SseEmitter emitter, Map<String, Object> event) {
+    private static void sendEvent(SseEmitter emitter, Map<String, Object> event,
+                                  AiCancellationToken token) {
+        if (token.isCancelled()) {
+            throw new AiCancellationToken.CancelledException();
+        }
         try {
-            emitter.send(SseEmitter.event().data(event, MediaType.APPLICATION_JSON));
+            synchronized (emitter) {
+                emitter.send(SseEmitter.event().data(event, MediaType.APPLICATION_JSON));
+            }
         } catch (Exception e) {
-            throw new IllegalStateException("连接已断开", e);
+            token.cancel();
+            throw new AiCancellationToken.CancelledException();
+        }
+    }
+
+    private static void completeQuietly(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (Exception ignore) {
+            // 客户端已断开
+        }
+    }
+
+    private void removeRun(String runId, AiCancellationToken token) {
+        if (runId != null && !runId.isEmpty()) {
+            activeRuns.remove(runId, token);
         }
     }
 
@@ -207,6 +323,7 @@ public class AiController {
         private String sessionId;
         private String cwd;
         private boolean auto;
+        private String runId;
         private List<AiAgentService.AgentMessage> messages;
     }
 
@@ -215,6 +332,7 @@ public class AiController {
         private String sessionId;
         private String cwd;
         private String command;
+        private String runId;
     }
 
     @Data

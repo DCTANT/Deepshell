@@ -32,6 +32,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -492,7 +493,7 @@ public class SshSessionManager {
      * 在独立 exec 通道执行命令并捕获输出（stdout/stderr 合并），不干扰交互终端
      */
     public String execCapture(SshSession s, String command, long timeoutMs) throws Exception {
-        return execRaw(s, command, timeoutMs, Integer.MAX_VALUE).output;
+        return execRaw(s, command, timeoutMs, Integer.MAX_VALUE, () -> false).output;
     }
 
     /** exec 通道原始执行结果（内部载体） */
@@ -500,6 +501,7 @@ public class SshSessionManager {
         volatile String output = "";
         volatile boolean done;
         volatile boolean aborted;
+        volatile boolean cancelled;
         boolean truncated;
         boolean timedOut;
         int exitStatus = -1;
@@ -509,7 +511,8 @@ public class SshSessionManager {
      * exec 通道底层执行：读线程 + join 超时（静默卡死的命令也能超时退出），
      * 关闭 stdin 让读取标准输入的命令（如无参数 cat）立即收到 EOF 而不是挂死。
      */
-    private RawExec execRaw(SshSession s, String command, long timeoutMs, int maxBytes) throws Exception {
+    private RawExec execRaw(SshSession s, String command, long timeoutMs, int maxBytes,
+                            BooleanSupplier cancelled) throws Exception {
         ChannelExec exec = (ChannelExec) s.getJsch().openChannel("exec");
         exec.setCommand(command);
         // 立即向远端 stdin 发 EOF：读取标准输入的命令（如无参数 cat）直接结束而不是挂起
@@ -540,8 +543,26 @@ public class SshSessionManager {
         }, "ssh-exec-" + s.getId());
         reader.setDaemon(true);
         reader.start();
-        reader.join(timeoutMs);
-        if (!r.done) {
+        long deadline = System.currentTimeMillis() + Math.max(1L, timeoutMs);
+        while (!r.done && System.currentTimeMillis() < deadline) {
+            if (cancelled != null && cancelled.getAsBoolean()) {
+                r.cancelled = true;
+                r.aborted = true;
+                try {
+                    exec.disconnect();
+                } catch (Exception ignore) {
+                    // 取消时断开通道，读线程会随之退出
+                }
+                break;
+            }
+            try {
+                reader.join(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (!r.done && !r.cancelled) {
             r.aborted = true;
             r.timedOut = true;
         }
@@ -564,6 +585,7 @@ public class SshSessionManager {
         public String cwd;
         public boolean truncated;
         public boolean timedOut;
+        public boolean cancelled;
     }
 
     private static final String END_MARK = "__DEEPSHELL_END__";
@@ -576,7 +598,13 @@ public class SshSessionManager {
      */
     public ExecResult execInShell(SshSession s, String command, String cwd, long timeoutMs, int maxBytes)
             throws Exception {
-        return parseWrappedOutput(execRaw(s, wrapCommand(command, cwd), timeoutMs, maxBytes));
+        return execInShell(s, command, cwd, timeoutMs, maxBytes, () -> false);
+    }
+
+    /** 可取消的 exec：cancelled 变为 true 时断开通道，终止捕获并尽快返回 */
+    public ExecResult execInShell(SshSession s, String command, String cwd, long timeoutMs, int maxBytes,
+                                  BooleanSupplier cancelled) throws Exception {
+        return parseWrappedOutput(execRaw(s, wrapCommand(command, cwd), timeoutMs, maxBytes, cancelled));
     }
 
     /** 拆出命令输出（去掉标记行）、退出码与执行后的工作目录；标记缺失时用 JSch 退出码兜底 */
@@ -584,6 +612,7 @@ public class SshSessionManager {
         ExecResult res = new ExecResult();
         res.truncated = raw.truncated;
         res.timedOut = raw.timedOut;
+        res.cancelled = raw.cancelled;
         String out = raw.output == null ? "" : raw.output;
         int idx = out.lastIndexOf(END_MARK);
         if (idx >= 0) {

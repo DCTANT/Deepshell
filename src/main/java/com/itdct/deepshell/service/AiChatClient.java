@@ -75,11 +75,22 @@ public class AiChatClient {
      * 若服务端忽略 stream 参数而返回一次性 JSON，会自动退化为单次回调。
      */
     public String stream(String systemPrompt, List<Map<String, String>> history, Consumer<String> onDelta) {
+        return stream(systemPrompt, history, onDelta, new AiCancellationToken());
+    }
+
+    /** 可取消的流式调用：前端停止时断开 HTTP 连接并尽快退出读取循环 */
+    public String stream(String systemPrompt, List<Map<String, String>> history,
+                         Consumer<String> onDelta, AiCancellationToken token) {
+        final AiCancellationToken cancel = token == null ? new AiCancellationToken() : token;
+        if (cancel.isCancelled()) {
+            throw new AiCancellationToken.CancelledException();
+        }
         String key = apiKeyOrThrow();
         String url = completionsUrl();
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(url).openConnection();
+            cancel.bind(conn);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(10000);
@@ -93,6 +104,9 @@ public class AiChatClient {
                 os.flush();
             }
 
+            if (cancel.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
             int code = conn.getResponseCode();
             if (code >= 400) {
                 throw new IllegalStateException("AI 接口调用失败（HTTP " + code + "）："
@@ -103,6 +117,9 @@ public class AiChatClient {
             if (contentType == null || !contentType.toLowerCase().contains("event-stream")) {
                 // 部分兼容服务忽略 stream 参数，仍返回普通 JSON
                 String text = extractMessageContent(readAll(conn.getInputStream()));
+                if (cancel.isCancelled()) {
+                    throw new AiCancellationToken.CancelledException();
+                }
                 if (!text.isEmpty()) {
                     onDelta.accept(text);
                     return text;
@@ -115,6 +132,9 @@ public class AiChatClient {
                     new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = br.readLine()) != null) {
+                    if (cancel.isCancelled()) {
+                        throw new AiCancellationToken.CancelledException();
+                    }
                     if (!line.startsWith("data:")) {
                         continue;
                     }
@@ -142,20 +162,35 @@ public class AiChatClient {
                     // 只取正式内容，忽略 reasoning_content 等思考过程字段
                     String delta = choices.get(0).path("delta").path("content").asText("");
                     if (!delta.isEmpty()) {
+                        if (cancel.isCancelled()) {
+                            throw new AiCancellationToken.CancelledException();
+                        }
                         all.append(delta);
                         onDelta.accept(delta);
                     }
                 }
             }
+            if (cancel.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
             if (all.length() == 0) {
                 throw new IllegalStateException("AI 返回内容为空");
             }
             return all.toString();
+        } catch (AiCancellationToken.CancelledException e) {
+            throw e;
         } catch (IllegalArgumentException | IllegalStateException e) {
+            if (cancel.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
             throw e;
         } catch (Exception e) {
+            if (cancel.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
             throw new IllegalStateException("AI 接口调用失败：" + e.getMessage());
         } finally {
+            cancel.clear();
             if (conn != null) {
                 conn.disconnect();
             }
