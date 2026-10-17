@@ -566,7 +566,8 @@
 
     <!-- AI 可视化桌面（Windows 资源管理器式文件页） -->
     <div class="ai-desktop" v-if="desktop.visible" ref="desktopRoot" tabindex="-1"
-         @click="onDesktopSurfaceClick">
+         @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
+         @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
         <div class="dsk-topbar">
             <button class="dsk-back" title="返回工作台" @click="closeAiDesktop">
                 <i class="el-icon-back"></i>
@@ -847,9 +848,9 @@
                     <span class="dot" :class="'dot-' + desktopTab.status"></span>{{ statusText(desktopTab) }}
                 </span>
             </div>
-            <div class="dsk-tray-clock" :title="desktopClockFull">
+            <div class="dsk-tray-clock" :title="desktopClockFull + ' · ' + desktopClockTimezone">
                 <span class="dsk-clock-time">{{ desktopClockTime }}</span>
-                <span class="dsk-clock-date">{{ desktopClockDate }}</span>
+                <span class="dsk-clock-date" v-if="desktop.clockShowDate">{{ desktopClockDate }}</span>
             </div>
             <button class="dsk-show-desktop" title="返回工作台" @click.stop="closeAiDesktop">
                 <i class="el-icon-s-fold"></i>
@@ -972,6 +973,332 @@
                 <button class="dsk-start-foot-btn primary" @click="closeAiDesktop">
                     <i class="el-icon-back"></i>返回工作台
                 </button>
+            </div>
+        </div>
+
+        <!-- 设置（控制面板） -->
+        <div class="dsk-settings-mask" v-if="desktop.settingsVisible" @click.self="closeDesktopSettings">
+            <div class="dsk-settings" @click.stop>
+                <div class="dsk-settings-head">
+                    <div class="dsk-settings-badge"><i class="el-icon-setting"></i></div>
+                    <div class="dsk-settings-headtext">
+                        <div class="dsk-settings-title">设置</div>
+                        <div class="dsk-settings-sub">控制面板 · {{ desktopTab ? desktopTab.title : '未连接' }}</div>
+                    </div>
+                    <span class="spacer"></span>
+                    <button class="dsk-settings-x" title="关闭 (Esc)" @click="closeDesktopSettings">
+                        <i class="el-icon-close"></i>
+                    </button>
+                </div>
+                <div class="dsk-settings-body">
+                    <aside class="dsk-settings-nav">
+                        <button v-for="s in desktopSettingsSections" :key="s.id"
+                                class="dsk-settings-nav-item"
+                                :class="{ active: desktop.settingsSection === s.id }"
+                                @click="desktop.settingsSection = s.id">
+                            <i :class="s.icon"></i><span>{{ s.label }}</span>
+                        </button>
+                        <div class="dsk-settings-nav-sec">当前会话</div>
+                        <div class="dsk-settings-session">
+                            <div class="dsk-settings-session-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
+                            <div class="dsk-settings-session-host">{{ desktopTab ? desktopTab.host : '' }}</div>
+                            <div class="dsk-settings-session-status">
+                                <span class="dot" :class="'dot-' + (desktopTab ? desktopTab.status : 'closed')"></span>
+                                {{ desktopTab ? statusText(desktopTab) : '未连接' }}
+                            </div>
+                        </div>
+                    </aside>
+                    <section class="dsk-settings-main">
+                        <template v-if="desktop.settingsSection === 'appearance'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-monitor"></i>
+                                <div><b>外观与桌面</b><span>文件视图、缩略图与终端外观</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>默认视图</b>
+                                        <span>更改后立即应用，下次进入桌面时保持</span>
+                                    </div>
+                                    <div class="dsk-set-views">
+                                        <button v-for="v in desktopViews" :key="'set' + v.id"
+                                                :class="{ active: desktop.viewMode === v.id }"
+                                                @click="setDesktopView(v.id)">
+                                            <i :class="v.icon"></i><span>{{ v.label }}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>图片缩略图</b>
+                                        <span>在大图标 / 中图标视图中直接显示图片内容</span>
+                                    </div>
+                                    <el-switch v-model="desktop.thumbnailsEnabled" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>显示隐藏文件</b>
+                                        <span>显示名称以“.”开头的文件和文件夹</span>
+                                    </div>
+                                    <el-switch v-model="desktop.showHidden" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>终端字体</b>
+                                        <span>{{ fontSettings.family }} · {{ fontSettings.size }}px</span>
+                                    </div>
+                                    <el-button size="mini" @click="fontVisible = true">字体设置</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>背景图片</b>
+                                        <span>{{ bgSettings.url ? '已设置背景' : '未设置背景' }} · 不透明度
+                                            {{ Math.round(bgSettings.opacity * 100) }}%</span>
+                                    </div>
+                                    <el-button size="mini" @click="bgVisible = true">背景设置</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>恢复默认</b>
+                                        <span>大图标视图、开启缩略图与隐藏文件、按名称排序</span>
+                                    </div>
+                                    <el-button size="mini" type="danger" plain @click="resetDesktopSettings">
+                                        恢复默认
+                                    </el-button>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'time'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-time"></i>
+                                <div><b>时间与时钟</b><span>任务栏时钟的显示格式与时区</span></div>
+                            </div>
+                            <div class="dsk-time-preview">
+                                <div class="dsk-time-big">{{ desktopClockTime }}</div>
+                                <div class="dsk-time-meta">
+                                    {{ desktopClockDate }} · {{ desktopClockTimezone }}（{{ desktopClockOffset }}）
+                                </div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>24 小时制</b><span>关闭后使用上午 / 下午 12 小时格式</span>
+                                    </div>
+                                    <el-switch v-model="desktop.clock24h" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>显示秒</b><span>在任务栏时钟中显示秒数</span>
+                                    </div>
+                                    <el-switch v-model="desktop.clockSeconds" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>显示日期</b><span>在时间下方显示年月日</span>
+                                    </div>
+                                    <el-switch v-model="desktop.clockShowDate" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>时区</b><span>跟随运行浏览器的本机时区</span></div>
+                                    <span class="dsk-set-value">{{ desktopClockTimezone }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>时区偏移</b><span>相对于 UTC 的偏移量</span></div>
+                                    <span class="dsk-set-value">{{ desktopClockOffset }}</span>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                这些设置只改变任务栏时钟的显示方式，不会修改远端服务器时间。
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'shortcuts'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-set-up"></i>
+                                <div><b>快捷键</b><span>终端与命令输入栏的交互方式</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>双击 Ctrl</b><span>显示 / 隐藏命令输入栏</span>
+                                    </div>
+                                    <el-switch v-model="hotkeySettings.doubleCtrl" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>Tab 补全</b><span>命令输入栏智能补全路径 / 历史 / 快捷命令</span>
+                                    </div>
+                                    <el-switch v-model="hotkeySettings.tabComplete" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>Esc 关闭输入栏</b><span>按下 Esc 时关闭终端底部命令栏</span>
+                                    </div>
+                                    <el-switch v-model="hotkeySettings.escClose" size="mini"></el-switch>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜
+                                桌面预览中 ← → 切换图片、R 旋转、Esc 关闭
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'power'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-switch-button"></i>
+                                <div><b>电源与休眠</b><span>桌面空闲策略与当前 SSH 会话电源</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>空闲自动返回工作台</b>
+                                        <span>无操作达到设定时间后，桌面会自动关闭并回到工作台</span>
+                                    </div>
+                                    <el-select v-model="desktop.idleMinutes" size="mini" class="dsk-set-select">
+                                        <el-option :value="0" label="关闭"></el-option>
+                                        <el-option :value="5" label="5 分钟"></el-option>
+                                        <el-option :value="15" label="15 分钟"></el-option>
+                                        <el-option :value="30" label="30 分钟"></el-option>
+                                        <el-option :value="60" label="60 分钟"></el-option>
+                                    </el-select>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>关闭桌面</b><span>立即收起桌面，返回终端工作台</span>
+                                    </div>
+                                    <el-button size="mini" icon="el-icon-s-fold" @click="closeAiDesktop">
+                                        立即返回
+                                    </el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>重新连接</b><span>关闭桌面并重新建立当前 SSH 会话</span>
+                                    </div>
+                                    <el-button size="mini" icon="el-icon-refresh-right"
+                                               @click="desktopReconnectSession">重新连接</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>断开连接</b><span>关闭桌面并断开当前 SSH 会话，正在执行的命令会中断</span>
+                                    </div>
+                                    <el-button size="mini" type="danger" plain icon="el-icon-switch-button"
+                                               @click="desktopDisconnectSession">断开连接</el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                设置面板、开始菜单、图片预览或弹窗打开期间，空闲计时会暂停。网页工具不会关闭或重启远端服务器电源。
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'ai'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-magic-stick"></i>
+                                <div><b>AI 助手</b><span>命令翻译与 AI 运维终端使用的模型配置</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>模型厂商</b><span>用于 AI 终端和命令生成</span></div>
+                                    <span class="dsk-set-value">
+                                        {{ aiCurrentPreset ? aiCurrentPreset.name : (aiSetForm.provider || '未选择') }}
+                                    </span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>模型</b><span>接口返回的模型 ID</span></div>
+                                    <span class="dsk-set-value">{{ aiSetForm.model || '未选择' }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>API Key</b><span>保存在本机数据目录，不随连接同步</span></div>
+                                    <span class="dsk-set-value" :class="{ ok: aiSetForm.hasKey, warn: !aiSetForm.hasKey }">
+                                        {{ aiSetForm.hasKey ? '已配置' : '未配置' }}
+                                    </span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>AI 设置</b><span>更换厂商、接口地址、模型或 API Key</span></div>
+                                    <el-button size="mini" type="primary" @click="onMenuCommand('ai')">
+                                        打开 AI 设置
+                                    </el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                开始菜单搜索会在当前目录 6 层子目录中查找，最多返回 100 项；AI 终端执行命令时会在同一目录自动刷新桌面。
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'network'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-connection"></i>
+                                <div><b>网络与连接</b><span>当前 SSH 会话与局域网访问</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>局域网访问</b>
+                                        <span>当前：{{ lanSettings.effectiveLan ? '已开放' : '仅本机' }} ·
+                                            端口 {{ lanSettings.port || 18080 }}</span>
+                                    </div>
+                                    <el-switch v-model="lanSettings.lanEnabled" size="mini"
+                                               @change="saveLan"></el-switch>
+                                </div>
+                                <div class="dsk-set-row" v-if="lanSettings.restartRequired">
+                                    <div class="dsk-set-info">
+                                        <b>需要重启</b><span>局域网访问设置与运行状态不一致，重启应用后生效</span>
+                                    </div>
+                                    <span class="dsk-set-value warn">待重启</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>当前连接</b>
+                                        <span>{{ desktopTab ? desktopTab.title + ' · ' + desktopTab.host : '未连接' }}</span>
+                                    </div>
+                                    <el-button size="mini" @click="openConnectDialog">连接管理</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>局域网设置</b><span>查看访问地址、复制地址与安全提示</span></div>
+                                    <el-button size="mini" @click="onMenuCommand('lan')">打开局域网设置</el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                本工具无登录鉴权，请仅在可信局域网中开放访问；开放后需要重启应用生效。
+                            </div>
+                        </template>
+
+                        <template v-else>
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-cpu"></i>
+                                <div><b>系统信息</b><span>运行环境与本工具数据位置</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>版本</b><span>DeepShell</span></div>
+                                    <span class="dsk-set-value">{{ appInfo.version }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>Java 运行环境</b><span>当前应用使用的 JRE</span></div>
+                                    <span class="dsk-set-value">{{ appInfo.java }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>操作系统</b><span>运行本工具的机器</span></div>
+                                    <span class="dsk-set-value">{{ appInfo.os }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>数据目录</b><span>数据库、密钥、AI 配置与日志所在位置</span></div>
+                                    <span class="dsk-set-value dsk-set-mono">{{ appInfo.dataDir }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>系统信息</b><span>查看远端服务器 CPU、内存、磁盘与网络</span></div>
+                                    <el-button size="mini" @click="openDesktopSysInfo">查看服务器信息</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>关于</b><span>版本信息与运行环境</span></div>
+                                    <el-button size="mini" @click="onMenuCommand('about')">关于 DeepShell</el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                连接、密码、快捷命令等数据仅保存在本机数据目录；拷贝数据目录即可迁移。
+                            </div>
+                        </template>
+                    </section>
+                </div>
             </div>
         </div>
 
@@ -1117,6 +1444,7 @@
                 </div>
             </template>
         </div>
+
     </div>
 
     <div class="file-drop-mask" v-if="fileDragOver">
@@ -1631,6 +1959,7 @@
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
                     <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传；大 / 中图标视图会直接显示图片缩略图，<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速切换到 AI 终端 / SFTP / 进程 / 磁盘，右侧显示 CPU / 内存 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
                     <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>
                 </ul>
             </div>

@@ -90,6 +90,50 @@ function loadDesktopView() {
     return 'large';
 }
 
+/* 桌面设置：图片缩略图 / 显示隐藏文件 */
+function loadDesktopThumbs() {
+    try {
+        return localStorage.getItem('deepshell.desktopThumbs') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
+function loadDesktopShowHidden() {
+    try {
+        return localStorage.getItem('deepshell.desktopShowHidden') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
+function loadDesktopClock24h() {
+    try {
+        return localStorage.getItem('deepshell.clock24h') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
+function loadDesktopClockSeconds() {
+    try {
+        return localStorage.getItem('deepshell.clockSeconds') === '1';
+    } catch (e) { /* ignore */ }
+    return false;
+}
+
+function loadDesktopClockShowDate() {
+    try {
+        return localStorage.getItem('deepshell.clockShowDate') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
+function loadDesktopIdleMinutes() {
+    try {
+        var v = parseInt(localStorage.getItem('deepshell.idleMinutes'), 10);
+        return isNaN(v) || v < 0 ? 0 : v;
+    } catch (e) { /* ignore */ }
+    return 0;
+}
+
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
 var AI_CHAT_MAX = 40;   // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
 
@@ -229,8 +273,17 @@ new Vue({
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
             { id: 'process', label: '进程', icon: 'el-icon-cpu', color: '#e06c75' },
             { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
-            { id: 'settings', label: 'AI 设置', icon: 'el-icon-magic-stick', color: '#7c4dff' },
+            { id: 'control', label: '设置', icon: 'el-icon-setting', color: '#54657e' },
             { id: 'connect', label: '连接管理', icon: 'el-icon-monitor', color: '#2f8fce' }
+        ],
+        desktopSettingsSections: [
+            { id: 'appearance', label: '外观与桌面', icon: 'el-icon-monitor' },
+            { id: 'time', label: '时间与时钟', icon: 'el-icon-time' },
+            { id: 'shortcuts', label: '快捷键', icon: 'el-icon-set-up' },
+            { id: 'power', label: '电源与休眠', icon: 'el-icon-switch-button' },
+            { id: 'ai', label: 'AI 助手', icon: 'el-icon-magic-stick' },
+            { id: 'network', label: '网络与连接', icon: 'el-icon-connection' },
+            { id: 'system', label: '系统信息', icon: 'el-icon-cpu' }
         ],
         desktop: {
             visible: false,
@@ -275,7 +328,15 @@ new Vue({
             previewPanY: 0,
             previewNaturalW: 0,
             previewNaturalH: 0,
-            thumbFailed: {}
+            thumbFailed: {},
+            settingsVisible: false,
+            settingsSection: 'appearance',
+            thumbnailsEnabled: loadDesktopThumbs(),
+            showHidden: loadDesktopShowHidden(),
+            clock24h: loadDesktopClock24h(),
+            clockSeconds: loadDesktopClockSeconds(),
+            clockShowDate: loadDesktopClockShowDate(),
+            idleMinutes: loadDesktopIdleMinutes()
         },
         connectDialogVisible: false,
         connFilter: 'all',
@@ -395,6 +456,27 @@ new Vue({
                     self.$refs.desktopStartBody.scrollTop = 0;
                 }
             });
+        },
+        'desktop.thumbnailsEnabled': function (v) {
+            try { localStorage.setItem('deepshell.desktopThumbs', v ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        'desktop.showHidden': function (v) {
+            try { localStorage.setItem('deepshell.desktopShowHidden', v ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        'desktop.clock24h': function (v) {
+            try { localStorage.setItem('deepshell.clock24h', v ? '1' : '0'); } catch (e) { /* ignore */ }
+            this.desktop.clockNow = Date.now();
+        },
+        'desktop.clockSeconds': function (v) {
+            try { localStorage.setItem('deepshell.clockSeconds', v ? '1' : '0'); } catch (e) { /* ignore */ }
+            this.desktop.clockNow = Date.now();
+        },
+        'desktop.clockShowDate': function (v) {
+            try { localStorage.setItem('deepshell.clockShowDate', v ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        'desktop.idleMinutes': function (v) {
+            try { localStorage.setItem('deepshell.idleMinutes', String(v || 0)); } catch (e) { /* ignore */ }
+            this._deskLastActivity = Date.now();
         }
     },
     computed: {
@@ -457,7 +539,11 @@ new Vue({
         },
         desktopShownEntries: function () {
             var kw = (this.desktop.keyword || '').trim().toLowerCase();
+            var showHidden = this.desktop.showHidden;
             var rows = (this.desktop.entries || []).filter(function (r) {
+                if (!showHidden && String(r.name).charAt(0) === '.') {
+                    return false;
+                }
                 return !kw || String(r.name).toLowerCase().indexOf(kw) >= 0;
             });
             var by = this.desktop.sortBy;
@@ -545,7 +631,11 @@ new Vue({
             if (!q) {
                 return [];
             }
+            var showHidden = this.desktop.showHidden;
             return (this.desktop.entries || []).filter(function (r) {
+                if (!showHidden && String(r.name).charAt(0) === '.') {
+                    return false;
+                }
                 return String(r.name).toLowerCase().indexOf(q) >= 0;
             }).slice(0, 8);
         },
@@ -570,7 +660,14 @@ new Vue({
         desktopClockTime: function () {
             var d = new Date(this.desktop.clockNow);
             var p = function (x) { return (x < 10 ? '0' : '') + x; };
-            return p(d.getHours()) + ':' + p(d.getMinutes());
+            var h = d.getHours();
+            var sec = this.desktop.clockSeconds ? ':' + p(d.getSeconds()) : '';
+            if (this.desktop.clock24h) {
+                return p(h) + ':' + p(d.getMinutes()) + sec;
+            }
+            var ap = h < 12 ? '上午' : '下午';
+            var h12 = h % 12 || 12;
+            return h12 + ':' + p(d.getMinutes()) + sec + ' ' + ap;
         },
         desktopClockDate: function () {
             var d = new Date(this.desktop.clockNow);
@@ -581,6 +678,20 @@ new Vue({
             var p = function (x) { return (x < 10 ? '0' : '') + x; };
             return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 '
                 + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+        },
+        desktopClockTimezone: function () {
+            try {
+                return Intl.DateTimeFormat().resolvedOptions().timeZone || '本地时区';
+            } catch (e) {
+                return '本地时区';
+            }
+        },
+        desktopClockOffset: function () {
+            var off = -new Date(this.desktop.clockNow).getTimezoneOffset();
+            var sign = off >= 0 ? '+' : '-';
+            var abs = Math.abs(off);
+            var p = function (x) { return (x < 10 ? '0' : '') + x; };
+            return 'UTC' + sign + Math.floor(abs / 60) + ':' + p(abs % 60);
         },
         filteredProcRows: function () {
             var t = this.activeTab;
@@ -1736,6 +1847,7 @@ new Vue({
             this.desktop.startSearched = false;
             this.desktop.startError = '';
             this.desktop.startSearching = false;
+            this.desktop.settingsVisible = false;
             this.desktop.pendingSelect = '';
             this.desktop.pendingOpen = false;
             this.closeDesktopPreview();
@@ -1764,6 +1876,7 @@ new Vue({
             this.desktop.startSearched = false;
             this.desktop.startError = '';
             this.desktop.startSearching = false;
+            this.desktop.settingsVisible = false;
             this.desktop.pendingSelect = '';
             this.desktop.pendingOpen = false;
             this.closeDesktopPreview();
@@ -1782,15 +1895,47 @@ new Vue({
         startDesktopClock: function () {
             this.stopDesktopClock();
             this.desktop.clockNow = Date.now();
+            this._deskLastActivity = Date.now();
             var self = this;
             this._deskClockTimer = setInterval(function () {
                 self.desktop.clockNow = Date.now();
+                self.checkDesktopIdle();
             }, 1000);
         },
         stopDesktopClock: function () {
             if (this._deskClockTimer) {
                 clearInterval(this._deskClockTimer);
                 this._deskClockTimer = null;
+            }
+        },
+        touchDesktopActivity: function () {
+            this._deskLastActivity = Date.now();
+        },
+        hasDesktopDialogOpen: function () {
+            return this.fontVisible || this.hotkeyVisible || this.bgVisible || this.helpVisible
+                || this.aboutVisible || this.lanVisible || this.aiSetVisible || this.sysInfoVisible
+                || this.procDetailVisible || this.connectDialogVisible || this.connImportVisible
+                || this.connExportVisible || this.cmdEditDialog || this.editVisible || this.renameVisible;
+        },
+        checkDesktopIdle: function () {
+            var mins = this.desktop.idleMinutes;
+            if (!mins || !this.desktop.visible) {
+                return;
+            }
+            if (this.desktop.settingsVisible || this.desktop.startOpen || this.desktop.previewVisible
+                    || this.desktop.menu.visible || this.desktop.dragNames.length
+                    || this.desktop.loading || this._deskDragDepth) {
+                this._deskLastActivity = Date.now();
+                return;
+            }
+            if (this.hasDesktopDialogOpen()) {
+                this._deskLastActivity = Date.now();
+                return;
+            }
+            if (Date.now() - (this._deskLastActivity || Date.now()) >= mins * 60000) {
+                this._deskLastActivity = Date.now();
+                this.closeAiDesktop();
+                ELEMENT.Message.info('桌面空闲已 ' + mins + ' 分钟，已自动返回工作台');
             }
         },
         normalizeDesktopPath: function (path) {
@@ -2086,6 +2231,9 @@ new Vue({
         },
         /* ---------- 图片缩略图 / 预览 ---------- */
         desktopShowThumb: function (row) {
+            if (!this.desktop.thumbnailsEnabled) {
+                return false;
+            }
             if (this.desktop.viewMode !== 'large' && this.desktop.viewMode !== 'medium') {
                 return false;
             }
@@ -2861,6 +3009,7 @@ new Vue({
             if (!this.desktop.visible) {
                 return;
             }
+            this.touchDesktopActivity();
             if (this.desktop.previewVisible) {
                 if (e.key === 'Escape') {
                     this.closeDesktopPreview();
@@ -2883,6 +3032,19 @@ new Vue({
                 } else if (e.key === 'r' || e.key === 'R') {
                     this.desktopPreviewRotate();
                     e.preventDefault();
+                }
+                return;
+            }
+            if (this.desktop.settingsVisible) {
+                if (e.key === 'Escape') {
+                    // 有子弹窗时交给 Element 自己关闭，避免连同设置面板一起关掉
+                    var subDialog = this.fontVisible || this.bgVisible || this.aiSetVisible
+                        || this.lanVisible || this.aboutVisible || this.sysInfoVisible
+                        || this.connectDialogVisible || this.helpVisible || this.hotkeyVisible;
+                    if (!subDialog) {
+                        this.closeDesktopSettings();
+                        e.preventDefault();
+                    }
                 }
                 return;
             }
@@ -2978,6 +3140,10 @@ new Vue({
                 this.openDesktopSysInfo();
                 return;
             }
+            if (id === 'control') {
+                this.openDesktopSettings();
+                return;
+            }
             if (id === 'settings' || id === 'connect' || id === 'help' || id === 'about') {
                 this.closeAiDesktop();
                 this.$nextTick(function () {
@@ -3003,6 +3169,71 @@ new Vue({
             if (id === 'process' && this.activeTab && this.activeTab.sessionId) {
                 this.loadProcesses(this.activeTab);
             }
+        },
+        /* ---------- 设置（控制面板） ---------- */
+        openDesktopSettings: function () {
+            this.desktop.startOpen = false;
+            this.desktop.menu.visible = false;
+            this.desktop.settingsVisible = true;
+            this.desktop.settingsSection = 'appearance';
+            this.loadAppInfo();
+            this.loadAiConfig();
+            this.loadLan();
+        },
+        closeDesktopSettings: function () {
+            this.desktop.settingsVisible = false;
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+        },
+        resetDesktopSettings: function () {
+            var self = this;
+            this.$confirm('恢复桌面默认设置？默认视图将改为大图标，并重新开启图片缩略图和隐藏文件显示。',
+                '恢复默认设置', { type: 'warning', confirmButtonText: '恢复默认', cancelButtonText: '取消' })
+                .then(function () {
+                    self.setDesktopView('large');
+                    self.desktop.thumbnailsEnabled = true;
+                    self.desktop.showHidden = true;
+                    self.desktop.sortBy = 'name';
+                    self.desktop.sortDir = 'asc';
+                    ELEMENT.Message.success('已恢复桌面默认设置');
+                })
+                .catch(function () { /* 取消 */ });
+        },
+        desktopReconnectSession: function () {
+            var t = this.desktopTab;
+            if (!t) {
+                return;
+            }
+            var self = this;
+            this.$confirm('重新连接当前会话？桌面会关闭，并重新建立 SSH 连接。',
+                '重新连接', { type: 'warning', confirmButtonText: '重新连接', cancelButtonText: '取消' })
+                .then(function () {
+                    self.closeAiDesktop();
+                    self.$nextTick(function () {
+                        self.reconnectTab(t);
+                    });
+                })
+                .catch(function () { /* 取消 */ });
+        },
+        desktopDisconnectSession: function () {
+            var t = this.desktopTab;
+            if (!t) {
+                return;
+            }
+            var self = this;
+            this.$confirm('断开当前 SSH 会话？桌面会关闭，正在执行的终端命令会中断。',
+                '断开连接', { type: 'warning', confirmButtonText: '断开', cancelButtonText: '取消' })
+                .then(function () {
+                    self.closeAiDesktop();
+                    self.$nextTick(function () {
+                        self.disconnectTab(t);
+                    });
+                })
+                .catch(function () { /* 取消 */ });
         },
         openDesktopSysInfo: function () {
             this.desktop.startOpen = false;

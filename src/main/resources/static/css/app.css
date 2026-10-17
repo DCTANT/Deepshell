@@ -4282,3 +4282,393 @@ body.resizing .term-host {
 .dsk-grid.medium .dsk-thumb img {
     border-radius: 4px;
 }
+/* ---------- 设置（控制面板） ---------- */
+.dsk-settings-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 4700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(8, 12, 18, .5);
+    backdrop-filter: blur(2px);
+}
+
+.dsk-settings {
+    width: 820px;
+    max-width: 94vw;
+    height: 600px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #dbe2ec;
+    border-radius: 12px;
+    background: #fff;
+    color: var(--text);
+    box-shadow: 0 24px 70px rgba(5, 12, 25, .35);
+}
+
+.dsk-settings-head {
+    flex: 0 0 auto;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 0 16px;
+    background: linear-gradient(120deg, #24344f, #1a2537);
+    color: #eef5ff;
+}
+
+.dsk-settings-badge {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    background: linear-gradient(135deg, #4c8dff, #2f63d8);
+    color: #fff;
+    font-size: 18px;
+    box-shadow: 0 3px 10px rgba(44, 100, 210, .4);
+}
+
+.dsk-settings-headtext {
+    min-width: 0;
+}
+
+.dsk-settings-title {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.dsk-settings-sub {
+    margin-top: 2px;
+    color: #9fb4d4;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-settings-x {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: #b9c9e1;
+    cursor: pointer;
+}
+
+.dsk-settings-x:hover {
+    background: rgba(255, 255, 255, .12);
+    color: #fff;
+}
+
+.dsk-settings-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+.dsk-settings-nav {
+    width: 190px;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 8px;
+    background: #f7f8fa;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+}
+
+.dsk-settings-nav-item {
+    width: 100%;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #405063;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.dsk-settings-nav-item > i {
+    width: 16px;
+    flex: 0 0 auto;
+    color: #7f8ca0;
+    text-align: center;
+}
+
+.dsk-settings-nav-item:hover {
+    background: #edf3fc;
+}
+
+.dsk-settings-nav-item.active {
+    background: #dce9ff;
+    border-color: #c1d7fa;
+    color: #134fa8;
+    font-weight: 600;
+}
+
+.dsk-settings-nav-item.active > i {
+    color: #2f6fd6;
+}
+
+.dsk-settings-nav-sec {
+    margin: 18px 8px 6px;
+    color: #9aa4b2;
+    font-size: 10.5px;
+    letter-spacing: .3px;
+}
+
+.dsk-settings-session {
+    margin: 0 2px;
+    padding: 9px 10px;
+    border: 1px solid #e6ebf2;
+    border-radius: 7px;
+    background: #fff;
+    font-size: 11px;
+}
+
+.dsk-settings-session-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #33404f;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-settings-session-host {
+    margin-top: 3px;
+    color: #8a96a8;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-settings-session-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 5px;
+    color: #7b8798;
+}
+
+.dsk-settings-main {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 20px 24px 26px;
+    background: #fff;
+}
+
+.dsk-set-heading {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin-bottom: 14px;
+}
+
+.dsk-set-heading > i {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: #eaf2ff;
+    color: #2f6fd6;
+    font-size: 17px;
+}
+
+.dsk-set-heading b {
+    display: block;
+    color: #263243;
+    font-size: 15px;
+}
+
+.dsk-set-heading span {
+    display: block;
+    margin-top: 2px;
+    color: #8b95a4;
+    font-size: 11px;
+}
+
+.dsk-set-card {
+    border: 1px solid #e2e8f1;
+    border-radius: 9px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.dsk-set-row {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 13px 15px;
+    border-bottom: 1px solid #eef2f7;
+}
+
+.dsk-set-row:last-child {
+    border-bottom: none;
+}
+
+.dsk-set-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.dsk-set-info > b {
+    display: block;
+    color: #33404f;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.dsk-set-info > span {
+    display: block;
+    margin-top: 3px;
+    color: #8b95a4;
+    font-size: 11px;
+    line-height: 1.55;
+    word-break: break-all;
+}
+
+.dsk-set-value {
+    flex: 0 0 auto;
+    color: #4b5a6d;
+    font-size: 12px;
+    text-align: right;
+    word-break: break-all;
+}
+
+.dsk-set-value.ok {
+    color: #21905b;
+}
+
+.dsk-set-value.warn {
+    color: #d18b16;
+}
+
+.dsk-set-mono {
+    max-width: 320px;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11px;
+}
+
+.dsk-set-views {
+    flex: 0 0 auto;
+    display: flex;
+    border: 1px solid #dfe4ec;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.dsk-set-views button {
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    border: none;
+    border-right: 1px solid #eef1f5;
+    background: #fff;
+    color: #64748a;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.dsk-set-views button:last-child {
+    border-right: none;
+}
+
+.dsk-set-views button:hover {
+    background: #f2f6fc;
+}
+
+.dsk-set-views button.active {
+    background: #e7f0ff;
+    color: #1c5fce;
+}
+
+.dsk-set-note {
+    margin-top: 13px;
+    padding: 10px 12px;
+    border-radius: 7px;
+    background: #f6f8fb;
+    color: #7f8a99;
+    font-size: 11px;
+    line-height: 1.75;
+}
+
+@media (max-width: 900px) {
+    .dsk-settings {
+        height: calc(100vh - 24px);
+        max-height: none;
+    }
+
+    .dsk-settings-nav {
+        width: 156px;
+    }
+
+    .dsk-settings-main {
+        padding: 16px;
+    }
+
+    .dsk-set-row {
+        flex-wrap: wrap;
+        gap: 9px;
+    }
+
+    .dsk-set-views {
+        flex-wrap: wrap;
+    }
+}
+
+/* 设置：时间预览 / 选择器 */
+.dsk-time-preview {
+    margin-bottom: 14px;
+    padding: 20px 22px;
+    border: 1px solid #d9e3f2;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #24344f, #162132);
+    color: #eef5ff;
+    box-shadow: 0 6px 18px rgba(25, 45, 80, .16);
+}
+
+.dsk-time-big {
+    font-family: Consolas, Menlo, monospace;
+    font-size: 34px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    line-height: 1.15;
+}
+
+.dsk-time-meta {
+    margin-top: 6px;
+    color: #9fb4d4;
+    font-size: 11.5px;
+}
+
+.dsk-set-select {
+    width: 148px;
+    flex: 0 0 auto;
+}
