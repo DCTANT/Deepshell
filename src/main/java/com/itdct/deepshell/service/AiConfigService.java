@@ -9,7 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
 
-/** AI 设置持久化：数据目录下的 ai.properties（OpenAI 兼容接口配置） */
+/** AI 设置持久化：数据目录下的 ai.properties（厂商 / OpenAI 兼容接口配置） */
 @Service
 public class AiConfigService {
 
@@ -32,6 +32,11 @@ public class AiConfigService {
         return p;
     }
 
+    /** 已保存的厂商 id；老配置（无该字段）返回空串，由调用方按地址推断 */
+    public String provider() {
+        return load().getProperty("provider", "").trim();
+    }
+
     public String baseUrl() {
         String v = load().getProperty("base-url", "").trim();
         return v.isEmpty() ? DEFAULT_BASE_URL : v;
@@ -47,8 +52,11 @@ public class AiConfigService {
     }
 
     /** apiKey 传 null / 空白表示保持原值 */
-    public synchronized void save(String baseUrl, String apiKey, String model) {
+    public synchronized void save(String provider, String baseUrl, String apiKey, String model) {
         Properties p = load();
+        if (provider != null && !provider.trim().isEmpty()) {
+            p.setProperty("provider", provider.trim());
+        }
         if (baseUrl != null) {
             p.setProperty("base-url", baseUrl.trim());
         }

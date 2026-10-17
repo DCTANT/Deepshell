@@ -767,11 +767,17 @@
     </el-dialog>
 
     <!-- AI 设置 -->
-    <el-dialog title="AI 设置（OpenAI 兼容接口 / DeepSeek）" :visible.sync="aiSetVisible" width="560px" append-to-body>
+    <el-dialog title="AI 设置（大语言模型）" :visible.sync="aiSetVisible" width="640px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">模型厂商</span>
+            <el-select size="small" v-model="aiSetForm.provider" style="flex:1" @change="onAiProviderChange">
+                <el-option v-for="p in aiProviders" :key="p.id" :label="p.name" :value="p.id"></el-option>
+            </el-select>
+        </div>
         <div class="set-row">
             <span class="set-label">API 地址</span>
-            <el-input size="small" v-model="aiSetForm.baseUrl" placeholder="https://api.deepseek.com"
-                      style="flex:1"></el-input>
+            <el-input size="small" v-model="aiSetForm.baseUrl" style="flex:1"
+                      :placeholder="aiCurrentPreset && aiCurrentPreset.baseUrl ? aiCurrentPreset.baseUrl : 'https://your-api-host/v1'"></el-input>
         </div>
         <div class="set-row">
             <span class="set-label">API Key</span>
@@ -780,11 +786,22 @@
         </div>
         <div class="set-row">
             <span class="set-label">模型</span>
-            <el-input size="small" v-model="aiSetForm.model" placeholder="deepseek-chat" style="flex:1"></el-input>
+            <el-select size="small" v-model="aiSetForm.model" filterable allow-create default-first-option
+                       style="flex:1" :loading="aiModelsLoading"
+                       placeholder="从列表选择，也可直接输入模型 ID">
+                <el-option v-for="m in aiModelOptions" :key="m" :label="m" :value="m"></el-option>
+            </el-select>
+            <el-button size="small" icon="el-icon-refresh" :loading="aiModelsLoading" style="margin-left:8px"
+                       @click="fetchAiModels()">刷新列表</el-button>
         </div>
-        <div class="set-hint" style="margin-top:10px;line-height:1.9">
-            · 兼容 OpenAI Chat Completions 协议：DeepSeek 默认地址 https://api.deepseek.com（Key 在 platform.deepseek.com 获取），也可填任意兼容服务地址<br>
-            · 配置保存在数据目录下的 ai.properties，仅在点击「AI 生成命令」时随需求描述发送到该接口
+        <div class="set-hint" style="line-height:1.9;min-height:19px">
+            <span v-if="aiModelsLoading">正在从厂商接口实时获取模型列表…</span>
+            <span v-else-if="aiModelsNote">{{ aiModelsNote }}</span>
+        </div>
+        <div class="set-hint" style="margin-top:6px;line-height:1.9">
+            · 模型列表由厂商接口实时获取（点「刷新列表」随时更新），列表中没有的模型可直接输入<br>
+            · <template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">API Key 获取：{{ aiCurrentPreset.keyUrl }}<br></template>
+            · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口
         </div>
         <div slot="footer">
             <el-button size="small" @click="aiSetVisible = false">取消</el-button>
@@ -1039,7 +1056,7 @@
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-menu"></i>右上角菜单</div>
                 <ul>
-                    <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、背景图片设置、AI 设置（DeepSeek / OpenAI 兼容接口）</li>
+                    <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、背景图片设置、AI 设置（DeepSeek / 通义千问 / 智谱 GLM / MiniMax / Kimi / OpenAI 等厂商，模型列表实时获取、下拉选择）</li>
                 </ul>
             </div>
             <div class="help-section">

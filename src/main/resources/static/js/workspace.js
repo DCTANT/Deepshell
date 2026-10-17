@@ -239,7 +239,11 @@ new Vue({
         lanVisible: false,
         aiSetVisible: false,
         aiSetSaving: false,
-        aiSetForm: { baseUrl: '', model: '', apiKey: '', hasKey: false },
+        aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false },
+        aiProviders: [],
+        aiModelOptions: [],
+        aiModelsLoading: false,
+        aiModelsNote: '',
         sysInfoVisible: false,
         sysInfoLoading: false,
         sysInfoError: '',
@@ -301,6 +305,16 @@ new Vue({
         }
     },
     computed: {
+        /* 当前选中的 AI 厂商预设（弹窗中展示默认地址 / Key 获取地址） */
+        aiCurrentPreset: function () {
+            var id = this.aiSetForm.provider;
+            for (var i = 0; i < this.aiProviders.length; i++) {
+                if (this.aiProviders[i].id === id) {
+                    return this.aiProviders[i];
+                }
+            }
+            return null;
+        },
         activeTab: function () {
             return this.tabs.find(function (t) { return t.key === this.activeKey; }, this) || null;
         },
@@ -798,29 +812,141 @@ new Vue({
                 this.aiSetVisible = true;
             }
         },
-        /* ---------- AI 生成命令 ---------- */
+        /* ---------- AI 设置（厂商预设 + 模型列表实时获取） ---------- */
+        aiProviderPreset: function (id) {
+            for (var i = 0; i < this.aiProviders.length; i++) {
+                if (this.aiProviders[i].id === id) {
+                    return this.aiProviders[i];
+                }
+            }
+            return null;
+        },
+        loadAiProviders: function () {
+            var self = this;
+            return http.get('/api/ai/providers').then(function (list) {
+                self.aiProviders = Array.isArray(list) ? list : [];
+            }).catch(function () { /* 忽略 */ });
+        },
         loadAiConfig: function () {
             var self = this;
+            this.aiModelsNote = '';
             http.get('/api/ai/config').then(function (d) {
                 if (!d) {
                     return;
                 }
+                self.aiSetForm.provider = d.provider || 'deepseek';
                 self.aiSetForm.baseUrl = d.baseUrl || '';
                 self.aiSetForm.model = d.model || '';
                 self.aiSetForm.hasKey = !!d.hasKey;
                 self.aiSetForm.apiKey = '';
+                var ready = self.aiProviders.length ? Promise.resolve() : self.loadAiProviders();
+                ready.then(function () {
+                    self.applyPresetModels();
+                    if (self.aiSetForm.hasKey) {
+                        self.fetchAiModels(true); // 已配置 Key：打开弹窗即后台实时获取
+                    } else {
+                        self.aiModelsNote = '尚未配置 API Key，暂展示内置常用模型；填写后可点「刷新列表」实时获取';
+                    }
+                });
             }).catch(function () { /* 忽略 */ });
+        },
+        /* 先展示内置常用模型（含已保存的模型），保证下拉不为空 */
+        applyPresetModels: function () {
+            var p = this.aiProviderPreset(this.aiSetForm.provider);
+            var list = p && p.fallbackModels ? p.fallbackModels.slice() : [];
+            var cur = (this.aiSetForm.model || '').trim();
+            if (cur && list.indexOf(cur) < 0) {
+                list.unshift(cur);
+            }
+            this.aiModelOptions = list;
+        },
+        onAiProviderChange: function (id) {
+            var p = this.aiProviderPreset(id);
+            if (p) {
+                if (p.baseUrl) {
+                    this.aiSetForm.baseUrl = p.baseUrl;
+                }
+                var list = p.fallbackModels || [];
+                if (list.length && list.indexOf((this.aiSetForm.model || '').trim()) < 0) {
+                    this.aiSetForm.model = list[0];
+                }
+            }
+            this.applyPresetModels();
+            this.aiModelsNote = '';
+            if (p && p.id !== 'custom') {
+                this.fetchAiModels(true); // 切换厂商即实时获取
+            } else {
+                this.aiModelsNote = '自定义服务：填写 API 地址与 API Key 后，点「刷新列表」实时获取模型';
+            }
+        },
+        /* silent=true 时静默刷新（打开弹窗 / 切换厂商时自动触发） */
+        fetchAiModels: function (silent) {
+            var self = this;
+            if (this.aiModelsLoading) {
+                return;
+            }
+            var baseUrl = (this.aiSetForm.baseUrl || '').trim();
+            if (!baseUrl) {
+                if (!silent) {
+                    ELEMENT.Message.warning('请先填写 API 地址');
+                }
+                return;
+            }
+            if (!this.aiSetForm.apiKey && !this.aiSetForm.hasKey) {
+                this.aiModelsNote = '尚未配置 API Key，暂展示内置常用模型；填写后可实时获取';
+                if (!silent) {
+                    ELEMENT.Message.info('填写 API Key 后才能从厂商接口实时获取模型列表');
+                }
+                return;
+            }
+            this.aiModelsLoading = true;
+            http.post('/api/ai/models', {
+                provider: this.aiSetForm.provider || 'custom',
+                baseUrl: baseUrl,
+                apiKey: this.aiSetForm.apiKey
+            }).then(function (d) {
+                if (d && Array.isArray(d.models) && d.models.length) {
+                    var list = d.models.slice();
+                    var cur = (self.aiSetForm.model || '').trim();
+                    if (cur && list.indexOf(cur) < 0) {
+                        list.unshift(cur);
+                    }
+                    self.aiModelOptions = list;
+                }
+                self.aiModelsNote = d && d.note ? d.note : '';
+                if (!silent && d && d.dynamic) {
+                    ELEMENT.Message.success('已实时获取 ' + d.models.length + ' 个模型');
+                }
+            }).catch(function () {
+                self.aiModelsNote = '获取模型列表失败，暂展示内置常用模型，也可直接输入模型 ID';
+            }).then(function () {
+                self.aiModelsLoading = false;
+            });
         },
         saveAiConfig: function () {
             var self = this;
+            var baseUrl = (this.aiSetForm.baseUrl || '').trim();
+            var model = (this.aiSetForm.model || '').trim();
+            if (!baseUrl) {
+                ELEMENT.Message.warning('请填写 API 地址');
+                return;
+            }
+            if (!model) {
+                ELEMENT.Message.warning('请选择或输入模型');
+                return;
+            }
             this.aiSetSaving = true;
             http.post('/api/ai/config', {
-                baseUrl: this.aiSetForm.baseUrl,
-                model: this.aiSetForm.model,
+                provider: this.aiSetForm.provider,
+                baseUrl: baseUrl,
+                model: model,
                 apiKey: this.aiSetForm.apiKey
             }).then(function (d) {
                 ELEMENT.Message.success('AI 设置已保存');
                 if (d) {
+                    self.aiSetForm.provider = d.provider || self.aiSetForm.provider;
+                    self.aiSetForm.baseUrl = d.baseUrl || baseUrl;
+                    self.aiSetForm.model = d.model || model;
                     self.aiSetForm.hasKey = !!d.hasKey;
                 }
                 self.aiSetForm.apiKey = '';
