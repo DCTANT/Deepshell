@@ -398,6 +398,7 @@ new Vue({
             dropTarget: '',
             fileDragOver: false,
             startOpen: false,
+            powerOpen: false,
             startSearch: '',
             startSearching: false,
             startSearched: false,
@@ -597,6 +598,11 @@ new Vue({
         sysInfoAuto: function (v) {
             if (this.sysInfoVisible) {
                 this.refreshSysInfoTimer(v);
+            }
+        },
+        'desktop.startOpen': function (v) {
+            if (!v) {
+                this.desktop.powerOpen = false;
             }
         },
         'desktop.startSearch': function () {
@@ -2232,7 +2238,7 @@ new Vue({
                 }
             });
         },
-        closeAiDesktop: function () {
+        closeAiDesktop: function (skipSftpRefresh) {
             this.stopDesktopDragScroll();
             this.stopDesktopClock();
             this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
@@ -2259,8 +2265,8 @@ new Vue({
                 if (t && t.term) {
                     try { t.term.focus(); } catch (e) { /* ignore */ }
                 }
-                // 桌面里可能新建 / 删除 / 移动过文件，返回时刷新 SFTP 面板
-                if (t && t.sessionId && t.sftpPath) {
+                // 桌面里可能新建 / 删除 / 移动过文件，返回时刷新 SFTP 面板（关机 / 断开前跳过）
+                if (!skipSftpRefresh && t && t.sessionId && t.sftpPath) {
                     self.loadDir(t.sftpPath, t);
                 }
             });
@@ -3791,6 +3797,48 @@ new Vue({
                     });
                 })
                 .catch(function () { /* 取消 */ });
+        },
+        desktopPowerShutdown: function () {
+            this.desktopPowerAction('shutdown');
+        },
+        desktopPowerReboot: function () {
+            this.desktopPowerAction('reboot');
+        },
+        desktopPowerDisconnect: function () {
+            this.desktop.powerOpen = false;
+            this.desktopDisconnectSession();
+        },
+        desktopPowerAction: function (act) {
+            var t = this.desktopTab;
+            if (!t) {
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            var isShutdown = act === 'shutdown';
+            var label = isShutdown ? '关机' : '重启';
+            var cmd = isShutdown ? 'shutdown -h now' : 'shutdown -r now';
+            this.desktop.powerOpen = false;
+            this.$confirm(
+                '确定' + label + '远端服务器「' + t.title + '」？将执行 ' + cmd + '，'
+                    + '需要当前用户为 root 或已配置免密 sudo；服务器上的所有服务和连接都会中断。',
+                '服务器' + label,
+                { type: 'warning', confirmButtonText: label, cancelButtonText: '取消' }
+            ).then(function () {
+                return http.post('/api/system/power', { sessionId: t.sessionId, action: act });
+            }).then(function (r) {
+                ELEMENT.Message.success((r && r.message) ? r.message : (label + '指令已发送'));
+                self.closeAiDesktop(true);
+                if (isShutdown) {
+                    // 关机后不会再连上：主动断开并停止自动重连，避免反复重试
+                    self.$nextTick(function () {
+                        self.disconnectTab(t);
+                    });
+                }
+            }).catch(function () { /* 取消或失败（已由拦截器提示） */ });
         },
         openDesktopSysInfo: function () {
             this.desktop.startOpen = false;

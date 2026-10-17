@@ -885,14 +885,14 @@
                     <i class="el-icon-close"></i>
                 </button>
             </div>
-            <div class="dsk-start-searchbox">
+            <div class="dsk-start-searchbox" @click="desktop.powerOpen = false">
                 <el-input ref="desktopStartSearch" v-model="desktop.startSearch" size="small"
                           prefix-icon="el-icon-search" clearable
                           placeholder="搜索应用、当前目录或服务器文件"
                           @keyup.enter.native="desktopSearchServer"
                           @keydown.esc.native.stop="desktop.startOpen = false"></el-input>
             </div>
-            <div class="dsk-start-body" ref="desktopStartBody">
+            <div class="dsk-start-body" ref="desktopStartBody" @click="desktop.powerOpen = false">
                 <template v-if="!desktopStartQuery">
                     <div class="dsk-start-sec">固定应用</div>
                     <div class="dsk-start-apps">
@@ -987,6 +987,25 @@
                 <button class="dsk-start-foot-btn primary" @click="closeAiDesktop">
                     <i class="el-icon-back"></i>返回工作台
                 </button>
+                <div class="dsk-start-power" @click.stop>
+                    <button class="dsk-start-foot-btn dsk-power-btn"
+                            :class="{ active: desktop.powerOpen }" title="电源"
+                            @click="desktop.powerOpen = !desktop.powerOpen">
+                        <i class="el-icon-switch-button"></i>
+                    </button>
+                    <div class="dsk-power-menu" v-if="desktop.powerOpen">
+                        <button class="dsk-power-item danger" @click="desktopPowerShutdown">
+                            <i class="el-icon-switch-button"></i>关机
+                        </button>
+                        <button class="dsk-power-item danger" @click="desktopPowerReboot">
+                            <i class="el-icon-refresh-right"></i>重启
+                        </button>
+                        <div class="dsk-power-sep"></div>
+                        <button class="dsk-power-item" @click="desktopPowerDisconnect">
+                            <i class="el-icon-connection"></i>断开连接
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1201,7 +1220,7 @@
                                 </div>
                             </div>
                             <div class="dsk-set-note">
-                                设置面板、开始菜单、图片预览或弹窗打开期间，空闲计时会暂停。网页工具不会关闭或重启远端服务器电源。
+                                设置面板、开始菜单、图片预览或弹窗打开期间，空闲计时会暂停。远端服务器关机 / 重启在开始菜单底部的电源按钮中执行，需要当前用户为 root 或已配置免密 sudo。
                             </div>
                         </template>
 
@@ -2144,6 +2163,7 @@
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
                     <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传；大 / 中图标视图会直接显示图片缩略图，<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速切换到 AI 终端 / SFTP / 进程 / 磁盘，右侧显示 CPU / 内存 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后可等自动重连或手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
                     <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
                     <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>
                 </ul>
