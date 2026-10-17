@@ -598,6 +598,28 @@ body.resizing .term-host {
     color: var(--text-2);
 }
 
+.sftp-selection {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    padding: 4px 8px;
+    border-top: 1px solid #e3ebf7;
+    border-bottom: 1px solid #e3ebf7;
+    background: #eef4ff;
+    font-size: 12px;
+}
+
+.sftp-selection-label {
+    margin-right: 2px;
+    color: var(--text-2);
+}
+
+.sftp-selection .el-button + .el-button {
+    margin-left: 0;
+}
+
 .sftp-table {
     flex: 1;
 }
@@ -4979,7 +5001,18 @@ body.resizing .term-host {
     white-space: nowrap;
 }
 
+.xfer-sub {
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #909399;
+    font-size: 10.5px;
+}
+
+.xfer-queued, .xfer-scanning, .xfer-downloading,
 .xfer-uploading, .xfer-processing { color: #409eff; }
+.xfer-partial { color: #e6a23c; }
 .xfer-done { color: #67c23a; }
 .xfer-error { color: #f56c6c; }
 .xfer-cancelled { color: #909399; }
@@ -5000,8 +5033,62 @@ body.resizing .term-host {
 }
 
 .xfer-bar-done { background: #67c23a !important; }
+.xfer-bar-partial { background: #e6a23c !important; }
 .xfer-bar-error { background: #f56c6c !important; }
 .xfer-bar-cancelled { background: #c0c4cc !important; }
+
+/* 下载到本机：结果汇总 */
+.local-dl-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.local-dl-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.local-dl-row > b {
+    flex: 0 0 64px;
+    color: var(--text-2);
+    font-weight: 600;
+}
+
+.local-dl-path {
+    flex: 1;
+    min-width: 0;
+    word-break: break-all;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 12px;
+    color: #303133;
+}
+
+.local-dl-error {
+    color: var(--err);
+    word-break: break-all;
+}
+
+.local-dl-errors {
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid #f3d9d9;
+    border-radius: 6px;
+    background: #fff7f7;
+    color: #b44;
+    font-size: 12px;
+    line-height: 1.7;
+    word-break: break-all;
+}
+
+.local-dl-more {
+    margin-top: 4px;
+    color: #999;
+}
 
 .xfer-actions {
     display: flex;

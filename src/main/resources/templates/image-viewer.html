@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>图片预览 · DeepShell</title>
+    <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #070a0f;
+        }
+
+        .iv-toast {
+            position: fixed;
+            left: 50%;
+            bottom: 64px;
+            z-index: 10;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, .12);
+            border-radius: 6px;
+            background: rgba(18, 24, 34, .92);
+            color: #dbe6f5;
+            font-size: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+        }
+    </style>
+</head>
+<body>
+<div id="imageViewer" class="dsk-preview" v-cloak @contextmenu.prevent>
+    <div class="dsk-preview-head">
+        <i class="el-icon-picture-outline"></i>
+        <span class="dsk-preview-title" :title="path">{{ name || '图片预览' }}</span>
+        <span class="dsk-preview-counter" v-if="images.length && index >= 0">{{ index + 1 }} / {{ images.length }}</span>
+        <span class="spacer"></span>
+        <button class="dsk-preview-head-btn" title="下载原图" @click="download">
+            <i class="el-icon-download"></i><span>下载</span>
+        </button>
+        <button class="dsk-preview-head-btn" title="关闭标签页 (Esc)" @click="closeTab">
+            <i class="el-icon-close"></i><span>关闭</span>
+        </button>
+    </div>
+    <div class="dsk-preview-stage" @wheel.prevent="onWheel">
+        <button class="dsk-preview-nav prev" title="上一张 (←)"
+                :disabled="images.length < 2" @click="step(-1)">
+            <i class="el-icon-arrow-left"></i>
+        </button>
+        <img v-if="!error" class="dsk-preview-img"
+             :class="{ zoomed: zoom > 1, rotated: rotate % 180 !== 0 }"
+             :src="imageUrl" :alt="name" draggable="false" decoding="async"
+             :style="{ transform: 'translate(' + panX + 'px, ' + panY
+                 + 'px) scale(' + zoom + ') rotate(' + rotate + 'deg)' }"
+             @load="onLoad" @error="onError" @mousedown="startDrag" @dblclick="fit">
+        <div class="dsk-preview-loading" v-if="loading">
+            <i class="el-icon-loading"></i> 正在加载图片…
+        </div>
+        <div class="dsk-preview-error" v-if="error">
+            <i class="el-icon-warning-outline"></i>
+            <p>{{ error }}</p>
+            <button v-if="path" class="dsk-preview-head-btn" @click="download">
+                <i class="el-icon-download"></i><span>下载文件</span>
+            </button>
+        </div>
+        <button class="dsk-preview-nav next" title="下一张 (→)"
+                :disabled="images.length < 2" @click="step(1)">
+            <i class="el-icon-arrow-right"></i>
+        </button>
+    </div>
+    <div class="dsk-preview-tools">
+        <button class="dsk-preview-tool" title="缩小 (-)" @click="zoomBy(0.8)">−</button>
+        <span class="dsk-preview-zoom">{{ Math.round(zoom * 100) }}%</span>
+        <button class="dsk-preview-tool" title="放大 (+)" @click="zoomBy(1.25)">＋</button>
+        <span class="dsk-preview-sep"></span>
+        <button class="dsk-preview-tool text" title="适应窗口 (0)" @click="fit">适应窗口</button>
+        <button class="dsk-preview-tool text" title="旋转 (R)" @click="rotate90">旋转</button>
+        <span class="dsk-preview-size" v-if="naturalW">{{ naturalW }} × {{ naturalH }}</span>
+        <span class="spacer"></span>
+        <span class="dsk-preview-hint">滚轮缩放 · 放大后拖动 · ← → 切换 · R 旋转 · Esc 关闭标签页</span>
+    </div>
+    <div class="iv-toast" v-if="closeHint">{{ closeHint }}</div>
+</div>
+<script th:src="@{/vendor/vue/vue.min.js}"></script>
+<script th:src="@{/js/image-viewer.js}"></script>
+</body>
+</html>

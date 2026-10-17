@@ -6,6 +6,9 @@ server:
     enabled: true
 
 spring:
+  main:
+    # 本机直写下载需要弹原生目录选择框；是否真正可用由 LocalDownloadService 运行时探测
+    headless: false
   application:
     name: deepshell
   datasource:

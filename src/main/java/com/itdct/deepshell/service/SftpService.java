@@ -8,14 +8,32 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.Vector;
+import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * SFTP 文件操作：每个 SSH 会话复用一个 SFTP 通道，所有操作在会话锁内串行执行
@@ -26,6 +44,8 @@ public class SftpService {
 
     private static final int MAX_EDIT_SIZE = 512 * 1024;
     private static final int MAX_RECURSION = 64;
+    private static final int MAX_BUNDLE_SOURCES = 200;
+    private static final int MAX_LOCAL_DOWNLOAD_ENTRIES = 200_000;
 
     private final SshSessionManager sessions;
 
@@ -279,6 +299,491 @@ public class SftpService {
             c.get(path, out);
             return null;
         });
+    }
+
+    /** 多选打包下载预检：校验目录 / 路径关系，并确认顶层文件或文件夹可访问 */
+    public int checkBundle(String sessionId, String dir, List<String> paths) throws Exception {
+        BundleSelection sel = validateBundle(dir, paths);
+        withSftp(sessionId, c -> {
+            for (String name : sel.names) {
+                try {
+                    c.stat(sel.path(name));
+                } catch (SftpException e) {
+                    throw new IllegalArgumentException("文件不存在或无法访问：" + name);
+                }
+            }
+            return null;
+        });
+        return sel.names.size();
+    }
+
+    /**
+     * 后端 SFTP 流式打包：逐个读取选中文件和文件夹，直接写入 ZIP 输出流。
+     * 不在服务器落临时文件，也不依赖服务器的 zip 命令；单个文件失败会记录到压缩包内的说明文件。
+     */
+    public void writeZip(String sessionId, String dir, List<String> paths, OutputStream out) throws Exception {
+        BundleSelection sel = validateBundle(dir, paths);
+        withSftp(sessionId, c -> {
+            writeZipTo(c, sel, out);
+            return null;
+        });
+    }
+
+    /** 供单元测试：基于已建立的 SFTP 通道写 ZIP */
+    static void writeZipTo(ChannelSftp c, String dir, List<String> paths, OutputStream out) throws Exception {
+        writeZipTo(c, validateBundle(dir, paths), out);
+    }
+
+    private static void writeZipTo(ChannelSftp c, BundleSelection sel, OutputStream out) throws Exception {
+        ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8);
+        List<String> errors = new ArrayList<>();
+        Set<String> visitedDirs = new HashSet<>();
+        try {
+            for (String name : sel.names) {
+                addZipEntry(c, zip, sel.path(name), name, 0, visitedDirs, errors);
+            }
+            if (!errors.isEmpty()) {
+                String errName = "_deepshell_errors.txt";
+                if (sel.names.contains(errName)) {
+                    errName = "_deepshell_errors_" + System.currentTimeMillis() + ".txt";
+                }
+                zip.putNextEntry(new ZipEntry(errName));
+                String content = "以下文件或目录未能打包：\n" + String.join("\n", errors);
+                zip.write(content.getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+                log.warn("打包下载部分文件失败: {}", errors);
+            }
+            zip.finish();
+            zip.flush();
+        } finally {
+            try {
+                zip.flush();
+            } catch (Exception ignore) {
+                // 客户端提前断开时忽略
+            }
+        }
+    }
+
+    private static void addZipEntry(ChannelSftp c, ZipOutputStream zip, String path, String entryName,
+                                    int depth, Set<String> visitedDirs, List<String> errors) throws Exception {
+        if (depth > MAX_RECURSION) {
+            errors.add(entryName + "：目录层级过深，已跳过");
+            return;
+        }
+        SftpATTRS attrs;
+        try {
+            attrs = c.stat(path);
+        } catch (Exception e) {
+            errors.add(entryName + "：" + errorText(e));
+            return;
+        }
+        if (attrs.isDir()) {
+            String realPath;
+            try {
+                realPath = c.realpath(path);
+            } catch (Exception e) {
+                realPath = path;
+            }
+            if (!visitedDirs.add(realPath)) {
+                errors.add(entryName + "：重复目录（符号链接），已跳过");
+                return;
+            }
+            try {
+                ZipEntry dirEntry = new ZipEntry(entryName + "/");
+                dirEntry.setTime(attrs.getMTime() * 1000L);
+                zip.putNextEntry(dirEntry);
+                zip.closeEntry();
+            } catch (IOException e) {
+                throw new DownloadAbortedException(e);
+            }
+            Vector<ChannelSftp.LsEntry> children;
+            try {
+                children = c.ls(path);
+            } catch (Exception e) {
+                errors.add(entryName + "：" + errorText(e));
+                return;
+            }
+            List<ChannelSftp.LsEntry> sorted = new ArrayList<>(children);
+            sorted.sort(Comparator.comparing(ChannelSftp.LsEntry::getFilename));
+            for (ChannelSftp.LsEntry child : sorted) {
+                String childName = child.getFilename();
+                if (".".equals(childName) || "..".equals(childName)) {
+                    continue;
+                }
+                addZipEntry(c, zip, join(path, childName), entryName + "/" + childName,
+                        depth + 1, visitedDirs, errors);
+            }
+        } else {
+            try {
+                ZipEntry entry = new ZipEntry(entryName);
+                entry.setTime(attrs.getMTime() * 1000L);
+                zip.putNextEntry(entry);
+                try (InputStream in = c.get(path)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        try {
+                            zip.write(buf, 0, n);
+                        } catch (IOException e) {
+                            throw new DownloadAbortedException(e);
+                        }
+                    }
+                }
+                zip.closeEntry();
+            } catch (DownloadAbortedException e) {
+                throw e;
+            } catch (Exception e) {
+                try {
+                    zip.closeEntry();
+                } catch (Exception ignore) {
+                    // 当前条目可能已写入部分数据，保留其余文件继续打包
+                }
+                errors.add(entryName + "：" + errorText(e));
+            }
+        }
+    }
+
+    private static String errorText(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.isEmpty() ? e.getClass().getSimpleName() : message;
+    }
+
+    private static BundleSelection validateBundle(String dir, List<String> paths) {
+        String d = dir == null ? "" : dir.trim();
+        while (d.length() > 1 && d.endsWith("/")) {
+            d = d.substring(0, d.length() - 1);
+        }
+        if (!d.startsWith("/") || d.contains("\n") || d.contains("\r") || d.length() > 4096) {
+            throw new IllegalArgumentException("目录不合法");
+        }
+        if (paths == null || paths.isEmpty()) {
+            throw new IllegalArgumentException("请选择要下载的文件或文件夹");
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (String raw : paths) {
+            if (raw == null) {
+                continue;
+            }
+            if (!raw.startsWith("/") || raw.contains("\n") || raw.contains("\r")
+                    || raw.length() > 4096) {
+                throw new IllegalArgumentException("文件路径不合法");
+            }
+            int idx = raw.lastIndexOf('/');
+            String parent = idx <= 0 ? "/" : raw.substring(0, idx);
+            if (!parent.equals(d)) {
+                throw new IllegalArgumentException("只能下载当前目录下的文件或文件夹");
+            }
+            String name = raw.substring(idx + 1);
+            if (name.isEmpty() || ".".equals(name) || "..".equals(name)
+                    || name.indexOf('\0') >= 0) {
+                throw new IllegalArgumentException("文件名不合法：" + name);
+            }
+            names.add(name);
+        }
+        if (names.isEmpty()) {
+            throw new IllegalArgumentException("请选择要下载的文件或文件夹");
+        }
+        if (names.size() > MAX_BUNDLE_SOURCES) {
+            throw new IllegalArgumentException("一次最多下载 " + MAX_BUNDLE_SOURCES + " 项");
+        }
+        return new BundleSelection(d, new ArrayList<>(names));
+    }
+
+    private static final class BundleSelection {
+        final String dir;
+        final List<String> names;
+
+        BundleSelection(String dir, List<String> names) {
+            this.dir = dir;
+            this.names = names;
+        }
+
+        String path(String name) {
+            return join(dir, name);
+        }
+    }
+
+    private static final class DownloadAbortedException extends RuntimeException {
+        DownloadAbortedException(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    /** 本机直写下载计划中的单个条目 */
+    public static final class LocalDownloadEntry {
+        public final String remotePath;
+        public final String relativePath;
+        public final boolean dir;
+        public final long size;
+        public final long mtime;
+
+        LocalDownloadEntry(String remotePath, String relativePath, boolean dir, long size, long mtime) {
+            this.remotePath = remotePath;
+            this.relativePath = relativePath;
+            this.dir = dir;
+            this.size = size;
+            this.mtime = mtime;
+        }
+    }
+
+    /** 扫描结果：目录树、文件数与总字节数 */
+    public static final class LocalDownloadPlan {
+        public final List<LocalDownloadEntry> entries;
+        public final int totalFiles;
+        public final int totalDirs;
+        public final long totalBytes;
+        public final List<String> warnings;
+
+        LocalDownloadPlan(List<LocalDownloadEntry> entries, int totalFiles, int totalDirs,
+                          long totalBytes, List<String> warnings) {
+            this.entries = entries;
+            this.totalFiles = totalFiles;
+            this.totalDirs = totalDirs;
+            this.totalBytes = totalBytes;
+            this.warnings = warnings;
+        }
+    }
+
+    public interface LocalDownloadProgress {
+        void onEntryStarted(String relativePath, long size);
+
+        void onBytes(long delta);
+
+        void onFileDone(String relativePath, String localPath, long size);
+
+        void onFileFailed(String relativePath, String message);
+
+        void onDirCreated(String relativePath, String localPath);
+
+        void onDirFailed(String relativePath, String message);
+
+        void onRenamed(String relativePath, String localName);
+    }
+
+    /** 扫描选中目录树，供本机直写下载使用 */
+    public LocalDownloadPlan planLocalDownload(String sessionId, String dir, List<String> paths) throws Exception {
+        return withSftp(sessionId, c -> planLocalDownloadTo(c, dir, paths));
+    }
+
+    static LocalDownloadPlan planLocalDownloadTo(ChannelSftp c, String dir, List<String> paths) {
+        BundleSelection sel = validateBundle(dir, paths);
+        List<LocalDownloadEntry> entries = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        Set<String> visitedDirs = new HashSet<>();
+        int[] counts = new int[2];
+        long[] totalBytes = new long[1];
+        for (String name : sel.names) {
+            scanLocalEntry(c, sel.path(name), name, 0, visitedDirs, entries, warnings, counts, totalBytes);
+        }
+        return new LocalDownloadPlan(entries, counts[0], counts[1], totalBytes[0], warnings);
+    }
+
+    private static void scanLocalEntry(ChannelSftp c, String path, String relative, int depth,
+                                       Set<String> visitedDirs, List<LocalDownloadEntry> entries,
+                                       List<String> warnings, int[] counts, long[] totalBytes) {
+        if (depth > MAX_RECURSION) {
+            warnings.add(relative + "：目录层级过深，已跳过");
+            return;
+        }
+        if (entries.size() >= MAX_LOCAL_DOWNLOAD_ENTRIES) {
+            throw new IllegalArgumentException("选中内容超过 " + MAX_LOCAL_DOWNLOAD_ENTRIES
+                    + " 项，请分批下载到本机");
+        }
+        SftpATTRS attrs;
+        try {
+            attrs = c.stat(path);
+        } catch (Exception e) {
+            warnings.add(relative + "：" + errorText(e));
+            return;
+        }
+        if (attrs.isDir()) {
+            String realPath;
+            try {
+                realPath = c.realpath(path);
+            } catch (Exception e) {
+                realPath = path;
+            }
+            if (!visitedDirs.add(realPath)) {
+                warnings.add(relative + "：重复目录（符号链接），已跳过");
+                return;
+            }
+            entries.add(new LocalDownloadEntry(path, relative, true, 0L, attrs.getMTime() * 1000L));
+            counts[1]++;
+            Vector<ChannelSftp.LsEntry> children;
+            try {
+                children = c.ls(path);
+            } catch (Exception e) {
+                warnings.add(relative + "：" + errorText(e));
+                return;
+            }
+            List<ChannelSftp.LsEntry> sorted = new ArrayList<>(children);
+            sorted.sort(Comparator.comparing(ChannelSftp.LsEntry::getFilename));
+            for (ChannelSftp.LsEntry child : sorted) {
+                String childName = child.getFilename();
+                if (".".equals(childName) || "..".equals(childName)) {
+                    continue;
+                }
+                scanLocalEntry(c, join(path, childName), relative + "/" + childName,
+                        depth + 1, visitedDirs, entries, warnings, counts, totalBytes);
+            }
+        } else {
+            long size = attrs.getSize();
+            entries.add(new LocalDownloadEntry(path, relative, false, size, attrs.getMTime() * 1000L));
+            counts[0]++;
+            totalBytes[0] += size;
+        }
+    }
+
+    /** 按计划把远端文件逐个 SFTP 读取并写入本机目录（调用方需保证 targetRoot 是新建的空目录） */
+    public void downloadLocalPlan(String sessionId, LocalDownloadPlan plan,
+                                  Path targetRoot, LocalDownloadProgress progress) throws Exception {
+        withSftp(sessionId, c -> {
+            downloadLocalPlanTo(c, plan, targetRoot, progress);
+            return null;
+        });
+    }
+
+    static void downloadLocalPlanTo(ChannelSftp c, LocalDownloadPlan plan,
+                                    Path targetRoot, LocalDownloadProgress progress) throws Exception {
+        if (plan == null || plan.entries == null) {
+            throw new IllegalArgumentException("下载计划为空");
+        }
+        Files.createDirectories(targetRoot);
+        Map<String, Path> localDirs = new HashMap<>();
+        localDirs.put("", targetRoot);
+        int consecutiveFailures = 0;
+        for (LocalDownloadEntry entry : plan.entries) {
+            String parentRelative = parentRelative(entry.relativePath);
+            Path localParent = localDirs.get(parentRelative);
+            if (localParent == null) {
+                progress.onFileFailed(entry.relativePath, "上级目录未能创建，已跳过");
+                consecutiveFailures++;
+                if (consecutiveFailures > 20) {
+                    throw new IllegalStateException("连续失败过多，已中止下载");
+                }
+                continue;
+            }
+            String remoteName = baseRelative(entry.relativePath);
+            String expectedName = safeLocalName(remoteName);
+            Path localPath = uniqueLocalPath(localParent, expectedName, entry.dir);
+            String localName = localPath.getFileName().toString();
+            if (!localName.equals(remoteName)) {
+                progress.onRenamed(entry.relativePath, localName);
+            }
+            if (entry.dir) {
+                try {
+                    Files.createDirectories(localPath);
+                    localDirs.put(entry.relativePath, localPath);
+                    progress.onDirCreated(entry.relativePath, localPath.toString());
+                } catch (Exception e) {
+                    progress.onDirFailed(entry.relativePath, errorText(e));
+                    consecutiveFailures++;
+                }
+            } else {
+                progress.onEntryStarted(entry.relativePath, entry.size);
+                Path temp = null;
+                try {
+                    Files.createDirectories(localParent);
+                    temp = Files.createTempFile(localParent, ".deepshell-", ".part");
+                    try (InputStream in = c.get(entry.remotePath);
+                         OutputStream out = new BufferedOutputStream(
+                                 Files.newOutputStream(temp, StandardOpenOption.TRUNCATE_EXISTING,
+                                         StandardOpenOption.WRITE), 64 * 1024)) {
+                        byte[] buf = new byte[64 * 1024];
+                        int n;
+                        while ((n = in.read(buf)) != -1) {
+                            out.write(buf, 0, n);
+                            progress.onBytes(n);
+                        }
+                    }
+                    Files.move(temp, localPath, StandardCopyOption.REPLACE_EXISTING);
+                    temp = null;
+                    try {
+                        Files.setLastModifiedTime(localPath, FileTime.fromMillis(entry.mtime));
+                    } catch (Exception ignore) {
+                        // 修改时间设置失败不影响文件内容
+                    }
+                    progress.onFileDone(entry.relativePath, localPath.toString(), entry.size);
+                    consecutiveFailures = 0;
+                } catch (Exception e) {
+                    if (temp != null) {
+                        try {
+                            Files.deleteIfExists(temp);
+                        } catch (Exception ignore) {
+                            // 忽略临时文件清理失败
+                        }
+                    }
+                    progress.onFileFailed(entry.relativePath, errorText(e));
+                    consecutiveFailures++;
+                }
+            }
+            if (consecutiveFailures > 20) {
+                throw new IllegalStateException("连续失败过多，已中止下载（可能是磁盘空间不足或会话已断开）");
+            }
+        }
+    }
+
+    private static String parentRelative(String relative) {
+        int idx = relative.lastIndexOf('/');
+        return idx < 0 ? "" : relative.substring(0, idx);
+    }
+
+    private static String baseRelative(String relative) {
+        int idx = relative.lastIndexOf('/');
+        return idx < 0 ? relative : relative.substring(idx + 1);
+    }
+
+    private static final Pattern WINDOWS_INVALID_CHARS =
+            Pattern.compile("[\\\\/:*?\"<>|\\x00-\\x1F]");
+    private static final Set<String> WINDOWS_RESERVED_NAMES = new HashSet<>(Arrays.asList(
+            "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"));
+
+    /** 把远端文件名转成本机（尤其 Windows）可用的名字 */
+    static String safeLocalName(String name) {
+        String value = WINDOWS_INVALID_CHARS.matcher(name == null ? "" : name).replaceAll("_");
+        String base = value;
+        int dot = base.indexOf('.');
+        if (dot >= 0) {
+            base = base.substring(0, dot);
+        }
+        if (WINDOWS_RESERVED_NAMES.contains(base.trim().toUpperCase(Locale.ROOT))) {
+            value = "_" + value;
+        }
+        while (value.endsWith(".") || value.endsWith(" ")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        if (value.isEmpty()) {
+            value = "_";
+        }
+        if (value.length() > 180) {
+            value = value.substring(0, 180);
+        }
+        return value;
+    }
+
+    private static Path uniqueLocalPath(Path parent, String name, boolean dir) {
+        Path candidate = parent.resolve(name);
+        if (!Files.exists(candidate)) {
+            return candidate;
+        }
+        String base = name;
+        String ext = "";
+        if (!dir) {
+            int dot = name.lastIndexOf('.');
+            if (dot > 0) {
+                base = name.substring(0, dot);
+                ext = name.substring(dot);
+            }
+        }
+        for (int i = 2; i < 1000; i++) {
+            Path next = parent.resolve(base + "-" + i + ext);
+            if (!Files.exists(next)) {
+                return next;
+            }
+        }
+        return parent.resolve(base + "-" + System.nanoTime() + ext);
     }
 
     /** 读取完整文件到内存（缩略图生成用），超过 maxBytes 直接报错，避免超大文件拖垮内存 */

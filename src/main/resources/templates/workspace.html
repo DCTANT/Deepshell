@@ -320,11 +320,25 @@
                             <span class="spacer"></span>
                             <span class="sftp-count">{{ activeTab.sftpEntries.length }} 项</span>
                         </div>
+                        <div class="sftp-selection" v-if="activeTab.sftpSelected && activeTab.sftpSelected.length">
+                            <span class="sftp-selection-label">已选 {{ activeTab.sftpSelected.length }} 项</span>
+                            <el-button size="mini" type="primary" icon="el-icon-box"
+                                       @click="sftpDownloadBundle">打包下载</el-button>
+                            <el-button size="mini" icon="el-icon-download"
+                                       :disabled="!sftpSelectedHasFile"
+                                       @click="sftpDownloadEach">逐个下载</el-button>
+                            <el-button v-if="localDownloadReady" size="mini" icon="el-icon-folder-opened"
+                                       title="通过 SFTP 直接下载到本机目录（仅本机访问，会弹出目录选择框）"
+                                       @click="sftpDownloadToLocal">下载到本机</el-button>
+                            <el-button size="mini" type="text" @click="clearSftpSelection">取消选择</el-button>
+                        </div>
                         <el-table ref="sftpTable" :data="activeTab.sftpEntries" size="mini" stripe
                                   v-loading="activeTab.sftpLoading" class="sftp-table"
                                   height="100%" @row-dblclick="onRowDblclick"
+                                  @selection-change="onSftpSelectionChange"
                                   @dragover.native="onTableDragOver" @drop.native="onTableDrop"
                                   @dragleave.native="onTableDragLeave">
+                            <el-table-column type="selection" width="42" align="center"></el-table-column>
                             <el-table-column label="名称" prop="name" min-width="150" show-overflow-tooltip
                                              sortable :sort-method="sortByName">
                                 <template slot-scope="s">
@@ -1179,7 +1193,7 @@
                             </div>
                             <div class="dsk-set-note">
                                 固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜
-                                桌面预览中 ← → 切换图片、R 旋转、Esc 关闭
+                                新标签图片预览中 ← → 切换、R 旋转、Esc 关闭标签页
                             </div>
                         </template>
 
@@ -1226,7 +1240,7 @@
                                 </div>
                             </div>
                             <div class="dsk-set-note">
-                                设置面板、开始菜单、图片预览或弹窗打开期间，空闲计时会暂停。远端服务器关机 / 重启在开始菜单底部的电源按钮中执行，需要当前用户为 root 或已配置免密 sudo。
+                                设置面板、开始菜单或弹窗打开期间，空闲计时会暂停；图片预览在新标签页打开时也不会触发自动返回。远端服务器关机 / 重启在开始菜单底部的电源按钮中执行，需要当前用户为 root 或已配置免密 sudo。
                             </div>
                         </template>
 
@@ -1341,65 +1355,6 @@
             </div>
         </div>
 
-        <!-- 图片预览 -->
-        <div class="dsk-preview" v-if="desktop.previewVisible" @click.stop @contextmenu.prevent>
-            <div class="dsk-preview-head">
-                <i class="el-icon-picture-outline"></i>
-                <span class="dsk-preview-title" :title="desktop.previewPath">{{ desktop.previewName }}</span>
-                <span class="dsk-preview-counter" v-if="desktopPreviewImages.length">
-                    {{ Math.max(0, desktopPreviewIndex + 1) }} / {{ desktopPreviewImages.length }}
-                </span>
-                <span class="spacer"></span>
-                <button class="dsk-preview-head-btn" title="下载原图" @click="desktopDownloadPreview">
-                    <i class="el-icon-download"></i><span>下载</span>
-                </button>
-                <button class="dsk-preview-head-btn" title="关闭 (Esc)" @click="closeDesktopPreview">
-                    <i class="el-icon-close"></i><span>关闭</span>
-                </button>
-            </div>
-            <div class="dsk-preview-stage" @click.self="closeDesktopPreview"
-                 @wheel.prevent="desktopPreviewWheel">
-                <button class="dsk-preview-nav prev" title="上一张 (←)"
-                        :disabled="desktopPreviewImages.length < 2" @click.stop="desktopPreviewPrev">
-                    <i class="el-icon-arrow-left"></i>
-                </button>
-                <img v-if="!desktop.previewError" class="dsk-preview-img"
-                     :class="{ zoomed: desktop.previewZoom > 1, rotated: desktop.previewRotate % 180 !== 0 }"
-                     :src="desktopPreviewUrl" :alt="desktop.previewName" draggable="false" decoding="async"
-                     :style="{ transform: 'translate(' + desktop.previewPanX + 'px, ' + desktop.previewPanY
-                         + 'px) scale(' + desktop.previewZoom + ') rotate(' + desktop.previewRotate + 'deg)' }"
-                     @load="onDesktopPreviewLoad" @error="onDesktopPreviewError"
-                     @mousedown="startDesktopPreviewDrag" @dblclick="desktopPreviewFit">
-                <div class="dsk-preview-loading" v-if="desktop.previewLoading">
-                    <i class="el-icon-loading"></i> 正在加载图片…
-                </div>
-                <div class="dsk-preview-error" v-if="desktop.previewError">
-                    <i class="el-icon-warning-outline"></i>
-                    <p>{{ desktop.previewError }}</p>
-                    <el-button size="mini" icon="el-icon-download" @click="desktopDownloadPreview">
-                        下载文件
-                    </el-button>
-                </div>
-                <button class="dsk-preview-nav next" title="下一张 (→)"
-                        :disabled="desktopPreviewImages.length < 2" @click.stop="desktopPreviewNext">
-                    <i class="el-icon-arrow-right"></i>
-                </button>
-            </div>
-            <div class="dsk-preview-tools">
-                <button class="dsk-preview-tool" title="缩小 (-)" @click="desktopPreviewZoom(0.8)">−</button>
-                <span class="dsk-preview-zoom">{{ Math.round(desktop.previewZoom * 100) }}%</span>
-                <button class="dsk-preview-tool" title="放大 (+)" @click="desktopPreviewZoom(1.25)">＋</button>
-                <span class="dsk-preview-sep"></span>
-                <button class="dsk-preview-tool text" title="适应窗口 (0)" @click="desktopPreviewFit">适应窗口</button>
-                <button class="dsk-preview-tool text" title="旋转 (R)" @click="desktopPreviewRotate">旋转</button>
-                <span class="dsk-preview-size" v-if="desktop.previewNaturalW">
-                    {{ desktop.previewNaturalW }} × {{ desktop.previewNaturalH }}
-                </span>
-                <span class="spacer"></span>
-                <span class="dsk-preview-hint">滚轮缩放 · 放大后拖动 · ← → 切换 · R 旋转 · Esc 关闭</span>
-            </div>
-        </div>
-
         <div class="dsk-menu" ref="deskMenu" v-if="desktop.menu.visible"
              :style="{ left: desktop.menu.x + 'px', top: desktop.menu.y + 'px' }"
              @click.stop @contextmenu.prevent>
@@ -1429,9 +1384,10 @@
                      @click="desktopMenuAction('download')">
                     <i class="el-icon-download"></i>下载
                 </div>
-                <div class="dsk-menu-item" v-else-if="desktopMenuMulti && desktopMenuHasFile"
-                     @click="desktopMenuAction('download')">
-                    <i class="el-icon-download"></i>下载选中文件
+                <div class="dsk-menu-item has-sub" v-else-if="desktopMenuMulti"
+                     @click.stop="openDesktopDownloadSub($event)">
+                    <i class="el-icon-download"></i>下载
+                    <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
                 </div>
                 <div class="dsk-menu-sep"></div>
                 <div class="dsk-menu-item" @click="desktopMenuAction('copyPath')">
@@ -1489,7 +1445,7 @@
         </div>
 
         <!-- 右键「压缩」子菜单 -->
-        <div class="dsk-menu dsk-menu-sub" v-if="desktop.compressSub.visible"
+        <div class="dsk-menu dsk-menu-sub" ref="deskCompressSub" v-if="desktop.compressSub.visible"
              :style="{ left: desktop.compressSub.x + 'px', top: desktop.compressSub.y + 'px' }"
              @click.stop @contextmenu.prevent>
             <div class="dsk-menu-title">压缩为</div>
@@ -1502,6 +1458,27 @@
             <div class="dsk-menu-sep"></div>
             <div class="dsk-menu-item" @click="desktopMenuAction('compressDialog')">
                 <i class="el-icon-setting"></i>压缩设置…
+            </div>
+        </div>
+
+        <!-- 右键「下载」子菜单（多选） -->
+        <div class="dsk-menu dsk-menu-sub" ref="deskDownloadSub" v-if="desktop.downloadSub.visible"
+             :style="{ left: desktop.downloadSub.x + 'px', top: desktop.downloadSub.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">下载 {{ desktop.selected.length }} 项</div>
+            <div class="dsk-menu-item" @click="desktopMenuAction('downloadBundle')">
+                <i class="el-icon-box"></i>
+                <span class="dsk-menu-sub-name">打包下载</span>
+                <span class="dsk-menu-key">.zip</span>
+            </div>
+            <div class="dsk-menu-item" v-if="desktopMenuHasFile" @click="desktopMenuAction('downloadEach')">
+                <i class="el-icon-download"></i>
+                <span class="dsk-menu-sub-name">逐个下载</span>
+                <span class="dsk-menu-key">仅文件</span>
+            </div>
+            <div class="dsk-menu-item" v-if="localDownloadReady" @click="desktopMenuAction('downloadLocal')">
+                <i class="el-icon-folder-opened"></i>
+                <span class="dsk-menu-sub-name">下载到本机…</span>
             </div>
         </div>
     </div>
@@ -2167,7 +2144,7 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张，关闭标签页即回到原目录</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速切换到 AI 终端 / SFTP / 进程 / 磁盘，右侧显示 CPU / 内存 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
                     <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后可等自动重连或手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
                     <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
@@ -2183,6 +2160,8 @@
                     <li>工具栏：返回上一目录 / 上级目录 / 新建文件夹 / 新建文件（创建后直接打开编辑）/ 上传 / 刷新当前目录 / <b>分析磁盘占用</b> / <b>目录跟随开</b></li>
                     <li><b>目录跟随</b>（默认开启）：终端里 <code>cd</code> 到某个目录后，文件面板自动切换到该目录；手动浏览不受影响，直到下次 cd；点工具栏链接图标可开关</li>
                     <li><b>把系统里的文件直接拖进浏览器窗口</b>即可上传到当前目录（拖入时会显示目标目录提示，成功后顶部弹出提示）</li>
+                    <li>名称左侧复选框支持<b>多选</b>（表头可全选）；选中后出现操作条，可<b>打包下载</b>（后端通过 SFTP 流式打包，浏览器只下载一次）或<b>逐个下载</b>文件（文件夹会跳过）</li>
+                    <li>本机（127.0.0.1 / localhost）访问且运行环境有图形界面时，还可<b>下载到本机</b>：后端弹出原生目录选择框，自动创建 <code>deepshell-目录名-时间</code> 子目录，通过 SFTP 直接写盘；传输队列显示进度与当前文件，完成后可查看失败明细并在文件管理器中打开目录</li>
                     <li>每行操作：下载、重命名、删除（目录递归删除，带确认）</li>
                 </ul>
             </div>
@@ -2293,23 +2272,65 @@
         <div class="xfer-list" v-show="transferPanelOpen">
             <div class="xfer-item" v-for="t in transfers" :key="t.id">
                 <div class="xfer-line">
-                    <span class="xfer-name" :title="t.rel">{{ t.name }}</span>
+                    <span class="xfer-name" :title="t.kind === 'localDownload'
+                              ? (t.rel + (t.currentFile ? ' · ' + t.currentFile : '')) : t.rel">{{ t.name }}</span>
                     <span class="xfer-status" :class="'xfer-' + t.status">{{ transferStatusText(t) }}</span>
                 </div>
+                <div class="xfer-sub" v-if="t.kind === 'localDownload' && t.status === 'downloading' && t.currentFile"
+                     :title="t.currentFile">{{ t.currentFile }}</div>
                 <div class="xfer-bar">
                     <i :style="{ width: transferPct(t) + '%' }" :class="'xfer-bar-' + t.status"></i>
                 </div>
                 <div class="xfer-actions">
                     <span class="xfer-pct">{{ transferPct(t) }}%</span>
                     <span class="spacer"></span>
-                    <el-button v-if="t.status === 'pending' || t.status === 'uploading' || t.status === 'processing'"
+                    <el-button v-if="t.kind === 'localDownload'"
+                               size="mini" type="text" @click="showLocalDownloadSummary(t)">详情</el-button>
+                    <el-button v-if="t.kind !== 'localDownload'
+                               && (t.status === 'pending' || t.status === 'uploading' || t.status === 'processing')"
                                size="mini" type="text" @click="cancelTransfer(t)">取消</el-button>
-                    <el-button v-if="t.status === 'error' || t.status === 'cancelled'"
+                    <el-button v-if="t.kind !== 'localDownload'
+                               && (t.status === 'error' || t.status === 'cancelled')"
                                size="mini" type="text" @click="retryTransfer(t)">重试</el-button>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- 下载到本机：结果汇总 -->
+    <el-dialog title="下载到本机结果" :visible.sync="localDlSummary.visible" width="560px" append-to-body>
+        <div v-if="localDlSummary.item" class="local-dl-summary">
+            <div class="local-dl-row">
+                <b>目标目录</b>
+                <span class="local-dl-path">{{ localDlSummary.item.targetPath }}</span>
+            </div>
+            <div class="local-dl-row">
+                <b>文件</b>
+                <span>成功 {{ localDlSummary.item.doneFiles }} / {{ localDlSummary.item.totalFiles }} 个，
+                    失败 {{ localDlSummary.item.errorCount || 0 }} 个</span>
+            </div>
+            <div class="local-dl-row" v-if="localDlSummary.item.renamedCount">
+                <b>名称调整</b>
+                <span>{{ localDlSummary.item.renamedCount }} 项（已按本机文件名规则调整）</span>
+            </div>
+            <div class="local-dl-row" v-if="localDlSummary.item.error">
+                <b>错误</b>
+                <span class="local-dl-error">{{ localDlSummary.item.error }}</span>
+            </div>
+            <div class="local-dl-errors" v-if="localDlSummary.item.errors && localDlSummary.item.errors.length">
+                <div v-for="(e, i) in localDlSummary.item.errors" :key="i">{{ e }}</div>
+                <div class="local-dl-more"
+                     v-if="(localDlSummary.item.errorCount || 0) > localDlSummary.item.errors.length">
+                    还有 {{ localDlSummary.item.errorCount - localDlSummary.item.errors.length }} 项失败未显示…
+                </div>
+            </div>
+        </div>
+        <span slot="footer">
+            <el-button size="small" @click="localDlSummary.visible = false">关闭</el-button>
+            <el-button size="small" type="primary" icon="el-icon-folder-opened"
+                       :disabled="!localDlSummary.item" @click="openLocalDownloadDir">打开目录</el-button>
+        </span>
+    </el-dialog>
 
     <div class="tab-menu top-menu" v-if="topMenuVisible"
          :style="{ top: topMenuPos.top + 'px', right: topMenuPos.right + 'px' }">

@@ -16,6 +16,9 @@ import org.springframework.web.multipart.MultipartFile;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URLEncoder;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -111,6 +114,81 @@ public class SftpController {
                 + "\"; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8").replace("+", "%20"));
         audit.record("FILE_DOWNLOAD", path, "OK", null);
         sftp.download(sessionId, path, resp.getOutputStream());
+    }
+
+    /** 多选打包下载预检：校验会话、目录与选中项，返回实际下载文件名 */
+    @PostMapping("/download-bundle/check")
+    public R<Map<String, Object>> downloadBundleCheck(@RequestBody ArchiveReq req) throws Exception {
+        if (req == null) {
+            throw new IllegalArgumentException("请求参数缺失");
+        }
+        requireSession(req.getSessionId());
+        int count = sftp.checkBundle(req.getSessionId(), req.getDestDir(), req.getPaths());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("count", count);
+        result.put("downloadName", bundleDownloadName(req.getDestDir(), bundleStamp()));
+        return R.ok(result);
+    }
+
+    /**
+     * 多选打包下载：后端通过 SFTP 逐个读取选中文件 / 文件夹，流式写成一个 ZIP 响应。
+     * 浏览器只产生一次下载，不依赖服务器 zip 命令，也不在服务器落临时文件。
+     */
+    @PostMapping("/download-bundle")
+    public void downloadBundle(@RequestParam String sessionId,
+                               @RequestParam String destDir,
+                               @RequestParam("paths") List<String> paths,
+                               @RequestParam(required = false) String name,
+                               HttpServletResponse resp) throws Exception {
+        requireSession(sessionId);
+        // 先校验顶层路径，避免把错误响应当成 zip 下载
+        sftp.checkBundle(sessionId, destDir, paths);
+        String downloadName = sanitizeBundleName(name, destDir);
+        resp.setContentType("application/zip");
+        resp.setHeader("Content-Disposition", "attachment; filename=\"download.zip\"; filename*=UTF-8''"
+                + URLEncoder.encode(downloadName, "UTF-8").replace("+", "%20"));
+        resp.setHeader("Cache-Control", "no-store");
+        audit.record("FILE_DOWNLOAD", destDir, "OK", "打包下载 " + paths.size() + " 项：" + downloadName);
+        sftp.writeZip(sessionId, destDir, paths, resp.getOutputStream());
+    }
+
+    private static void requireSession(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            throw new IllegalArgumentException("会话未就绪");
+        }
+    }
+
+    private static String bundleStamp() {
+        return new SimpleDateFormat("yyyyMMdd-HHmmss").format(new Date());
+    }
+
+    private static String bundleDownloadName(String destDir, String stamp) {
+        String dir = destDir == null ? "" : destDir.trim();
+        if (dir.length() > 1 && dir.endsWith("/")) {
+            dir = dir.substring(0, dir.length() - 1);
+        }
+        String base = dir.substring(dir.lastIndexOf('/') + 1);
+        base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (base.isEmpty()) {
+            base = "files";
+        }
+        return base + "-" + stamp + ".zip";
+    }
+
+    private static String sanitizeBundleName(String name, String destDir) {
+        String n = name == null ? "" : name.trim()
+                .replace('\\', '_').replace('"', '_')
+                .replace("\r", "_").replace("\n", "_");
+        if (n.isEmpty()) {
+            n = bundleDownloadName(destDir, bundleStamp());
+        }
+        if (n.length() > 120) {
+            n = n.substring(0, 120);
+        }
+        if (!n.toLowerCase().endsWith(".zip")) {
+            n += ".zip";
+        }
+        return n;
     }
 
     /** 图片预览：以正确的图片 Content-Type 内联返回，供可视化桌面查看 */

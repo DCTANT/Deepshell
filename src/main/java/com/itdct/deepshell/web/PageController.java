@@ -17,4 +17,10 @@ public class PageController {
     public String login() {
         return "login";
     }
+
+    /** 独立图片预览页：AI 可视化桌面双击图片时在新标签页打开 */
+    @GetMapping("/image-viewer")
+    public String imageViewer() {
+        return "image-viewer";
+    }
 }
