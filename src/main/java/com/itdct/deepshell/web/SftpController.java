@@ -89,6 +89,66 @@ public class SftpController {
         sftp.download(sessionId, path, resp.getOutputStream());
     }
 
+    /** 图片预览：以正确的图片 Content-Type 内联返回，供可视化桌面查看 */
+    @GetMapping("/preview")
+    public void preview(@RequestParam("sessionId") String sessionId,
+                        @RequestParam("path") String path,
+                        HttpServletResponse resp) throws Exception {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        String contentType = imageContentType(name);
+        if (contentType == null) {
+            throw new IllegalArgumentException("该文件类型不支持图片预览");
+        }
+        String safeName = name.replace("\\", "_").replace("\"", "_")
+                .replace("\r", "_").replace("\n", "_");
+        resp.setContentType(contentType);
+        resp.setHeader("Content-Disposition", "inline; filename=\"" + safeName
+                + "\"; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8").replace("+", "%20"));
+        // 缩略图使用稳定的 mtime 版本号，允许浏览器缓存；完整预览会带新的时间戳绕过缓存
+        resp.setHeader("Cache-Control", "private, max-age=300");
+        resp.setHeader("X-Content-Type-Options", "nosniff");
+        sftp.download(sessionId, path, resp.getOutputStream());
+    }
+
+    private static String imageContentType(String name) {
+        int idx = name.lastIndexOf('.');
+        if (idx < 0 || idx == name.length() - 1) {
+            return null;
+        }
+        String ext = name.substring(idx + 1).toLowerCase(java.util.Locale.ROOT);
+        if ("png".equals(ext)) {
+            return "image/png";
+        }
+        if ("jpg".equals(ext) || "jpeg".equals(ext) || "jpe".equals(ext) || "jfif".equals(ext)) {
+            return "image/jpeg";
+        }
+        if ("gif".equals(ext)) {
+            return "image/gif";
+        }
+        if ("webp".equals(ext)) {
+            return "image/webp";
+        }
+        if ("bmp".equals(ext)) {
+            return "image/bmp";
+        }
+        if ("svg".equals(ext)) {
+            return "image/svg+xml";
+        }
+        if ("ico".equals(ext)) {
+            return "image/x-icon";
+        }
+        if ("avif".equals(ext)) {
+            return "image/avif";
+        }
+        if ("tif".equals(ext) || "tiff".equals(ext)) {
+            return "image/tiff";
+        }
+        if ("heic".equals(ext) || "heif".equals(ext)) {
+            return "image/heic";
+        }
+        return null;
+    }
+
     @PostMapping("/upload")
     public R<Void> upload(@RequestParam String sessionId, @RequestParam String path,
                           @RequestParam("file") MultipartFile file) throws Exception {

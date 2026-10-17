@@ -726,6 +726,11 @@
                                     <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
                                     <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
                                 </svg>
+                                <span v-else-if="desktopShowThumb(row)" class="dsk-thumb">
+                                    <img :src="desktopThumbSrc(row)" :alt="row.name"
+                                         loading="lazy" decoding="async" draggable="false"
+                                         @error="onDesktopThumbError(row)">
+                                </span>
                                 <span v-else class="dsk-file-ico" :class="'fi-' + desktopFileKind(row)">
                                     <span class="dsk-ext" :class="{ long: desktopExtLabel(row).length > 3 }">{{ desktopExtLabel(row) }}</span>
                                 </span>
@@ -970,6 +975,65 @@
             </div>
         </div>
 
+        <!-- 图片预览 -->
+        <div class="dsk-preview" v-if="desktop.previewVisible" @click.stop @contextmenu.prevent>
+            <div class="dsk-preview-head">
+                <i class="el-icon-picture-outline"></i>
+                <span class="dsk-preview-title" :title="desktop.previewPath">{{ desktop.previewName }}</span>
+                <span class="dsk-preview-counter" v-if="desktopPreviewImages.length">
+                    {{ Math.max(0, desktopPreviewIndex + 1) }} / {{ desktopPreviewImages.length }}
+                </span>
+                <span class="spacer"></span>
+                <button class="dsk-preview-head-btn" title="下载原图" @click="desktopDownloadPreview">
+                    <i class="el-icon-download"></i><span>下载</span>
+                </button>
+                <button class="dsk-preview-head-btn" title="关闭 (Esc)" @click="closeDesktopPreview">
+                    <i class="el-icon-close"></i><span>关闭</span>
+                </button>
+            </div>
+            <div class="dsk-preview-stage" @click.self="closeDesktopPreview"
+                 @wheel.prevent="desktopPreviewWheel">
+                <button class="dsk-preview-nav prev" title="上一张 (←)"
+                        :disabled="desktopPreviewImages.length < 2" @click.stop="desktopPreviewPrev">
+                    <i class="el-icon-arrow-left"></i>
+                </button>
+                <img v-if="!desktop.previewError" class="dsk-preview-img"
+                     :class="{ zoomed: desktop.previewZoom > 1, rotated: desktop.previewRotate % 180 !== 0 }"
+                     :src="desktopPreviewUrl" :alt="desktop.previewName" draggable="false"
+                     :style="{ transform: 'translate(' + desktop.previewPanX + 'px, ' + desktop.previewPanY
+                         + 'px) scale(' + desktop.previewZoom + ') rotate(' + desktop.previewRotate + 'deg)' }"
+                     @load="onDesktopPreviewLoad" @error="onDesktopPreviewError"
+                     @mousedown="startDesktopPreviewDrag" @dblclick="desktopPreviewFit">
+                <div class="dsk-preview-loading" v-if="desktop.previewLoading">
+                    <i class="el-icon-loading"></i> 正在加载图片…
+                </div>
+                <div class="dsk-preview-error" v-if="desktop.previewError">
+                    <i class="el-icon-warning-outline"></i>
+                    <p>{{ desktop.previewError }}</p>
+                    <el-button size="mini" icon="el-icon-download" @click="desktopDownloadPreview">
+                        下载文件
+                    </el-button>
+                </div>
+                <button class="dsk-preview-nav next" title="下一张 (→)"
+                        :disabled="desktopPreviewImages.length < 2" @click.stop="desktopPreviewNext">
+                    <i class="el-icon-arrow-right"></i>
+                </button>
+            </div>
+            <div class="dsk-preview-tools">
+                <button class="dsk-preview-tool" title="缩小 (-)" @click="desktopPreviewZoom(0.8)">−</button>
+                <span class="dsk-preview-zoom">{{ Math.round(desktop.previewZoom * 100) }}%</span>
+                <button class="dsk-preview-tool" title="放大 (+)" @click="desktopPreviewZoom(1.25)">＋</button>
+                <span class="dsk-preview-sep"></span>
+                <button class="dsk-preview-tool text" title="适应窗口 (0)" @click="desktopPreviewFit">适应窗口</button>
+                <button class="dsk-preview-tool text" title="旋转 (R)" @click="desktopPreviewRotate">旋转</button>
+                <span class="dsk-preview-size" v-if="desktop.previewNaturalW">
+                    {{ desktop.previewNaturalW }} × {{ desktop.previewNaturalH }}
+                </span>
+                <span class="spacer"></span>
+                <span class="dsk-preview-hint">滚轮缩放 · 放大后拖动 · ← → 切换 · R 旋转 · Esc 关闭</span>
+            </div>
+        </div>
+
         <div class="dsk-menu" ref="deskMenu" v-if="desktop.menu.visible"
              :style="{ left: desktop.menu.x + 'px', top: desktop.menu.y + 'px' }"
              @click.stop @contextmenu.prevent>
@@ -982,7 +1046,12 @@
                      @click="desktopMenuAction('terminal')">
                     <i class="el-icon-position"></i>在终端中打开
                 </div>
-                <div class="dsk-menu-item" v-if="!desktopMenuMulti && !desktop.menu.target.dir"
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && isDesktopImage(desktop.menu.target)"
+                     @click="desktopMenuAction('preview')">
+                    <i class="el-icon-picture-outline"></i>预览
+                </div>
+                <div class="dsk-menu-item"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopImage(desktop.menu.target)"
                      @click="desktopMenuAction('edit')">
                     <i class="el-icon-edit-outline"></i>在线编辑
                 </div>
@@ -1560,7 +1629,7 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传；大 / 中图标视图会直接显示图片缩略图，<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速切换到 AI 终端 / SFTP / 进程 / 磁盘，右侧显示 CPU / 内存 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
                     <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>
                 </ul>

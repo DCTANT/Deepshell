@@ -262,7 +262,20 @@ new Vue({
             startError: '',
             clockNow: Date.now(),
             pendingSelect: '',
-            pendingOpen: false
+            pendingOpen: false,
+            previewVisible: false,
+            previewName: '',
+            previewPath: '',
+            previewStamp: 0,
+            previewLoading: false,
+            previewError: '',
+            previewZoom: 1,
+            previewRotate: 0,
+            previewPanX: 0,
+            previewPanY: 0,
+            previewNaturalW: 0,
+            previewNaturalH: 0,
+            thumbFailed: {}
         },
         connectDialogVisible: false,
         connFilter: 'all',
@@ -484,6 +497,36 @@ new Vue({
             }
             var r = this.desktop.menu.target;
             return r ? (r.dir ? '文件夹 · ' + r.name : '文件 · ' + r.name) : '当前目录';
+        },
+        desktopPreviewImages: function () {
+            var self = this;
+            return this.desktopShownEntries.filter(function (r) {
+                return self.isDesktopImage(r);
+            });
+        },
+        desktopPreviewIndex: function () {
+            var name = this.desktop.previewName;
+            for (var i = 0; i < this.desktopPreviewImages.length; i++) {
+                if (this.desktopPreviewImages[i].name === name) {
+                    return i;
+                }
+            }
+            return -1;
+        },
+        desktopPreviewCurrent: function () {
+            var name = this.desktop.previewName;
+            return (this.desktop.entries || []).find(function (r) {
+                return r.name === name;
+            }) || null;
+        },
+        desktopPreviewUrl: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !this.desktop.previewPath) {
+                return '';
+            }
+            return '/api/sftp/preview?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(this.desktop.previewPath)
+                + '&v=' + this.desktop.previewStamp;
         },
         desktopStartQuery: function () {
             return (this.desktop.startSearch || '').trim();
@@ -1695,6 +1738,7 @@ new Vue({
             this.desktop.startSearching = false;
             this.desktop.pendingSelect = '';
             this.desktop.pendingOpen = false;
+            this.closeDesktopPreview();
             this.loadDesktopDir(p);
             this.startDesktopClock();
             var self = this;
@@ -1722,6 +1766,7 @@ new Vue({
             this.desktop.startSearching = false;
             this.desktop.pendingSelect = '';
             this.desktop.pendingOpen = false;
+            this.closeDesktopPreview();
             var self = this;
             this.$nextTick(function () {
                 var t = self.activeTab;
@@ -1802,6 +1847,7 @@ new Vue({
                     });
                 }
                 self.desktop.entries = list || [];
+                self.desktop.thumbFailed = {};
                 self.desktop.path = target;
                 self.desktop.pathInput = target;
                 self.desktop.loading = false;
@@ -2029,12 +2075,162 @@ new Vue({
             }
             if (row.dir) {
                 this.desktopGo(this.pathJoin(this.desktop.path, row.name));
+            } else if (this.isDesktopImage(row)) {
+                this.desktopOpenPreview(row);
             } else {
                 this.desktopOpenEdit(row);
             }
         },
         desktopEntryPath: function (row) {
             return this.pathJoin(this.desktop.path, row.name);
+        },
+        /* ---------- 图片缩略图 / 预览 ---------- */
+        desktopShowThumb: function (row) {
+            if (this.desktop.viewMode !== 'large' && this.desktop.viewMode !== 'medium') {
+                return false;
+            }
+            if (!this.isDesktopImage(row)) {
+                return false;
+            }
+            // 超大图片不自动拉取，避免远程连接被大文件拖慢；仍可双击预览
+            if (row.size && row.size > 30 * 1024 * 1024) {
+                return false;
+            }
+            return !this.desktop.thumbFailed[this.desktopEntryPath(row)];
+        },
+        desktopThumbSrc: function (row) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return '';
+            }
+            return '/api/sftp/preview?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(this.desktopEntryPath(row))
+                + '&v=' + (row.mtime || 0);
+        },
+        onDesktopThumbError: function (row) {
+            this.$set(this.desktop.thumbFailed, this.desktopEntryPath(row), true);
+        },
+        desktopOpenPreview: function (row) {
+            if (!this.isDesktopImage(row)) {
+                return;
+            }
+            this.desktop.menu.visible = false;
+            this.desktop.startOpen = false;
+            this.desktop.previewVisible = true;
+            this.desktop.previewName = row.name;
+            this.desktop.previewPath = this.desktopEntryPath(row);
+            this.desktop.previewStamp = Date.now();
+            this.desktop.previewLoading = true;
+            this.desktop.previewError = '';
+            this.desktop.previewNaturalW = 0;
+            this.desktop.previewNaturalH = 0;
+            this.resetDesktopPreviewView();
+        },
+        resetDesktopPreviewView: function () {
+            this.desktop.previewZoom = 1;
+            this.desktop.previewRotate = 0;
+            this.desktop.previewPanX = 0;
+            this.desktop.previewPanY = 0;
+        },
+        closeDesktopPreview: function () {
+            this.desktop.previewVisible = false;
+            this.desktop.previewName = '';
+            this.desktop.previewPath = '';
+            this.desktop.previewLoading = false;
+            this.desktop.previewError = '';
+            this.resetDesktopPreviewView();
+        },
+        onDesktopPreviewLoad: function (ev) {
+            this.desktop.previewLoading = false;
+            this.desktop.previewError = '';
+            if (ev && ev.target) {
+                this.desktop.previewNaturalW = ev.target.naturalWidth || 0;
+                this.desktop.previewNaturalH = ev.target.naturalHeight || 0;
+            }
+        },
+        onDesktopPreviewError: function () {
+            this.desktop.previewLoading = false;
+            this.desktop.previewError = '图片加载失败：格式可能不受浏览器支持，或文件无读取权限';
+        },
+        desktopPreviewStep: function (delta) {
+            var images = this.desktopPreviewImages;
+            if (images.length < 2) {
+                return;
+            }
+            var idx = this.desktopPreviewIndex;
+            if (idx < 0) {
+                idx = 0;
+            }
+            var next = (idx + delta + images.length) % images.length;
+            var row = images[next];
+            this.desktop.previewName = row.name;
+            this.desktop.previewPath = this.desktopEntryPath(row);
+            this.desktop.previewStamp = Date.now();
+            this.desktop.previewLoading = true;
+            this.desktop.previewError = '';
+            this.desktop.previewNaturalW = 0;
+            this.desktop.previewNaturalH = 0;
+            this.resetDesktopPreviewView();
+        },
+        desktopPreviewPrev: function () {
+            this.desktopPreviewStep(-1);
+        },
+        desktopPreviewNext: function () {
+            this.desktopPreviewStep(1);
+        },
+        desktopPreviewZoom: function (factor) {
+            var z = this.desktop.previewZoom * factor;
+            z = Math.max(0.2, Math.min(8, z));
+            this.desktop.previewZoom = Math.round(z * 100) / 100;
+            if (this.desktop.previewZoom <= 1) {
+                this.desktop.previewPanX = 0;
+                this.desktop.previewPanY = 0;
+            }
+        },
+        desktopPreviewFit: function () {
+            this.resetDesktopPreviewView();
+        },
+        desktopPreviewRotate: function () {
+            this.desktop.previewRotate = (this.desktop.previewRotate + 90) % 360;
+            this.desktop.previewPanX = 0;
+            this.desktop.previewPanY = 0;
+        },
+        desktopPreviewWheel: function (ev) {
+            this.desktopPreviewZoom(ev.deltaY < 0 ? 1.15 : 1 / 1.15);
+        },
+        startDesktopPreviewDrag: function (ev) {
+            if (this.desktop.previewZoom <= 1) {
+                return;
+            }
+            ev.preventDefault();
+            var self = this;
+            var sx = ev.clientX;
+            var sy = ev.clientY;
+            var px = this.desktop.previewPanX;
+            var py = this.desktop.previewPanY;
+            var move = function (e) {
+                self.desktop.previewPanX = px + (e.clientX - sx);
+                self.desktop.previewPanY = py + (e.clientY - sy);
+            };
+            var up = function () {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+            };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        },
+        desktopDownloadPreview: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !this.desktop.previewPath) {
+                return;
+            }
+            var url = '/api/sftp/download?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(this.desktop.previewPath);
+            var a = document.createElement('a');
+            a.href = url;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
         },
         desktopEntryContextMenu: function (ev, row) {
             this.desktop.startOpen = false;
@@ -2086,6 +2282,10 @@ new Vue({
             var self = this;
             if (action === 'open') {
                 this.desktopOpenEntry(target || rows[0]);
+            } else if (action === 'preview') {
+                if (target && this.isDesktopImage(target)) {
+                    this.desktopOpenPreview(target);
+                }
             } else if (action === 'edit') {
                 if (target && !target.dir) {
                     this.desktopOpenEdit(target);
@@ -2235,6 +2435,9 @@ new Vue({
             }
             return s.substring(i + 1).toLowerCase();
         },
+        isDesktopImage: function (row) {
+            return !!row && !row.dir && this.desktopFileKind(row) === 'img';
+        },
         desktopFileKind: function (row) {
             if (row && row.dir) {
                 return 'folder';
@@ -2243,7 +2446,8 @@ new Vue({
             if (!e) {
                 return 'other';
             }
-            if (['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tif', 'tiff', 'avif', 'heic'].indexOf(e) >= 0) {
+            if (['png', 'jpg', 'jpeg', 'jpe', 'jfif', 'gif', 'bmp', 'webp', 'svg', 'ico',
+                'tif', 'tiff', 'avif', 'heic', 'heif'].indexOf(e) >= 0) {
                 return 'img';
             }
             if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'rmvb', 'ts'].indexOf(e) >= 0) {
@@ -2655,6 +2859,31 @@ new Vue({
         },
         onDesktopKeydown: function (e) {
             if (!this.desktop.visible) {
+                return;
+            }
+            if (this.desktop.previewVisible) {
+                if (e.key === 'Escape') {
+                    this.closeDesktopPreview();
+                    e.preventDefault();
+                } else if (e.key === 'ArrowLeft') {
+                    this.desktopPreviewPrev();
+                    e.preventDefault();
+                } else if (e.key === 'ArrowRight') {
+                    this.desktopPreviewNext();
+                    e.preventDefault();
+                } else if (e.key === '+' || e.key === '=') {
+                    this.desktopPreviewZoom(1.25);
+                    e.preventDefault();
+                } else if (e.key === '-') {
+                    this.desktopPreviewZoom(0.8);
+                    e.preventDefault();
+                } else if (e.key === '0') {
+                    this.desktopPreviewFit();
+                    e.preventDefault();
+                } else if (e.key === 'r' || e.key === 'R') {
+                    this.desktopPreviewRotate();
+                    e.preventDefault();
+                }
                 return;
             }
             var tag = (e.target && e.target.tagName ? e.target.tagName : '').toLowerCase();

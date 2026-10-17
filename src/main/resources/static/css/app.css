@@ -3978,3 +3978,307 @@ body.resizing .term-host {
     transform-origin: left bottom;
     animation: dsk-start-in .14s ease-out;
 }
+/* ---------- 图片预览 ---------- */
+.dsk-preview {
+    position: fixed;
+    inset: 0;
+    z-index: 4800;
+    display: flex;
+    flex-direction: column;
+    background: rgba(7, 10, 15, .94);
+    color: #eaf0fa;
+}
+
+.dsk-preview-head {
+    flex: 0 0 auto;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 16px;
+    background: rgba(13, 17, 24, .88);
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.dsk-preview-head > i {
+    flex: 0 0 auto;
+    color: #6ea8ff;
+    font-size: 16px;
+}
+
+.dsk-preview-title {
+    max-width: 46vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.dsk-preview-counter {
+    flex: 0 0 auto;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: rgba(110, 168, 255, .14);
+    color: #9fc4ff;
+    font-size: 11px;
+}
+
+.dsk-preview-head-btn {
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 5px;
+    background: transparent;
+    color: #c7d3e5;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.dsk-preview-head-btn:hover {
+    border-color: #4c8dff;
+    background: rgba(76, 141, 255, .13);
+    color: #fff;
+}
+
+.dsk-preview-stage {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    user-select: none;
+}
+
+.dsk-preview-img {
+    display: block;
+    max-width: 92vw;
+    max-height: calc(100vh - 180px);
+    object-fit: contain;
+    transform-origin: center center;
+    transition: transform .12s ease;
+    user-select: none;
+    -webkit-user-drag: none;
+    cursor: default;
+}
+
+.dsk-preview-img.rotated {
+    max-width: calc(100vh - 180px);
+    max-height: calc(100vw - 80px);
+}
+
+.dsk-preview-img.zoomed {
+    cursor: grab;
+}
+
+.dsk-preview-img.zoomed:active {
+    cursor: grabbing;
+}
+
+.dsk-preview-nav {
+    position: absolute;
+    top: 50%;
+    z-index: 3;
+    width: 46px;
+    height: 46px;
+    margin-top: -23px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, .14);
+    border-radius: 50%;
+    background: rgba(18, 24, 34, .72);
+    color: #dce8fb;
+    font-size: 20px;
+    cursor: pointer;
+    opacity: .8;
+    transition: all .15s ease;
+}
+
+.dsk-preview-nav:hover:not(:disabled) {
+    opacity: 1;
+    border-color: #4c8dff;
+    background: rgba(35, 55, 86, .9);
+    color: #fff;
+}
+
+.dsk-preview-nav:disabled {
+    opacity: .2;
+    cursor: default;
+}
+
+.dsk-preview-nav.prev {
+    left: 16px;
+}
+
+.dsk-preview-nav.next {
+    right: 16px;
+}
+
+.dsk-preview-loading {
+    position: absolute;
+    z-index: 2;
+    padding: 7px 14px;
+    border-radius: 16px;
+    background: rgba(18, 24, 34, .8);
+    color: #c9d7eb;
+    font-size: 12px;
+    pointer-events: none;
+}
+
+.dsk-preview-error {
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 26px 30px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 12px;
+    background: rgba(18, 24, 34, .72);
+    color: #c7d3e5;
+    text-align: center;
+    font-size: 13px;
+}
+
+.dsk-preview-error > i {
+    color: #f0b429;
+    font-size: 40px;
+}
+
+.dsk-preview-error p {
+    margin: 0;
+    line-height: 1.7;
+}
+
+.dsk-preview-tools {
+    flex: 0 0 auto;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 16px;
+    background: rgba(13, 17, 24, .9);
+    border-top: 1px solid rgba(255, 255, 255, .08);
+    color: #b8c6da;
+    font-size: 12px;
+}
+
+.dsk-preview-tool {
+    min-width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 5px;
+    background: transparent;
+    color: #c7d3e5;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.dsk-preview-tool:hover {
+    border-color: #4c8dff;
+    background: rgba(76, 141, 255, .13);
+    color: #fff;
+}
+
+.dsk-preview-tool.text {
+    font-size: 12px;
+}
+
+.dsk-preview-zoom {
+    min-width: 44px;
+    text-align: center;
+    color: #e3ecfa;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11px;
+}
+
+.dsk-preview-sep {
+    width: 1px;
+    height: 18px;
+    margin: 0 3px;
+    background: rgba(255, 255, 255, .12);
+}
+
+.dsk-preview-size {
+    margin-left: 8px;
+    color: #7f8ea5;
+    font-size: 10.5px;
+    font-family: Consolas, Menlo, monospace;
+}
+
+.dsk-preview-hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #73839a;
+    font-size: 10.5px;
+}
+
+@media (max-width: 1000px) {
+    .dsk-preview-hint {
+        display: none;
+    }
+
+    .dsk-preview-title {
+        max-width: 38vw;
+    }
+
+    .dsk-preview-nav {
+        width: 38px;
+        height: 38px;
+        margin-top: -19px;
+    }
+}
+
+/* 大 / 中图标视图的图片缩略图 */
+.dsk-thumb {
+    position: relative;
+    width: 58px;
+    height: 58px;
+    flex: 0 0 auto;
+    display: block;
+    overflow: hidden;
+    border: 1px solid #d8e0eb;
+    border-radius: 8px;
+    background-color: #f4f6fa;
+    background-image:
+        linear-gradient(45deg, #e9edf4 25%, transparent 25%),
+        linear-gradient(-45deg, #e9edf4 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #e9edf4 75%),
+        linear-gradient(-45deg, transparent 75%, #e9edf4 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+    box-shadow: 0 1px 4px rgba(20, 35, 60, .16);
+}
+
+.dsk-thumb img {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.dsk-grid.medium .dsk-thumb {
+    width: 38px;
+    height: 38px;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(20, 35, 60, .14);
+}
+
+.dsk-grid.medium .dsk-thumb img {
+    border-radius: 4px;
+}
