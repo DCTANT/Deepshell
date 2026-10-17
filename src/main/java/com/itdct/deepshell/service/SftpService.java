@@ -281,6 +281,26 @@ public class SftpService {
         });
     }
 
+    /** 读取完整文件到内存（缩略图生成用），超过 maxBytes 直接报错，避免超大文件拖垮内存 */
+    public byte[] readBytes(String sessionId, String path, int maxBytes) throws Exception {
+        return withSftp(sessionId, c -> {
+            try (InputStream in = c.get(path)) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[16 * 1024];
+                int n;
+                int total = 0;
+                while ((n = in.read(buf)) != -1) {
+                    total += n;
+                    if (total > maxBytes) {
+                        throw new IllegalArgumentException("文件过大，无法生成缩略图");
+                    }
+                    out.write(buf, 0, n);
+                }
+                return out.toByteArray();
+            }
+        });
+    }
+
     public String readText(String sessionId, String path) throws Exception {
         return withSftp(sessionId, c -> {
             try (InputStream in = c.get(path)) {

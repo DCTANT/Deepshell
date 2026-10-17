@@ -3,6 +3,7 @@ package com.itdct.deepshell.service;
 import com.itdct.deepshell.dto.ConnectionForm;
 import com.itdct.deepshell.entity.SshConnection;
 import com.itdct.deepshell.repo.AiConversationRepository;
+import com.itdct.deepshell.repo.CommonDirRepository;
 import com.itdct.deepshell.repo.ConnFolderRepository;
 import com.itdct.deepshell.repo.SshConnectionRepository;
 import org.springframework.stereotype.Service;
@@ -15,13 +16,16 @@ public class ConnectionService {
     private final SshConnectionRepository repo;
     private final ConnFolderRepository folderRepo;
     private final AiConversationRepository aiConvRepo;
+    private final CommonDirRepository commonDirRepo;
     private final CryptoService cryptoService;
 
     public ConnectionService(SshConnectionRepository repo, ConnFolderRepository folderRepo,
-                             AiConversationRepository aiConvRepo, CryptoService cryptoService) {
+                             AiConversationRepository aiConvRepo, CommonDirRepository commonDirRepo,
+                             CryptoService cryptoService) {
         this.repo = repo;
         this.folderRepo = folderRepo;
         this.aiConvRepo = aiConvRepo;
+        this.commonDirRepo = commonDirRepo;
         this.cryptoService = cryptoService;
     }
 
@@ -46,8 +50,9 @@ public class ConnectionService {
     }
 
     public void delete(Long id) {
-        // 一并清理该连接的 AI 终端对话
+        // 一并清理该连接的 AI 终端对话与常用目录
         aiConvRepo.deleteAll(aiConvRepo.findByConnectionId(id));
+        commonDirRepo.deleteAll(commonDirRepo.findByConnectionIdOrderByIdAsc(id));
         repo.deleteById(id);
     }
 

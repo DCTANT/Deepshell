@@ -19,18 +19,20 @@ public class CommonDirController {
     }
 
     @GetMapping
-    public R<List<CommonDir>> list() {
-        return R.ok(service.list());
+    public R<List<CommonDir>> list(@RequestParam Long connId) {
+        return R.ok(service.list(connId));
     }
 
     @PostMapping
-    public R<CommonDir> add(@RequestBody Map<String, String> body) {
-        return R.ok(service.add(body.get("path")));
+    public R<CommonDir> add(@RequestBody Map<String, Object> body) {
+        Object cid = body.get("connId");
+        Long connId = cid == null ? null : Long.valueOf(String.valueOf(cid));
+        return R.ok(service.add(connId, (String) body.get("path")));
     }
 
     @DeleteMapping("/{id}")
-    public R<Void> delete(@PathVariable Long id) {
-        service.delete(id);
+    public R<Void> delete(@PathVariable Long id, @RequestParam Long connId) {
+        service.delete(connId, id);
         return R.ok();
     }
 }

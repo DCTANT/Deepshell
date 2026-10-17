@@ -8,7 +8,9 @@ import java.util.Optional;
 
 public interface CommonDirRepository extends JpaRepository<CommonDir, Long> {
 
-    List<CommonDir> findAllByOrderByIdAsc();
+    List<CommonDir> findByConnectionIdOrderByIdAsc(Long connectionId);
 
-    Optional<CommonDir> findByPath(String path);
+    Optional<CommonDir> findByConnectionIdAndPath(Long connectionId, String path);
+
+    List<CommonDir> findByConnectionIdIsNull();
 }

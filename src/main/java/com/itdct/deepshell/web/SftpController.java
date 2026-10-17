@@ -1,5 +1,6 @@
 package com.itdct.deepshell.web;
 
+import com.itdct.deepshell.common.ImageThumbnails;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.dto.ArchiveReq;
 import com.itdct.deepshell.dto.SftpEntry;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +22,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/sftp")
 public class SftpController {
+
+    /** 缩略图原图读取上限：超过则前端回退为文件图标 */
+    private static final int MAX_THUMB_SOURCE = 30 * 1024 * 1024;
 
     private final SftpService sftp;
     private final VscodeEditService vscodeEditService;
@@ -123,10 +128,69 @@ public class SftpController {
         resp.setContentType(contentType);
         resp.setHeader("Content-Disposition", "inline; filename=\"" + safeName
                 + "\"; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8").replace("+", "%20"));
-        // 缩略图使用稳定的 mtime 版本号，允许浏览器缓存；完整预览会带新的时间戳绕过缓存
         resp.setHeader("Cache-Control", "private, max-age=300");
         resp.setHeader("X-Content-Type-Options", "nosniff");
         sftp.download(sessionId, path, resp.getOutputStream());
+    }
+
+    /**
+     * 图片缩略图：服务端降采样后返回小图，供大/中图标视图使用。
+     * 避免浏览器直接解码超高分辨率原图，也避免大量原图下载挤占 SFTP 通道。
+     */
+    @GetMapping("/thumbnail")
+    public void thumbnail(@RequestParam("sessionId") String sessionId,
+                          @RequestParam("path") String path,
+                          @RequestParam(value = "size", defaultValue = "200") int size,
+                          HttpServletResponse resp) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        String contentType = imageContentType(name);
+        if (contentType == null) {
+            sendError(resp, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE);
+            return;
+        }
+        byte[] source;
+        try {
+            source = sftp.readBytes(sessionId, path, MAX_THUMB_SOURCE);
+        } catch (IllegalArgumentException tooLargeOrInvalid) {
+            sendError(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE);
+            return;
+        } catch (Exception readFailed) {
+            sendError(resp, HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+        resp.setHeader("Cache-Control", "private, max-age=300");
+        resp.setHeader("X-Content-Type-Options", "nosniff");
+        if ("image/svg+xml".equals(contentType)) {
+            // SVG 是矢量且通常很小，直接交给浏览器缩放
+            writeImage(resp, contentType, source);
+            return;
+        }
+        try {
+            ImageThumbnails.Thumb thumb = ImageThumbnails.create(source, size);
+            writeImage(resp, thumb.getContentType(), thumb.getData());
+        } catch (UnsupportedOperationException unsupported) {
+            sendError(resp, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE);
+        } catch (Exception decodeFailed) {
+            sendError(resp, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE);
+        }
+    }
+
+    private static void writeImage(HttpServletResponse resp, String contentType, byte[] data) {
+        try {
+            resp.setContentType(contentType);
+            resp.setContentLength(data.length);
+            resp.getOutputStream().write(data);
+        } catch (IOException ignore) {
+            // 浏览器取消加载等情况，忽略
+        }
+    }
+
+    private static void sendError(HttpServletResponse resp, int status) {
+        try {
+            resp.sendError(status);
+        } catch (IOException ignore) {
+            // ignore
+        }
     }
 
     private static String imageContentType(String name) {

@@ -604,6 +604,8 @@
             <el-button-group class="dsk-nav">
                 <el-button size="mini" icon="el-icon-back" title="后退"
                            :disabled="!desktop.history.length" @click="desktopGoBack"></el-button>
+                <el-button size="mini" icon="el-icon-right" title="前进"
+                           :disabled="!desktop.future.length" @click="desktopGoForward"></el-button>
                 <el-button size="mini" icon="el-icon-top" title="上一级"
                            :disabled="desktop.path === '/'" @click="desktopUp"></el-button>
                 <el-button size="mini" :icon="desktop.loading ? 'el-icon-loading' : 'el-icon-refresh'"
@@ -680,9 +682,9 @@
                     <i class="el-icon-folder"></i><span class="dsk-side-name">{{ q.label }}</span>
                     <span class="dsk-side-path">{{ q.path }}</span>
                 </div>
-                <template v-if="commonDirs.length">
+                <template v-if="desktopCommonDirs.length">
                     <div class="dsk-side-sec"><i class="el-icon-star-on"></i>常用目录</div>
-                    <div class="dsk-side-item" v-for="d in commonDirs" :key="'cd' + d.id"
+                    <div class="dsk-side-item" v-for="d in desktopCommonDirs" :key="'cd' + d.id"
                          :class="{ active: desktop.path === d.path }" :title="d.path"
                          @click="desktopGo(d.path)">
                         <i class="el-icon-folder-opened"></i>
@@ -698,9 +700,13 @@
 
             <main class="dsk-main">
                 <div class="dsk-files" ref="deskFiles" @click="onDesktopFilesClick"
+                     @mousedown="onDesktopFilesMouseDown"
                      @contextmenu.prevent="desktopBlankContextMenu($event)"
                      @dragover="onDesktopSurfaceDragOver" @drop="onDesktopSurfaceDrop"
                      @dragleave="onDesktopSurfaceDragLeave">
+                    <div class="dsk-marquee" v-if="desktop.marquee.visible"
+                         :style="{ left: desktop.marquee.left + 'px', top: desktop.marquee.top + 'px',
+                                   width: desktop.marquee.width + 'px', height: desktop.marquee.height + 'px' }"></div>
                     <div class="dsk-error" v-if="desktop.error">
                         <i class="el-icon-warning-outline"></i> {{ desktop.error }}
                     </div>
@@ -742,8 +748,8 @@
                                     <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
                                 </svg>
                                 <span v-else-if="desktopShowThumb(row)" class="dsk-thumb">
-                                    <img :src="desktopThumbSrc(row)" :alt="row.name"
-                                         loading="lazy" decoding="async" draggable="false"
+                                    <img v-if="desktopThumbSrc(row)" :src="desktopThumbSrc(row)" :alt="row.name"
+                                         decoding="async" draggable="false"
                                          @error="onDesktopThumbError(row)">
                                 </span>
                                 <span v-else class="dsk-file-ico" :class="'fi-' + desktopFileKind(row)">
@@ -1359,7 +1365,7 @@
                 </button>
                 <img v-if="!desktop.previewError" class="dsk-preview-img"
                      :class="{ zoomed: desktop.previewZoom > 1, rotated: desktop.previewRotate % 180 !== 0 }"
-                     :src="desktopPreviewUrl" :alt="desktop.previewName" draggable="false"
+                     :src="desktopPreviewUrl" :alt="desktop.previewName" draggable="false" decoding="async"
                      :style="{ transform: 'translate(' + desktop.previewPanX + 'px, ' + desktop.previewPanY
                          + 'px) scale(' + desktop.previewZoom + ') rotate(' + desktop.previewRotate + 'deg)' }"
                      @load="onDesktopPreviewLoad" @error="onDesktopPreviewError"
@@ -2161,7 +2167,7 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、拖动文件到文件夹移动、系统文件拖入上传；大 / 中图标视图会直接显示图片缩略图，<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载 / 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>可全屏预览，支持缩放、拖动、旋转和上一张 / 下一张</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速切换到 AI 终端 / SFTP / 进程 / 磁盘，右侧显示 CPU / 内存 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
                     <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后可等自动重连或手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
                     <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
@@ -2183,6 +2189,7 @@
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-folder-opened"></i>常用目录（右侧面板）</div>
                 <ul>
+                    <li><b>按当前主机（连接）分别保存</b>，切换标签页自动切换对应的常用目录，不同主机互不影响</li>
                     <li>把常用路径存成快捷入口：浏览到目标目录后点「定位」按钮一键添加，或直接输入路径</li>
                     <li><b>点击条目即在终端执行 cd</b>（特殊字符自动安全转义），文件面板同步进入该目录</li>
                     <li>鼠标悬浮条目右侧的 × 可从常用目录中移除</li>

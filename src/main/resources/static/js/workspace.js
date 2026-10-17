@@ -345,9 +345,9 @@ new Vue({
         panelWidth: 480,
         /* AI 可视化桌面 */
         desktopViews: [
-            { id: 'large', label: '大图标', icon: 'el-icon-s-grid' },
-            { id: 'medium', label: '中图标', icon: 'el-icon-menu' },
-            { id: 'small', label: '小图标', icon: 'el-icon-grid' },
+            { id: 'large', label: '大图标', icon: 'el-icon-menu' },
+            { id: 'medium', label: '中图标', icon: 'el-icon-s-grid' },
+            { id: 'small', label: '小图标', icon: 'dsk-vsmall' },
             { id: 'list', label: '详细列表', icon: 'el-icon-tickets' }
         ],
         desktopTaskApps: [
@@ -385,12 +385,14 @@ new Vue({
             loading: false,
             error: '',
             history: [],
+            future: [],
             viewMode: loadDesktopView(),
             sortBy: 'name',
             sortDir: 'asc',
             keyword: '',
             selected: [],
             lastSelected: '',
+            marquee: { visible: false, left: 0, top: 0, width: 0, height: 0 },
             menu: { visible: false, x: 0, y: 0, target: null },
             propsVisible: false,
             props: null,
@@ -419,6 +421,7 @@ new Vue({
             previewPanY: 0,
             previewNaturalW: 0,
             previewNaturalH: 0,
+            thumbSrc: {},
             thumbFailed: {},
             settingsVisible: false,
             settingsSection: 'appearance',
@@ -460,7 +463,7 @@ new Vue({
             { id: 'max', label: '极限', desc: '最慢，体积最小' }
         ],
         newCmd: { name: '', command: '' },
-        commonDirs: [],
+        commonDirsByConn: {},
         newDirPath: '',
         cmdEditDialog: false,
         cmdEditSaving: false,
@@ -578,6 +581,13 @@ new Vue({
         snippetTarget: function (v) {
             try { localStorage.setItem('deepshell.snippetTarget', v); } catch (e) { /* ignore */ }
         },
+        activeKey: function () {
+            // 常用目录按连接隔离：首次切到某主机的标签时按需加载
+            var t = this.activeTab;
+            if (t && t.connId != null && !Object.prototype.hasOwnProperty.call(this.commonDirsByConn, t.connId)) {
+                this.loadCommonDirs(t.connId);
+            }
+        },
         sftpFollow: function (v) {
             try { localStorage.setItem('deepshell.sftpFollow', v ? '1' : '0'); } catch (e) { /* ignore */ }
         },
@@ -621,6 +631,14 @@ new Vue({
         },
         'desktop.thumbnailsEnabled': function (v) {
             try { localStorage.setItem('deepshell.desktopThumbs', v ? '1' : '0'); } catch (e) { /* ignore */ }
+            this.$nextTick(this.setupDesktopThumbs);
+        },
+        'desktop.viewMode': function () {
+            this.$nextTick(this.setupDesktopThumbs);
+        },
+        // 目录内容 / 筛选 / 排序变化后，重新观察当前渲染出的网格项
+        desktopShownEntries: function () {
+            this.$nextTick(this.setupDesktopThumbs);
         },
         'desktop.showHidden': function (v) {
             try { localStorage.setItem('deepshell.desktopShowHidden', v ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -655,11 +673,26 @@ new Vue({
         activeTab: function () {
             return this.tabs.find(function (t) { return t.key === this.activeKey; }, this) || null;
         },
+        /* 当前主机的常用目录（按连接隔离） */
+        commonDirs: function () {
+            var t = this.activeTab;
+            if (!t || t.connId == null) {
+                return [];
+            }
+            return this.commonDirsByConn[t.connId] || [];
+        },
         /* ---------- AI 可视化桌面 ---------- */
         desktopTab: function () {
             var self = this;
             return this.tabs.find(function (t) { return t.key === self.desktop.tabKey; }, this)
                 || this.activeTab || null;
+        },
+        desktopCommonDirs: function () {
+            var t = this.desktopTab;
+            if (!t || t.connId == null) {
+                return [];
+            }
+            return this.commonDirsByConn[t.connId] || [];
         },
         desktopAiDir: function () {
             var t = this.desktopTab;
@@ -823,7 +856,7 @@ new Vue({
             add('AI 当前目录', this.desktopAiDir, 'el-icon-cpu');
             add('主目录', this.desktopHomeDir, 'el-icon-user');
             add('根目录', '/', 'el-icon-office-building');
-            (this.commonDirs || []).forEach(function (d) {
+            (this.desktopCommonDirs || []).forEach(function (d) {
                 add(d.path, d.path, 'el-icon-star-off');
             });
             return out.slice(0, 8);
@@ -1162,6 +1195,7 @@ new Vue({
                 })
                 .then(function () {
                     ELEMENT.Message.success('已删除');
+                    self.$delete(self.commonDirsByConn, id);
                     self.loadConnections();
                 })
                 .catch(function () { /* 已取消或已由拦截器提示 */ });
@@ -2209,6 +2243,8 @@ new Vue({
             this.desktop.tabKey = t.key;
             this.desktop.visible = true;
             this.desktop.history = [];
+            this.desktop.future = [];
+            this.cancelDesktopMarquee();
             this.desktop.selected = [];
             this.desktop.lastSelected = '';
             this.desktop.keyword = '';
@@ -2241,6 +2277,8 @@ new Vue({
         closeAiDesktop: function (skipSftpRefresh) {
             this.stopDesktopDragScroll();
             this.stopDesktopClock();
+            this.cancelDesktopMarquee();
+            this.resetDesktopThumbs();
             this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
             this.desktop.visible = false;
             this.desktop.menu.visible = false;
@@ -2347,6 +2385,12 @@ new Vue({
             var prevPath = this.desktop.path;
             var seq = (this._deskLoadSeq || 0) + 1;
             this._deskLoadSeq = seq;
+            this.cancelDesktopMarquee();
+            if (nav !== 'back' && nav !== 'forward' && nav !== 'refresh' && target !== prevPath) {
+                // 新开一条浏览路径：原来的“前进”栈失效
+                this.desktop.future = [];
+            }
+            this.resetDesktopThumbs();
             this.desktop.loading = true;
             this.desktop.error = '';
             this.desktop.pathEditing = false;
@@ -2361,6 +2405,12 @@ new Vue({
                         self.desktop.history.shift();
                     }
                 }
+                if (nav === 'back' && prevPath && target !== prevPath) {
+                    self.desktop.future.push(prevPath);
+                    if (self.desktop.future.length > 50) {
+                        self.desktop.future.shift();
+                    }
+                }
                 if (target !== prevPath) {
                     self.desktop.selected = [];
                     self.desktop.lastSelected = '';
@@ -2372,7 +2422,6 @@ new Vue({
                     });
                 }
                 self.desktop.entries = list || [];
-                self.desktop.thumbFailed = {};
                 self.desktop.path = target;
                 self.desktop.pathInput = target;
                 self.desktop.loading = false;
@@ -2435,11 +2484,18 @@ new Vue({
             this.loadDesktopDir(this.desktop.path, 'refresh');
         },
         desktopGoBack: function () {
-            if (!this.desktop.history.length) {
+            if (!this.desktop.history.length || this.desktop.loading) {
                 return;
             }
             var p = this.desktop.history.pop();
             this.loadDesktopDir(p, 'back');
+        },
+        desktopGoForward: function () {
+            if (!this.desktop.future.length || this.desktop.loading) {
+                return;
+            }
+            var p = this.desktop.future.pop();
+            this.loadDesktopDir(p, 'forward');
         },
         desktopUp: function () {
             var p = this.desktop.path || '/';
@@ -2515,6 +2571,210 @@ new Vue({
                 return;
             }
             this.desktopClearSelection();
+        },
+        /* ---------- 空白处左键拖拽框选 ---------- */
+        onDesktopFilesMouseDown: function (ev) {
+            if (ev.button !== 0 || !this.desktop.visible) {
+                return;
+            }
+            if (this.desktop.loading || this.desktop.pathEditing || this.desktop.previewVisible
+                    || this.desktop.settingsVisible || this.desktop.startOpen
+                    || this.desktop.menu.visible || this.hasDesktopDialogOpen()) {
+                return;
+            }
+            var target = ev.target;
+            if (target && target.closest && target.closest(
+                    '.dsk-item, .dsk-row, .dsk-list-head, .dsk-empty, .dsk-error, .dsk-loading')) {
+                return;
+            }
+            var root = this.$refs.deskFiles;
+            if (!root) {
+                return;
+            }
+            var rect = root.getBoundingClientRect();
+            // 右侧 / 底部滚动条区域不触发框选
+            if (ev.clientX > rect.right - 14 || ev.clientY > rect.bottom - 14) {
+                return;
+            }
+            ev.preventDefault();
+            var active = document.activeElement;
+            if (active && active !== document.body && active.blur) {
+                active.blur();
+            }
+            this.cancelDesktopMarquee();
+            var nodes = root.querySelectorAll('.dsk-item[data-name], .dsk-row[data-name]');
+            var items = [];
+            for (var i = 0; i < nodes.length; i++) {
+                var r = nodes[i].getBoundingClientRect();
+                items.push({
+                    name: nodes[i].getAttribute('data-name'),
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom
+                });
+            }
+            var additive = !!(ev.ctrlKey || ev.metaKey);
+            this._marquee = {
+                startX: ev.clientX,
+                startY: ev.clientY,
+                lastX: ev.clientX,
+                lastY: ev.clientY,
+                base: additive ? this.desktop.selected.slice() : [],
+                additive: additive,
+                moved: false,
+                items: items,
+                scrollLeft: root.scrollLeft,
+                scrollTop: root.scrollTop
+            };
+            document.addEventListener('mousemove', this.onDesktopMarqueeMove);
+            document.addEventListener('mouseup', this.onDesktopMarqueeUp);
+            var self = this;
+            this._marqueeTimer = setInterval(function () {
+                self.autoScrollDesktopMarquee();
+            }, 40);
+        },
+        onDesktopMarqueeMove: function (ev) {
+            var m = this._marquee;
+            if (!m) {
+                return;
+            }
+            if (ev.buttons === 0) {
+                this.onDesktopMarqueeUp();
+                return;
+            }
+            m.lastX = ev.clientX;
+            m.lastY = ev.clientY;
+            if (!m.moved) {
+                if (Math.abs(m.lastX - m.startX) < 4 && Math.abs(m.lastY - m.startY) < 4) {
+                    return;
+                }
+                m.moved = true;
+            }
+            var self = this;
+            if (this._marqueeRaf) {
+                return;
+            }
+            this._marqueeRaf = window.requestAnimationFrame(function () {
+                self._marqueeRaf = 0;
+                self.updateDesktopMarquee();
+            });
+        },
+        updateDesktopMarquee: function () {
+            var m = this._marquee;
+            var root = this.$refs.deskFiles;
+            if (!m || !m.moved || !root) {
+                return;
+            }
+            var rr = root.getBoundingClientRect();
+            var left = Math.max(rr.left, Math.min(m.startX, m.lastX));
+            var right = Math.min(rr.right, Math.max(m.startX, m.lastX));
+            var top = Math.max(rr.top, Math.min(m.startY, m.lastY));
+            var bottom = Math.min(rr.bottom, Math.max(m.startY, m.lastY));
+            this.desktop.marquee.visible = true;
+            this.desktop.marquee.left = left;
+            this.desktop.marquee.top = top;
+            this.desktop.marquee.width = Math.max(0, right - left);
+            this.desktop.marquee.height = Math.max(0, bottom - top);
+
+            // 用拖动开始时的元素矩形 + 滚动差值计算命中，避免每帧都强制浏览器重排
+            var dx = root.scrollLeft - m.scrollLeft;
+            var dy = root.scrollTop - m.scrollTop;
+            var sel = m.additive ? m.base.slice() : [];
+            var last = '';
+            for (var i = 0; i < m.items.length; i++) {
+                var it = m.items[i];
+                var itL = it.left - dx;
+                var itR = it.right - dx;
+                var itT = it.top - dy;
+                var itB = it.bottom - dy;
+                if (itR >= left && itL <= right && itB >= top && itT <= bottom) {
+                    if (sel.indexOf(it.name) < 0) {
+                        sel.push(it.name);
+                    }
+                    last = it.name;
+                }
+            }
+            var same = sel.length === this.desktop.selected.length;
+            if (same) {
+                for (var j = 0; j < sel.length; j++) {
+                    if (sel[j] !== this.desktop.selected[j]) {
+                        same = false;
+                        break;
+                    }
+                }
+            }
+            if (!same) {
+                this.desktop.selected = sel;
+            }
+            if (last) {
+                this.desktop.lastSelected = last;
+            } else if (!m.additive) {
+                this.desktop.lastSelected = '';
+            }
+        },
+        autoScrollDesktopMarquee: function () {
+            var m = this._marquee;
+            var root = this.$refs.deskFiles;
+            if (!m || !m.moved || !root) {
+                return;
+            }
+            var rr = root.getBoundingClientRect();
+            if (m.lastX < rr.left || m.lastX > rr.right
+                    || m.lastY < rr.top || m.lastY > rr.bottom) {
+                return;
+            }
+            var edge = 28;
+            var speed = 0;
+            if (m.lastY < rr.top + edge) {
+                speed = -Math.min(26, Math.ceil((rr.top + edge - m.lastY) / 2));
+            } else if (m.lastY > rr.bottom - edge) {
+                speed = Math.min(26, Math.ceil((m.lastY - (rr.bottom - edge)) / 2));
+            }
+            if (!speed) {
+                return;
+            }
+            var before = root.scrollTop;
+            root.scrollTop += speed;
+            if (root.scrollTop !== before) {
+                this.updateDesktopMarquee();
+            }
+        },
+        onDesktopMarqueeUp: function () {
+            var moved = !!(this._marquee && this._marquee.moved);
+            if (moved) {
+                // 补一次最终位置，避免快速拖拽时最后一帧还没渲染
+                this.updateDesktopMarquee();
+            }
+            this.cancelDesktopMarquee();
+            if (moved) {
+                // 框选结束后浏览器还会补发一次 click，捕获阶段吞掉它，避免清掉刚框好的选区
+                var suppressClick = function (e) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    document.removeEventListener('click', suppressClick, true);
+                };
+                document.addEventListener('click', suppressClick, true);
+                setTimeout(function () {
+                    document.removeEventListener('click', suppressClick, true);
+                }, 300);
+            }
+        },
+        cancelDesktopMarquee: function () {
+            document.removeEventListener('mousemove', this.onDesktopMarqueeMove);
+            document.removeEventListener('mouseup', this.onDesktopMarqueeUp);
+            if (this._marqueeTimer) {
+                clearInterval(this._marqueeTimer);
+                this._marqueeTimer = null;
+            }
+            if (this._marqueeRaf) {
+                window.cancelAnimationFrame(this._marqueeRaf);
+                this._marqueeRaf = 0;
+            }
+            this._marquee = null;
+            if (this.desktop.marquee.visible) {
+                this.desktop.marquee.visible = false;
+            }
         },
         scrollDesktopEntry: function (name) {
             this.$nextTick(function () {
@@ -2627,21 +2887,208 @@ new Vue({
             return !this.desktop.thumbFailed[this.desktopEntryPath(row)];
         },
         desktopThumbSrc: function (row) {
-            var t = this.desktopTab;
-            if (!t || !t.sessionId) {
-                return '';
+            return this.desktop.thumbSrc[this.desktopEntryPath(row)] || '';
+        },
+        desktopRowByName: function (name) {
+            if (!name) {
+                return null;
             }
-            return '/api/sftp/preview?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row))
-                + '&v=' + (row.mtime || 0);
+            var rows = this.desktop.entries || [];
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].name === name) {
+                    return rows[i];
+                }
+            }
+            return null;
+        },
+        /* 只观察当前滚动容器里露出来的网格项，避免一次性请求整目录图片 */
+        setupDesktopThumbs: function () {
+            var self = this;
+            this.disconnectDesktopThumbObserver();
+            if (!this.desktop.visible || !this.desktop.thumbnailsEnabled
+                    || this.desktop.previewVisible
+                    || (this.desktop.viewMode !== 'large' && this.desktop.viewMode !== 'medium')) {
+                this.cancelDesktopThumbQueue();
+                return;
+            }
+            var root = this.$refs.deskFiles;
+            if (!root) {
+                return;
+            }
+            var items = root.querySelectorAll('.dsk-item');
+            if (!items.length) {
+                return;
+            }
+            if (typeof IntersectionObserver === 'undefined') {
+                // 老浏览器兜底：交给限并发队列，不阻塞页面
+                for (var i = 0; i < items.length; i++) {
+                    var row = this.desktopRowByName(items[i].getAttribute('data-name'));
+                    if (row) {
+                        this.queueDesktopThumb(row);
+                    }
+                }
+                return;
+            }
+            var observer = new IntersectionObserver(function (entries) {
+                for (var k = 0; k < entries.length; k++) {
+                    if (!entries[k].isIntersecting) {
+                        continue;
+                    }
+                    observer.unobserve(entries[k].target);
+                    var hit = self.desktopRowByName(entries[k].target.getAttribute('data-name'));
+                    if (hit) {
+                        self.queueDesktopThumb(hit);
+                    }
+                }
+            }, { root: root, rootMargin: '240px 0px' });
+            this._thumbObserver = observer;
+            for (var j = 0; j < items.length; j++) {
+                var r = this.desktopRowByName(items[j].getAttribute('data-name'));
+                if (r && this.desktopShowThumb(r)
+                        && !this.desktop.thumbSrc[this.desktopEntryPath(r)]) {
+                    observer.observe(items[j]);
+                }
+            }
+        },
+        disconnectDesktopThumbObserver: function () {
+            if (this._thumbObserver) {
+                this._thumbObserver.disconnect();
+                this._thumbObserver = null;
+            }
+        },
+        queueDesktopThumb: function (row) {
+            if (!this.desktopShowThumb(row)) {
+                return;
+            }
+            var path = this.desktopEntryPath(row);
+            if (this.desktop.thumbSrc[path] || this.desktop.thumbFailed[path]) {
+                return;
+            }
+            if (!this._thumbQueued) {
+                this._thumbQueued = {};
+            }
+            if (this._thumbQueued[path]) {
+                return;
+            }
+            this._thumbQueued[path] = true;
+            if (!this._thumbQueue) {
+                this._thumbQueue = [];
+            }
+            this._thumbQueue.push({ path: path, mtime: row.mtime || 0 });
+            this.pumpDesktopThumbs();
+        },
+        /* 限并发：最多 2 个缩略图请求，给目录读取等 SFTP 操作留出通道 */
+        pumpDesktopThumbs: function () {
+            var MAX_THUMB_ACTIVE = 2;
+            if (!this._thumbQueue) {
+                this._thumbQueue = [];
+            }
+            if (!this._thumbActive) {
+                this._thumbActive = 0;
+            }
+            while (this._thumbActive < MAX_THUMB_ACTIVE && this._thumbQueue.length) {
+                this.loadDesktopThumb(this._thumbQueue.shift());
+            }
+        },
+        loadDesktopThumb: function (item) {
+            var self = this;
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !this.desktop.visible
+                    || this.desktop.thumbSrc[item.path] || this.desktop.thumbFailed[item.path]) {
+                if (this._thumbQueued) {
+                    this._thumbQueued[item.path] = false;
+                }
+                return;
+            }
+            var gen = this._thumbGen || 0;
+            var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+            if (ctrl) {
+                if (!this._thumbCtrls) {
+                    this._thumbCtrls = [];
+                }
+                this._thumbCtrls.push(ctrl);
+            }
+            this._thumbActive = (this._thumbActive || 0) + 1;
+            var url = '/api/sftp/thumbnail?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(item.path)
+                + '&v=' + item.mtime;
+            fetch(url, { credentials: 'same-origin', signal: ctrl ? ctrl.signal : undefined })
+                .then(function (resp) {
+                    if (!resp.ok) {
+                        throw new Error('HTTP ' + resp.status);
+                    }
+                    var type = resp.headers.get('Content-Type') || '';
+                    if (type.indexOf('image/') !== 0) {
+                        throw new Error('not an image');
+                    }
+                    return resp.blob();
+                })
+                .then(function (blob) {
+                    if (gen !== (self._thumbGen || 0)) {
+                        return;
+                    }
+                    self.$set(self.desktop.thumbSrc, item.path, URL.createObjectURL(blob));
+                })
+                .catch(function (e) {
+                    if (gen !== (self._thumbGen || 0) || (e && e.name === 'AbortError')) {
+                        return;
+                    }
+                    self.$set(self.desktop.thumbFailed, item.path, true);
+                })
+                .then(function () {
+                    if (ctrl && self._thumbCtrls) {
+                        var idx = self._thumbCtrls.indexOf(ctrl);
+                        if (idx >= 0) {
+                            self._thumbCtrls.splice(idx, 1);
+                        }
+                    }
+                    if (self._thumbQueued) {
+                        self._thumbQueued[item.path] = false;
+                    }
+                    self._thumbActive = Math.max(0, (self._thumbActive || 0) - 1);
+                    if (gen === (self._thumbGen || 0)) {
+                        self.pumpDesktopThumbs();
+                    }
+                });
+        },
+        cancelDesktopThumbQueue: function () {
+            this._thumbGen = (this._thumbGen || 0) + 1;
+            this._thumbQueue = [];
+            this._thumbQueued = {};
+            this._thumbActive = 0;
+            if (this._thumbCtrls) {
+                this._thumbCtrls.forEach(function (c) {
+                    try { c.abort(); } catch (e) { /* ignore */ }
+                });
+                this._thumbCtrls = [];
+            }
+        },
+        resetDesktopThumbs: function () {
+            this.disconnectDesktopThumbObserver();
+            this.cancelDesktopThumbQueue();
+            var srcs = this.desktop.thumbSrc || {};
+            Object.keys(srcs).forEach(function (k) {
+                try { URL.revokeObjectURL(srcs[k]); } catch (e) { /* ignore */ }
+            });
+            this.desktop.thumbSrc = {};
+            this.desktop.thumbFailed = {};
         },
         onDesktopThumbError: function (row) {
-            this.$set(this.desktop.thumbFailed, this.desktopEntryPath(row), true);
+            var path = this.desktopEntryPath(row);
+            var src = this.desktop.thumbSrc[path];
+            if (src) {
+                try { URL.revokeObjectURL(src); } catch (e) { /* ignore */ }
+                this.$delete(this.desktop.thumbSrc, path);
+            }
+            this.$set(this.desktop.thumbFailed, path, true);
         },
         desktopOpenPreview: function (row) {
             if (!this.isDesktopImage(row)) {
                 return;
             }
+            // 预览原图优先级更高：暂停后台缩略图请求，避免抢占同一条 SFTP 通道
+            this.cancelDesktopThumbQueue();
+            this.disconnectDesktopThumbObserver();
             this.desktop.menu.visible = false;
             this.desktop.startOpen = false;
             this.closeDesktopCompressSub();
@@ -2668,6 +3115,7 @@ new Vue({
             this.desktop.previewLoading = false;
             this.desktop.previewError = '';
             this.resetDesktopPreviewView();
+            this.$nextTick(this.setupDesktopThumbs);
         },
         onDesktopPreviewLoad: function (ev) {
             this.desktop.previewLoading = false;
@@ -3562,11 +4010,51 @@ new Vue({
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
+        onDesktopSideButton: function (e) {
+            if (!this.desktop.visible || (e.button !== 3 && e.button !== 4)) {
+                return;
+            }
+            // 侧键在桌面内接管为目录前进/后退，阻止浏览器自身的页面历史导航
+            e.preventDefault();
+            if (e.type === 'mousedown') {
+                return;
+            }
+            var now = Date.now();
+            if (e.type === 'auxclick' && this._sideNavButton === e.button
+                    && now - (this._sideNavAt || 0) < 600) {
+                return;
+            }
+            this._sideNavAt = now;
+            this._sideNavButton = e.button;
+            this.cancelDesktopMarquee();
+            if (this.desktop.previewVisible) {
+                if (e.button === 3) {
+                    this.desktopPreviewPrev();
+                } else {
+                    this.desktopPreviewNext();
+                }
+                return;
+            }
+            if (this.desktop.settingsVisible || this.desktop.startOpen || this.desktop.pathEditing
+                    || this.desktop.menu.visible || this.hasDesktopDialogOpen()) {
+                return;
+            }
+            if (e.button === 3) {
+                this.desktopGoBack();
+            } else {
+                this.desktopGoForward();
+            }
+        },
         onDesktopKeydown: function (e) {
             if (!this.desktop.visible) {
                 return;
             }
             this.touchDesktopActivity();
+            if (e.key === 'Escape' && this._marquee) {
+                this.cancelDesktopMarquee();
+                e.preventDefault();
+                return;
+            }
             if (this.desktop.previewVisible) {
                 if (e.key === 'Escape') {
                     this.closeDesktopPreview();
@@ -3629,7 +4117,13 @@ new Vue({
                 return;
             }
             var selected = this.desktopSelectedRows();
-            if (e.key === 'F2') {
+            if (e.altKey && e.key === 'ArrowLeft') {
+                this.desktopGoBack();
+                e.preventDefault();
+            } else if (e.altKey && e.key === 'ArrowRight') {
+                this.desktopGoForward();
+                e.preventDefault();
+            } else if (e.key === 'F2') {
                 if (selected.length === 1) {
                     this.desktopRename(selected[0]);
                     e.preventDefault();
@@ -6272,48 +6766,65 @@ new Vue({
             }
         },
 
-        /* ---------- 常用目录 ---------- */
-        loadCommonDirs: function () {
+        /* ---------- 常用目录（按连接/主机隔离） ---------- */
+        loadCommonDirs: function (connId) {
             var self = this;
-            return http.get('/api/common-dirs').then(function (d) {
-                self.commonDirs = d || [];
+            var cid = connId != null ? connId : (this.activeTab && this.activeTab.connId);
+            if (cid == null) {
+                return Promise.resolve();
+            }
+            return http.get('/api/common-dirs', { params: { connId: cid } }).then(function (d) {
+                self.$set(self.commonDirsByConn, cid, d || []);
             });
         },
         addCommonDir: function () {
             var self = this;
+            var t = this.activeTab;
+            if (!t || t.connId == null) {
+                ELEMENT.Message.warning('请先连接主机');
+                return;
+            }
             var p = (this.newDirPath || '').trim();
             if (!p) {
                 ELEMENT.Message.warning('请输入目录路径');
                 return;
             }
-            http.post('/api/common-dirs', { path: p }).then(function () {
+            http.post('/api/common-dirs', { connId: t.connId, path: p }).then(function () {
                 ELEMENT.Message.success('已添加');
                 self.newDirPath = '';
-                self.loadCommonDirs();
+                self.loadCommonDirs(t.connId);
             }).catch(function () { /* 已由拦截器提示 */ });
         },
         addCurrentDir: function () {
             var self = this;
             var t = this.activeTab;
-            var p = t && (t.sftpPath || t.sftpHome);
+            if (!t || t.connId == null) {
+                ELEMENT.Message.warning('请先连接主机');
+                return;
+            }
+            var p = t.sftpPath || t.sftpHome;
             if (!p) {
                 ELEMENT.Message.warning('当前目录未知，请先浏览文件面板');
                 return;
             }
-            http.post('/api/common-dirs', { path: p }).then(function () {
+            http.post('/api/common-dirs', { connId: t.connId, path: p }).then(function () {
                 ELEMENT.Message.success('已添加：' + p);
-                self.loadCommonDirs();
+                self.loadCommonDirs(t.connId);
             }).catch(function () { /* 已由拦截器提示 */ });
         },
         removeCommonDir: function (d) {
             var self = this;
+            var t = this.activeTab;
+            if (!t || t.connId == null) {
+                return;
+            }
             this.$confirm('从常用目录中移除「' + d.path + '」？', '提示', { type: 'warning' })
                 .then(function () {
-                    return http.delete('/api/common-dirs/' + d.id);
+                    return http.delete('/api/common-dirs/' + d.id, { params: { connId: t.connId } });
                 })
                 .then(function () {
                     ELEMENT.Message.success('已移除');
-                    self.loadCommonDirs();
+                    self.loadCommonDirs(t.connId);
                 })
                 .catch(function () {
                 });
@@ -6504,7 +7015,6 @@ new Vue({
             self.restoreOpenTabs();
         });
         self.loadFolders();
-        self.loadCommonDirs();
         self.loadSnippets();
         self.loadAppInfo();
         self.loadAuthStatus();
@@ -6603,6 +7113,12 @@ new Vue({
                 self.folderMenu.visible = false;
             }
         });
+        // 可视化桌面：鼠标侧键（后退/前进按钮）接管为目录导航，阻止浏览器页面历史跳转
+        ['mousedown', 'mouseup', 'auxclick'].forEach(function (evt) {
+            document.addEventListener(evt, function (e) {
+                self.onDesktopSideButton(e);
+            }, true);
+        });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
                 if (self.tabMenu.visible) {
@@ -6621,6 +7137,7 @@ new Vue({
             self.onDesktopKeydown(e);
         });
         window.addEventListener('blur', function () {
+            self.cancelDesktopMarquee();
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
             }
