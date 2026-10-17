@@ -440,6 +440,15 @@ a {
     background: var(--warn);
 }
 
+.dot-reconnecting {
+    background: var(--warn);
+    animation: dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+    50% { opacity: 0.3; }
+}
+
 .dot-error {
     background: var(--err);
 }
@@ -4819,3 +4828,134 @@ body.resizing .term-host {
     margin-top: 2px;
     color: #6ea8ff;
 }
+
+/* ---------- 传输队列 ---------- */
+.xfer-panel {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    width: 330px;
+    background: #fff;
+    border: 1px solid #e4e7ed;
+    border-radius: 10px;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
+    z-index: 1500;
+    overflow: hidden;
+    font-size: 12px;
+}
+
+.xfer-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 12px;
+    background: #f5f7fa;
+    border-bottom: 1px solid #ebeef5;
+    cursor: pointer;
+    color: #303133;
+}
+
+.xfer-head .spacer { flex: 1; }
+
+.xfer-list {
+    max-height: 280px;
+    overflow: auto;
+    padding: 4px 12px 8px;
+}
+
+.xfer-item {
+    padding: 8px 0;
+    border-bottom: 1px dashed #ebeef5;
+}
+
+.xfer-item:last-child { border-bottom: 0; }
+
+.xfer-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.xfer-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #303133;
+}
+
+.xfer-status {
+    color: #909399;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.xfer-uploading, .xfer-processing { color: #409eff; }
+.xfer-done { color: #67c23a; }
+.xfer-error { color: #f56c6c; }
+.xfer-cancelled { color: #909399; }
+
+.xfer-bar {
+    height: 4px;
+    background: #ebeef5;
+    border-radius: 2px;
+    margin: 6px 0 3px;
+    overflow: hidden;
+}
+
+.xfer-bar i {
+    display: block;
+    height: 100%;
+    background: #409eff;
+    transition: width 0.2s;
+}
+
+.xfer-bar-done { background: #67c23a !important; }
+.xfer-bar-error { background: #f56c6c !important; }
+.xfer-bar-cancelled { background: #c0c4cc !important; }
+
+.xfer-actions {
+    display: flex;
+    align-items: center;
+}
+
+.xfer-pct {
+    color: #909399;
+    font-size: 11px;
+}
+
+.perm-path {
+    word-break: break-all;
+    color: #606266;
+}
+
+/* ---------- 审计日志 ---------- */
+.audit-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.audit-toolbar .spacer { flex: 1; }
+
+.audit-pager {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
+.audit-result {
+    display: inline-block;
+    min-width: 44px;
+    padding: 1px 6px;
+    border-radius: 9px;
+    font-size: 11px;
+    background: #f0f2f5;
+    color: #606266;
+}
+
+.audit-ok { background: #e8f7ee; color: #1f9d55; }
+.audit-fail { background: #fdecec; color: #d64545; }
+.audit-confirm { background: #fff5e6; color: #b7791f; }

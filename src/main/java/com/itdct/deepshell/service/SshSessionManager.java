@@ -16,14 +16,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Deque;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -35,9 +41,16 @@ import java.util.function.Consumer;
 @Service
 public class SshSessionManager {
 
+    /** WebSocket 断开后会话保留时间；期间可用同一客户端会话键重新附着 */
+    private static final long DETACH_TTL_MS = 10 * 60 * 1000L;
+    private static final int MAX_DETACHED_SESSIONS = 50;
+    private static final int MAX_OUTPUT_BUFFER_BYTES = 256 * 1024;
+
     private final ConnectionService connectionService;
     private final CryptoService cryptoService;
     private final Map<String, SshSession> sessions = new ConcurrentHashMap<>();
+    /** 浏览器侧会话键 -> 服务端会话 id，用于 F5 / 断网后重新附着 */
+    private final Map<String, String> bindings = new ConcurrentHashMap<>();
 
     public SshSessionManager(ConnectionService connectionService, CryptoService cryptoService) {
         this.connectionService = connectionService;
@@ -52,6 +65,8 @@ public class SshSessionManager {
         @Getter
         private final String name;
         @Getter
+        private final String clientKey;
+        @Getter
         private final Session jsch;
         @Getter
         private final ChannelShell shell;
@@ -64,6 +79,17 @@ public class SshSessionManager {
         public volatile Consumer<StatsSnapshot> onStats;
         /** 终端当前目录变化回调（跟随 cd） */
         public volatile Consumer<String> onCwd;
+
+        /** 当前附着的 WebSocket 标识，避免旧连接关闭时误挂起新连接 */
+        private volatile String attachmentId;
+        private volatile boolean attached = true;
+        private volatile long detachedAt;
+        private volatile ScheduledFuture<?> cleanupTask;
+
+        /** 最近输出环形缓冲，重连时回放，避免 F5 后终端空白 */
+        private final Deque<byte[]> outputChunks = new ArrayDeque<>();
+        private long outputBytes;
+        private final Object outputLock = new Object();
 
         final StatsSampler.Prev statsPrev = new StatsSampler.Prev();
         int statsFail;
@@ -79,13 +105,122 @@ public class SshSessionManager {
         private volatile boolean closed;
         public final Object sftpLock = new Object();
 
-        SshSession(Long connectionId, String name, Session jsch, ChannelShell shell) throws Exception {
+        SshSession(Long connectionId, String name, String clientKey,
+                   Session jsch, ChannelShell shell) throws Exception {
             this.connectionId = connectionId;
             this.name = name;
+            this.clientKey = clientKey;
             this.jsch = jsch;
             this.shell = shell;
             this.stdin = shell.getOutputStream();
             this.stdout = shell.getInputStream();
+        }
+
+        public boolean isAttached() {
+            return attached;
+        }
+
+        void markAttached(String attachmentId) {
+            this.attachmentId = attachmentId;
+            this.attached = true;
+            this.detachedAt = 0;
+            cancelCleanup();
+        }
+
+        void markDetached() {
+            this.attached = false;
+            this.detachedAt = System.currentTimeMillis();
+            this.attachmentId = null;
+        }
+
+        void cancelCleanup() {
+            ScheduledFuture<?> task = cleanupTask;
+            if (task != null) {
+                task.cancel(false);
+                cleanupTask = null;
+            }
+        }
+
+        void setCleanupTask(ScheduledFuture<?> task) {
+            this.cleanupTask = task;
+        }
+
+        String currentAttachment() {
+            return attachmentId;
+        }
+
+        public boolean isAttachment(String id) {
+            return id != null && id.equals(attachmentId);
+        }
+
+        void detachCallbacks() {
+            synchronized (outputLock) {
+                onData = null;
+            }
+            onStats = null;
+            onCwd = null;
+            onClosed = null;
+        }
+
+        /** 传输通道输出：始终写入缓冲，附着时同步转发给 WebSocket */
+        void deliver(byte[] data) {
+            Consumer<byte[]> callback;
+            synchronized (outputLock) {
+                appendOutputLocked(data);
+                callback = onData;
+            }
+            if (callback != null) {
+                callback.accept(data);
+            }
+        }
+
+        /**
+         * 重新附着：在锁内先回放缓冲再切换回调，保证回放与实时输出不重复、不丢序。
+         */
+        public void attach(Consumer<byte[]> dataCallback, Consumer<byte[]> snapshotCallback) {
+            synchronized (outputLock) {
+                if (closed) {
+                    throw new IllegalStateException("会话已关闭");
+                }
+                byte[] snapshot = snapshotOutputLocked();
+                if (snapshot.length > 0 && snapshotCallback != null) {
+                    snapshotCallback.accept(snapshot);
+                }
+                onData = dataCallback;
+            }
+        }
+
+        private void appendOutputLocked(byte[] data) {
+            if (data == null || data.length == 0) {
+                return;
+            }
+            if (data.length >= MAX_OUTPUT_BUFFER_BYTES) {
+                outputChunks.clear();
+                outputBytes = 0;
+                byte[] tail = Arrays.copyOfRange(data, data.length - MAX_OUTPUT_BUFFER_BYTES, data.length);
+                outputChunks.addLast(tail);
+                outputBytes = tail.length;
+                return;
+            }
+            outputChunks.addLast(data);
+            outputBytes += data.length;
+            while (outputBytes > MAX_OUTPUT_BUFFER_BYTES && !outputChunks.isEmpty()) {
+                byte[] first = outputChunks.removeFirst();
+                outputBytes -= first.length;
+            }
+        }
+
+        private byte[] snapshotOutputLocked() {
+            if (outputBytes <= 0) {
+                return new byte[0];
+            }
+            byte[] all = new byte[(int) outputBytes];
+            int pos = 0;
+            for (byte[] chunk : outputChunks) {
+                System.arraycopy(chunk, 0, all, pos, chunk.length);
+                pos += chunk.length;
+            }
+            return all;
         }
 
         public void write(byte[] data) throws Exception {
@@ -120,6 +255,55 @@ public class SshSessionManager {
     }
 
     public SshSession open(Long connectionId, int cols, int rows) throws Exception {
+        return openOrAttach(connectionId, cols, rows, null, null).session;
+    }
+
+    /** 打开结果：新建会话或重新附着到已挂起的旧会话 */
+    public static class OpenResult {
+        public final SshSession session;
+        public final boolean reattached;
+
+        OpenResult(SshSession session, boolean reattached) {
+            this.session = session;
+            this.reattached = reattached;
+        }
+    }
+
+    /**
+     * 按浏览器会话键打开或重新附着：F5 / 浏览器断网后优先复用服务端仍存活的 SSH 会话，
+     * 避免前台命令被直接杀掉。连接参数变化或会话已关闭时新建。
+     */
+    public OpenResult openOrAttach(Long connectionId, int cols, int rows,
+                                   String clientKey, String attachmentId) throws Exception {
+        String key = clientKey == null ? null : clientKey.trim();
+        if (key != null && !key.isEmpty()) {
+            String sid = bindings.get(key);
+            SshSession existing = sid == null ? null : sessions.get(sid);
+            if (existing != null && !existing.isClosed()) {
+                if (Objects.equals(existing.getConnectionId(), connectionId)) {
+                    existing.markAttached(attachmentId);
+                    existing.resize(cols, rows);
+                    existing.getLastActive().set(System.currentTimeMillis());
+                    if (existing.shellPid == null) {
+                        scheduleShellDiscovery(existing);
+                    }
+                    log.info("SSH 会话重新附着: {} -> {}", existing.getId(), key);
+                    return new OpenResult(existing, true);
+                }
+                close(existing.getId(), "连接参数已变化");
+            } else if (sid != null) {
+                bindings.remove(key, sid);
+            }
+        }
+        SshSession s = createSession(connectionId, cols, rows, key);
+        s.markAttached(attachmentId);
+        if (key != null && !key.isEmpty()) {
+            bindings.put(key, s.getId());
+        }
+        return new OpenResult(s, false);
+    }
+
+    private SshSession createSession(Long connectionId, int cols, int rows, String clientKey) throws Exception {
         SshConnection cfg = connectionService.get(connectionId);
         JSch jsch = new JSch();
 
@@ -154,7 +338,7 @@ public class SshSessionManager {
         shell.setPtySize(clamp(cols, 20, 1000), clamp(rows, 5, 300), 0, 0);
         shell.connect(8000);
 
-        SshSession s = new SshSession(connectionId, cfg.getName(), session, shell);
+        SshSession s = new SshSession(connectionId, cfg.getName(), clientKey, session, shell);
         sessions.put(s.getId(), s);
         startPump(s);
         scheduleShellDiscovery(s);
@@ -205,10 +389,7 @@ public class SshSessionManager {
                 int n;
                 while ((n = s.stdout.read(buf)) != -1) {
                     s.getLastActive().set(System.currentTimeMillis());
-                    Consumer<byte[]> cb = s.onData;
-                    if (cb != null) {
-                        cb.accept(Arrays.copyOf(buf, n));
-                    }
+                    s.deliver(Arrays.copyOf(buf, n));
                 }
             } catch (Exception e) {
                 reason = "连接中断: " + e.getMessage();
@@ -461,6 +642,51 @@ public class SshSessionManager {
         return sessionId != null && sessions.containsKey(sessionId);
     }
 
+    /**
+     * WebSocket 断开时挂起会话：保留 SSH 连接与最近输出，10 分钟内可用同一客户端键重新附着。
+     * attachmentId 用于避免旧连接关闭时误挂起刚附着的新连接。
+     */
+    public void detach(String sessionId, String attachmentId) {
+        SshSession s = sessions.get(sessionId);
+        if (s == null || s.isClosed() || !s.isAttached()) {
+            return;
+        }
+        if (attachmentId != null && !attachmentId.equals(s.currentAttachment())) {
+            return;
+        }
+        s.markDetached();
+        s.detachCallbacks();
+        enforceDetachedLimit();
+        if (s.isClosed()) {
+            return;
+        }
+        ScheduledFuture<?> task = statsExecutor.schedule(() -> {
+            SshSession current = sessions.get(sessionId);
+            if (current != null && !current.isClosed() && !current.isAttached()) {
+                close(sessionId, "会话挂起超过 10 分钟");
+            }
+        }, DETACH_TTL_MS, TimeUnit.MILLISECONDS);
+        s.setCleanupTask(task);
+        log.info("SSH 会话已挂起，等待重新附着: {}", sessionId);
+    }
+
+    private void enforceDetachedLimit() {
+        List<SshSession> detached = new ArrayList<>();
+        for (SshSession s : sessions.values()) {
+            if (!s.isClosed() && !s.isAttached()) {
+                detached.add(s);
+            }
+        }
+        int excess = detached.size() - MAX_DETACHED_SESSIONS;
+        if (excess <= 0) {
+            return;
+        }
+        detached.sort((a, b) -> Long.compare(a.detachedAt, b.detachedAt));
+        for (int i = 0; i < excess; i++) {
+            close(detached.get(i).getId(), "挂起会话过多，回收最旧会话");
+        }
+    }
+
     public void close(String sessionId) {
         close(sessionId, null);
     }
@@ -470,7 +696,11 @@ public class SshSessionManager {
         if (s == null) {
             return;
         }
+        s.cancelCleanup();
         s.markClosed();
+        if (s.getClientKey() != null) {
+            bindings.remove(s.getClientKey(), sessionId);
+        }
         try {
             ChannelSftp c = s.sftpChannel();
             if (c != null && c.isConnected()) {

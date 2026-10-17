@@ -304,8 +304,12 @@
                             <el-button size="mini" icon="el-icon-document-add" title="新建文件"
                                        @click="createFile"></el-button>
                             <el-upload :show-file-list="false" :http-request="uploadFile" action="#">
-                                <el-button size="mini" icon="el-icon-upload2" title="上传到当前目录"></el-button>
+                                <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"></el-button>
                             </el-upload>
+                            <el-button size="mini" icon="el-icon-folder-opened"
+                                       title="上传文件夹（保留目录结构）" @click="triggerFolderUpload"></el-button>
+                            <input ref="folderInput" type="file" webkitdirectory multiple
+                                   style="display: none" @change="onFolderInput">
                             <el-button size="mini" icon="el-icon-refresh" title="刷新当前目录"
                                        :loading="activeTab.sftpLoading" @click="refreshSftp"></el-button>
                             <el-button size="mini" icon="el-icon-data-analysis" title="分析磁盘占用（哪个目录最占空间）"
@@ -344,10 +348,14 @@
                                     <span class="dim">{{ fmtTime(s.row.mtime) }}</span>
                                 </template>
                             </el-table-column>
-                            <el-table-column label="操作" width="190" align="right">
+                            <el-table-column label="操作" width="250" align="right">
                                 <template slot-scope="s">
+                                    <el-button v-if="s.row.dir" size="mini" type="text" icon="el-icon-download"
+                                               title="打包下载文件夹（生成 zip）" @click="downloadDir(s.row)"></el-button>
                                     <el-button v-if="!s.row.dir" size="mini" type="text" icon="el-icon-download"
                                                title="下载" @click="download(s.row)"></el-button>
+                                    <el-button size="mini" type="text" icon="el-icon-key"
+                                               title="修改权限" @click="openPerm(s.row)"></el-button>
                                     <el-button v-if="!s.row.dir" size="mini" type="text" class="vsc-edit"
                                                title="用 VSCode 编辑（保存自动同步回服务器）" @click="vscodeEdit(s.row)">
                                         <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
@@ -1903,6 +1911,8 @@
         <div slot="footer">
             <el-button size="small" icon="el-icon-document-copy"
                        @click="desktop.props && copyText(desktop.props.path)">复制路径</el-button>
+            <el-button size="small" icon="el-icon-key"
+                       @click="openPermFromDesktop">修改权限</el-button>
             <el-button size="small" type="primary" @click="desktop.propsVisible = false">关闭</el-button>
         </div>
     </el-dialog>
@@ -2058,6 +2068,52 @@
         </div>
     </el-dialog>
 
+    <!-- 审计日志 -->
+    <el-dialog title="审计日志" :visible.sync="auditVisible" width="920px" top="6vh" append-to-body>
+        <div class="audit-toolbar">
+            <el-select v-model="auditAction" size="mini" clearable placeholder="全部操作"
+                       style="width: 150px" @change="loadAudit(1)">
+                <el-option v-for="a in auditActions" :key="a[0]" :label="a[1]" :value="a[0]"></el-option>
+            </el-select>
+            <el-input v-model="auditKeyword" size="mini" clearable
+                      placeholder="搜索目标 / 详情 / 用户" style="width: 240px"
+                      @keyup.enter.native="loadAudit(1)"></el-input>
+            <el-button size="mini" icon="el-icon-search" @click="loadAudit(1)">查询</el-button>
+            <span class="spacer"></span>
+            <el-button size="mini" icon="el-icon-download" @click="exportAudit">导出 CSV</el-button>
+            <el-button size="mini" icon="el-icon-refresh" @click="loadAudit(auditPage)">刷新</el-button>
+        </div>
+        <el-table :data="auditItems" size="mini" stripe height="430" v-loading="auditLoading">
+            <el-table-column label="时间" width="145">
+                <template slot-scope="s">
+                    <span class="dim">{{ fmtTime(s.row.createdAt) }}</span>
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
+                <template slot-scope="s">{{ auditActionLabel(s.row.action) }}</template>
+            </el-table-column>
+            <el-table-column label="目标" prop="target" min-width="170" show-overflow-tooltip></el-table-column>
+            <el-table-column label="结果" width="76" align="center">
+                <template slot-scope="s">
+                    <span class="audit-result" :class="'audit-' + (s.row.result || '').toLowerCase()">
+                        {{ s.row.result || '—' }}
+                    </span>
+                </template>
+            </el-table-column>
+            <el-table-column label="用户" prop="username" width="90" show-overflow-tooltip></el-table-column>
+            <el-table-column label="IP" prop="clientIp" width="120" show-overflow-tooltip></el-table-column>
+            <el-table-column label="详情" prop="detail" min-width="180" show-overflow-tooltip></el-table-column>
+        </el-table>
+        <div class="audit-pager">
+            <el-pagination background layout="prev, pager, next, total"
+                           :current-page="auditPage" :page-size="auditPageSize"
+                           :total="auditTotal" @current-change="loadAudit"></el-pagination>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="auditVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 帮助 -->
     <el-dialog title="帮助" :visible.sync="helpVisible" width="640px" top="5vh" append-to-body>
         <div class="help-box">
@@ -2174,6 +2230,60 @@
         </div>
     </el-dialog>
 
+    <!-- 修改权限 -->
+    <el-dialog title="修改权限" :visible.sync="permVisible" width="480px" append-to-body>
+        <el-form label-width="72px" size="small">
+            <el-form-item label="路径">
+                <span class="dsk-mono perm-path">{{ permForm.path }}</span>
+            </el-form-item>
+            <el-form-item label="权限">
+                <el-input v-model="permForm.mode" maxlength="4" placeholder="644"
+                          style="width: 120px" @keyup.enter.native="savePerm"></el-input>
+                <span class="set-hint" style="margin-left: 10px">八进制，如 644 / 755 / 600</span>
+            </el-form-item>
+            <el-form-item label="快捷">
+                <el-button size="mini" @click="permForm.mode = '644'">644 文件</el-button>
+                <el-button size="mini" @click="permForm.mode = '755'">755 目录</el-button>
+                <el-button size="mini" @click="permForm.mode = '600'">600 私有</el-button>
+                <el-button size="mini" @click="permForm.mode = '700'">700 私有目录</el-button>
+            </el-form-item>
+        </el-form>
+        <div slot="footer">
+            <el-button size="small" @click="permVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="permSaving" @click="savePerm">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 传输队列 -->
+    <div class="xfer-panel" v-if="transfers.length">
+        <div class="xfer-head" @click="transferPanelOpen = !transferPanelOpen">
+            <i class="el-icon-sort"></i>
+            <span>传输队列（{{ transfers.length }}）</span>
+            <span class="spacer"></span>
+            <i class="el-icon-delete" title="清除已完成" @click.stop="clearFinishedTransfers"></i>
+            <i :class="transferPanelOpen ? 'el-icon-arrow-down' : 'el-icon-arrow-up'"></i>
+        </div>
+        <div class="xfer-list" v-show="transferPanelOpen">
+            <div class="xfer-item" v-for="t in transfers" :key="t.id">
+                <div class="xfer-line">
+                    <span class="xfer-name" :title="t.rel">{{ t.name }}</span>
+                    <span class="xfer-status" :class="'xfer-' + t.status">{{ transferStatusText(t) }}</span>
+                </div>
+                <div class="xfer-bar">
+                    <i :style="{ width: transferPct(t) + '%' }" :class="'xfer-bar-' + t.status"></i>
+                </div>
+                <div class="xfer-actions">
+                    <span class="xfer-pct">{{ transferPct(t) }}%</span>
+                    <span class="spacer"></span>
+                    <el-button v-if="t.status === 'pending' || t.status === 'uploading' || t.status === 'processing'"
+                               size="mini" type="text" @click="cancelTransfer(t)">取消</el-button>
+                    <el-button v-if="t.status === 'error' || t.status === 'cancelled'"
+                               size="mini" type="text" @click="retryTransfer(t)">重试</el-button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="tab-menu top-menu" v-if="topMenuVisible"
          :style="{ top: topMenuPos.top + 'px', right: topMenuPos.right + 'px' }">
         <div class="tab-menu-item" @click="onMenuCommand('connImport')">
@@ -2199,6 +2309,9 @@
         </div>
         <div class="tab-menu-item" @click="onMenuCommand('auth')">
             <i class="el-icon-lock"></i>登录与安全
+        </div>
+        <div class="tab-menu-item" @click="onMenuCommand('audit')">
+            <i class="el-icon-tickets"></i>审计日志
         </div>
         <div class="tab-menu-sep"></div>
         <div class="tab-menu-item" @click="onMenuCommand('help')">

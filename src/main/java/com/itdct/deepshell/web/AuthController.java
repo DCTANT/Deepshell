@@ -1,6 +1,7 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.service.AuditService;
 import com.itdct.deepshell.service.AuthService;
 import com.itdct.deepshell.service.CaptchaService;
 import org.springframework.http.HttpHeaders;
@@ -23,10 +24,12 @@ public class AuthController {
 
     private final AuthService auth;
     private final CaptchaService captcha;
+    private final AuditService audit;
 
-    public AuthController(AuthService auth, CaptchaService captcha) {
+    public AuthController(AuthService auth, CaptchaService captcha, AuditService audit) {
         this.auth = auth;
         this.captcha = captcha;
+        this.audit = audit;
     }
 
     /** 登录状态与当前 Token 有效期（公开接口，登录页也会调用） */
@@ -65,9 +68,11 @@ public class AuthController {
             CaptchaService.VerifyResult result = captcha.verify(
                     text(body, "captchaId"), text(body, "captchaCode"));
             if (result == CaptchaService.VerifyResult.MISSING) {
+                audit.record("LOGIN_FAILURE", text(body, "username"), "FAIL", "验证码缺失");
                 return loginFailure("请输入验证码", true);
             }
             if (result == CaptchaService.VerifyResult.INVALID) {
+                audit.record("LOGIN_FAILURE", text(body, "username"), "FAIL", "验证码错误");
                 return loginFailure("验证码错误，请重新输入", true);
             }
         }
@@ -77,10 +82,13 @@ public class AuthController {
         if (!auth.matches(user, pass)) {
             captcha.recordFailure(ip);
             boolean captchaRequired = captcha.isCaptchaRequired(ip);
+            audit.record("LOGIN_FAILURE", user, "FAIL",
+                    captchaRequired ? "用户名或密码错误（已触发验证码）" : "用户名或密码错误");
             return loginFailure(captchaRequired ? "用户名或密码错误，请输入验证码后重试" : "用户名或密码错误",
                     captchaRequired);
         }
         captcha.resetFailures(ip);
+        audit.record("LOGIN_SUCCESS", user, "OK", null);
         String token = auth.issueToken();
         response.addHeader(HttpHeaders.SET_COOKIE, auth.buildCookie(token, request).toString());
         return ResponseEntity.ok(R.ok(auth.status(auth.verify(token))));
@@ -89,6 +97,7 @@ public class AuthController {
     /** 退出登录：清除 Cookie（即使 Token 已过期也允许调用） */
     @PostMapping("/logout")
     public R<Void> logout(HttpServletRequest request, HttpServletResponse response) {
+        audit.record("LOGOUT", auth.isEnabled() ? auth.getUsername() : "local", "OK", null);
         response.addHeader(HttpHeaders.SET_COOKIE, auth.clearCookie(request).toString());
         return R.ok();
     }
@@ -115,6 +124,7 @@ public class AuthController {
                             + AuthService.MAX_EXPIRE_HOURS + " 小时之间"));
         }
         auth.updateExpireHours(hours);
+        audit.record("AUTH_SETTINGS", "token-expire-hours", "OK", hours + " 小时");
         String token = auth.issueToken();
         response.addHeader(HttpHeaders.SET_COOKIE, auth.buildCookie(token, request).toString());
         return ResponseEntity.ok(R.ok(auth.status(auth.verify(token))));

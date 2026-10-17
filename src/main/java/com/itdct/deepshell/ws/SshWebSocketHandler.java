@@ -15,6 +15,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 /**
  * 终端 WebSocket：/ws/ssh?connId=1&cols=120&rows=30
@@ -36,11 +37,13 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
         Long connId = null;
         int cols = 120;
         int rows = 30;
+        String clientKey = null;
         try {
             URI uri = ws.getUri();
             String rawConn = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("connId");
             String rawCols = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("cols");
             String rawRows = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("rows");
+            clientKey = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("sid");
             if (rawConn != null) {
                 connId = Long.parseLong(rawConn);
             }
@@ -57,10 +60,13 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             closeQuietly(ws);
             return;
         }
+        String attachmentId = UUID.randomUUID().toString().replace("-", "");
         try {
-            SshSessionManager.SshSession s = sessions.open(connId, cols, rows);
+            SshSessionManager.OpenResult opened =
+                    sessions.openOrAttach(connId, cols, rows, clientKey, attachmentId);
+            SshSessionManager.SshSession s = opened.session;
             ws.getAttributes().put("sessionId", s.getId());
-            s.onData = data -> sendBinary(ws, data);
+            ws.getAttributes().put("attachmentId", attachmentId);
             s.onClosed = reason -> {
                 sendText(ws, text("closed", "message", reason));
                 closeQuietly(ws);
@@ -81,7 +87,10 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             open.put("type", "open");
             open.put("sessionId", s.getId());
             open.put("name", s.getName());
+            open.put("reattached", opened.reattached);
             sendText(ws, open.toString());
+            // 先发 open，再回放最近输出；客户端收到 open 后会重置终端再写入快照
+            s.attach(data -> sendBinary(ws, data), snapshot -> sendBinary(ws, snapshot));
         } catch (Exception e) {
             log.warn("SSH 连接失败: {}", e.toString());
             sendError(ws, friendly(e));
@@ -108,6 +117,12 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
                 s.write(node.path("data").asText("").getBytes(StandardCharsets.UTF_8));
             } else if ("resize".equals(type)) {
                 s.resize(node.path("cols").asInt(120), node.path("rows").asInt(30));
+            } else if ("close".equals(type)) {
+                Object attachmentId = ws.getAttributes().get("attachmentId");
+                if (attachmentId == null || s.isAttachment((String) attachmentId)) {
+                    sessions.close((String) sid);
+                }
+                closeQuietly(ws);
             }
         } catch (Exception e) {
             log.debug("WS 消息处理失败: {}", e.getMessage());
@@ -118,7 +133,9 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession ws, CloseStatus status) {
         Object sid = ws.getAttributes().get("sessionId");
         if (sid != null) {
-            sessions.close((String) sid);
+            Object attachmentId = ws.getAttributes().get("attachmentId");
+            sessions.detach((String) sid,
+                    attachmentId == null ? null : (String) attachmentId);
         }
     }
 

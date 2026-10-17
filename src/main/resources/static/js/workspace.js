@@ -203,12 +203,83 @@ function loadAiChatMode() {
     return 'auto';
 }
 
+/* 浏览器侧会话键：F5 后带同一个键重连，服务端可复用仍未断开的 SSH 会话 */
+function newSessionKey() {
+    try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID().replace(/-/g, '');
+        }
+    } catch (e) { /* ignore */ }
+    return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+}
+
+/* 自动重连延迟（毫秒），超过次数后停止并提示手动重连 */
+var RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 20000, 30000, 30000, 30000];
+var UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
+
+/* 把 ls 的权限字符串（如 drwxr-xr-x）转成三位八进制 */
+function permsToOctal(perms) {
+    if (!perms || perms.length < 9) {
+        return '';
+    }
+    var s = perms.slice(-9);
+    var out = '';
+    for (var i = 0; i < 3; i++) {
+        var v = 0;
+        if (s.charAt(i * 3) === 'r') v += 4;
+        if (s.charAt(i * 3 + 1) === 'w') v += 2;
+        var x = s.charAt(i * 3 + 2);
+        if (x === 'x' || x === 's' || x === 't') v += 1;
+        out += v;
+    }
+    return out;
+}
+
+function clearReconnectTimer(tab) {
+    if (tab && tab.reconnectTimer) {
+        clearTimeout(tab.reconnectTimer);
+        tab.reconnectTimer = null;
+    }
+}
+
+/* WebSocket 非主动关闭时按退避间隔自动重连；服务端保留会话时会直接附着并回放输出 */
+function scheduleReconnect(app, tab) {
+    if (!tab || tab.explicitClose || tab.serverClosed) {
+        return;
+    }
+    clearReconnectTimer(tab);
+    var attempts = tab.reconnectAttempts || 0;
+    if (attempts >= RECONNECT_DELAYS.length) {
+        tab.status = 'error';
+        if (tab.term) {
+            tab.term.write('\r\n\x1b[31m● 自动重连失败，请右键「重新连接」\x1b[0m\r\n');
+        }
+        return;
+    }
+    tab.reconnectAttempts = attempts + 1;
+    tab.status = 'reconnecting';
+    if (tab.term) {
+        tab.term.write('\r\n\x1b[33m● 连接中断，正在重连（'
+            + tab.reconnectAttempts + '/' + RECONNECT_DELAYS.length + '）…\x1b[0m\r\n');
+    }
+    var delay = RECONNECT_DELAYS[attempts];
+    tab.reconnectTimer = setTimeout(function () {
+        tab.reconnectTimer = null;
+        if (tab.explicitClose || tab.serverClosed) {
+            return;
+        }
+        app.reconnectTab(tab, true);
+    }, delay);
+}
+
 /* 记住当前窗口打开的会话标签（sessionStorage 天然按浏览器标签页隔离），用于 F5 后恢复 */
 function saveOpenTabs(app) {
     try {
         var state = {
-            ids: app.tabs.map(function (t) { return t.connId; }),
-            active: app.activeTab ? app.activeTab.connId : null
+            tabs: app.tabs.map(function (t) {
+                return { connId: t.connId, key: t.clientKey };
+            }),
+            activeKey: app.activeTab ? app.activeTab.clientKey : null
         };
         sessionStorage.setItem('deepshell.openTabs', JSON.stringify(state));
     } catch (e) { /* ignore */ }
@@ -389,6 +460,11 @@ new Vue({
         cmdEditSaving: false,
         cmdEditForm: { id: null, name: '', command: '' },
         sftpFollow: loadSftpFollow(),
+        transfers: [],
+        transferPanelOpen: true,
+        permVisible: false,
+        permSaving: false,
+        permForm: { path: '', name: '', mode: '644' },
         fileDragOver: false,
         cmdOpts: loadCmdOpts(),
         snippetTarget: loadSnippetTarget(),
@@ -422,6 +498,36 @@ new Vue({
             defaultTokenExpireHours: 6,
             tokenRemainingSeconds: null
         },
+        auditVisible: false,
+        auditLoading: false,
+        auditItems: [],
+        auditTotal: 0,
+        auditPage: 1,
+        auditPageSize: 50,
+        auditAction: '',
+        auditKeyword: '',
+        auditActions: [
+            ['LOGIN_SUCCESS', '登录成功'],
+            ['LOGIN_FAILURE', '登录失败'],
+            ['LOGOUT', '退出登录'],
+            ['AI_COMMAND', 'AI 命令'],
+            ['FILE_UPLOAD', '上传'],
+            ['FILE_DOWNLOAD', '下载'],
+            ['FILE_DELETE', '删除'],
+            ['FILE_RENAME', '重命名'],
+            ['FILE_MOVE', '移动'],
+            ['FILE_MKDIR', '新建目录'],
+            ['FILE_TOUCH', '新建文件'],
+            ['FILE_EDIT', '在线编辑'],
+            ['FILE_CHMOD', '修改权限'],
+            ['FILE_COMPRESS', '压缩'],
+            ['CONNECTION_CREATE', '新建连接'],
+            ['CONNECTION_UPDATE', '编辑连接'],
+            ['CONNECTION_DELETE', '删除连接'],
+            ['CONNECTION_IMPORT', '导入连接'],
+            ['CONNECTION_EXPORT', '导出连接'],
+            ['AUTH_SETTINGS', '认证设置']
+        ],
         aiSetVisible: false,
         aiSetSaving: false,
         aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false },
@@ -870,11 +976,12 @@ new Vue({
     },
     methods: {
         /* ---------- 标签与会话 ---------- */
-        openTab: function (connId) {
+        openTab: function (connId, clientKey) {
             var self = this;
             var conn = this.connections.find(function (c) { return c.id === connId; });
             var tab = {
                 key: 'tab' + Date.now() + Math.floor(Math.random() * 1000),
+                clientKey: clientKey || newSessionKey(),
                 connId: connId,
                 title: conn ? conn.name : ('连接 #' + connId),
                 host: conn ? conn.host : '',
@@ -882,6 +989,10 @@ new Vue({
                 sessionId: null,
                 ws: null,
                 term: null,
+                reconnectAttempts: 0,
+                reconnectTimer: null,
+                explicitClose: false,
+                serverClosed: false,
                 fit: null,
                 sftpPath: '',
                 sftpEntries: [],
@@ -1240,6 +1351,8 @@ new Vue({
                 this.lanVisible = true;
             } else if (cmd === 'auth') {
                 this.openAuthSettings();
+            } else if (cmd === 'audit') {
+                this.openAudit();
             } else if (cmd === 'ai') {
                 this.loadAiConfig();
                 this.aiSetVisible = true;
@@ -3891,6 +4004,11 @@ new Vue({
                 });
         },
         logout: function () {
+            this.tabs.forEach(function (t) {
+                if (t.ws && t.ws.readyState === 1) {
+                    try { t.ws.send(JSON.stringify({ type: 'close' })); } catch (e) { /* ignore */ }
+                }
+            });
             http.post('/api/auth/logout').then(function () {
                 location.replace('/login');
             }).catch(function () {
@@ -3922,6 +4040,45 @@ new Vue({
                 return minutes > 0 ? (hours + ' 小时 ' + minutes + ' 分钟') : (hours + ' 小时');
             }
             return Math.max(1, Math.round(seconds / 60)) + ' 分钟';
+        },
+        /* ---------- 审计日志 ---------- */
+        openAudit: function () {
+            this.auditVisible = true;
+            this.loadAudit(1);
+        },
+        loadAudit: function (page) {
+            var self = this;
+            this.auditLoading = true;
+            this.auditPage = page || 1;
+            http.get('/api/audit', {
+                params: {
+                    action: this.auditAction || undefined,
+                    keyword: this.auditKeyword || undefined,
+                    page: this.auditPage,
+                    size: this.auditPageSize
+                }
+            }).then(function (d) {
+                self.auditItems = (d && d.items) || [];
+                self.auditTotal = (d && d.total) || 0;
+                self.auditPage = (d && d.page) || self.auditPage;
+            }).catch(function () { /* 已由拦截器提示 */ })
+                .then(function () {
+                    self.auditLoading = false;
+                });
+        },
+        exportAudit: function () {
+            var q = [];
+            if (this.auditAction) q.push('action=' + encodeURIComponent(this.auditAction));
+            if (this.auditKeyword) q.push('keyword=' + encodeURIComponent(this.auditKeyword));
+            window.location.href = '/api/audit/export' + (q.length ? ('?' + q.join('&')) : '');
+        },
+        auditActionLabel: function (action) {
+            for (var i = 0; i < this.auditActions.length; i++) {
+                if (this.auditActions[i][0] === action) {
+                    return this.auditActions[i][1];
+                }
+            }
+            return action || '';
         },
         copyText: function (text) {
             var done = function () {
@@ -4116,7 +4273,8 @@ new Vue({
 
             var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
             var url = proto + location.host + '/ws/ssh?connId=' + tab.connId
-                + '&cols=' + (term.cols || 120) + '&rows=' + (term.rows || 30);
+                + '&cols=' + (term.cols || 120) + '&rows=' + (term.rows || 30)
+                + '&sid=' + encodeURIComponent(tab.clientKey || '');
             var ws = new WebSocket(url);
             ws.binaryType = 'arraybuffer';
             tab.ws = ws;
@@ -4128,12 +4286,30 @@ new Vue({
                     if (msg.type === 'open') {
                         tab.sessionId = msg.sessionId;
                         tab.status = 'open';
-                        self.loadHome(tab);
+                        tab.serverClosed = false;
+                        tab.explicitClose = false;
+                        tab.reconnectAttempts = 0;
+                        clearReconnectTimer(tab);
+                        if (msg.reattached) {
+                            // 服务端会紧接着发来最近输出快照，先清屏避免重复
+                            try { term.reset(); } catch (e) { /* ignore */ }
+                            if (tab.sftpHome) {
+                                self.loadDir(tab.sftpPath || tab.sftpHome, tab);
+                            } else {
+                                self.loadHome(tab);
+                            }
+                        } else {
+                            self.loadHome(tab);
+                        }
                     } else if (msg.type === 'error') {
                         tab.status = 'error';
+                        tab.serverClosed = true;
+                        clearReconnectTimer(tab);
                         term.write('\r\n\x1b[31m● ' + msg.message + '\x1b[0m\r\n');
                     } else if (msg.type === 'closed') {
                         tab.status = 'closed';
+                        tab.serverClosed = true;
+                        clearReconnectTimer(tab);
                         term.write('\r\n\x1b[33m● ' + (msg.message || '连接已关闭') + '\x1b[0m\r\n');
                     } else if (msg.type === 'stats') {
                         tab.stats = msg.data;
@@ -4145,10 +4321,14 @@ new Vue({
                 }
             };
             ws.onclose = function () {
-                if (tab.status !== 'closed' && tab.status !== 'error') {
-                    tab.status = 'closed';
-                    term.write('\r\n\x1b[33m● 连接已断开\x1b[0m\r\n');
+                if (tab.explicitClose || tab.serverClosed) {
+                    tab.status = tab.status === 'error' ? 'error' : 'closed';
+                    return;
                 }
+                if (tab.status === 'closed' || tab.status === 'error') {
+                    return;
+                }
+                scheduleReconnect(self, tab);
             };
         },
         activate: function (key) {
@@ -4172,8 +4352,17 @@ new Vue({
             if (this.desktop.visible && tab.key === this.desktop.tabKey) {
                 this.closeAiDesktop();
             }
+            this.cancelTransfersForTab(tab);
+            clearReconnectTimer(tab);
+            tab.explicitClose = true;
+            tab.serverClosed = true;
             if (tab.ws) {
-                try { tab.ws.close(); } catch (e) { /* ignore */ }
+                try {
+                    if (tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({ type: 'close' }));
+                    }
+                    tab.ws.close();
+                } catch (e) { /* ignore */ }
             }
             if (tab.term) {
                 try { tab.term.dispose(); } catch (e) { /* ignore */ }
@@ -4198,27 +4387,46 @@ new Vue({
             try {
                 saved = JSON.parse(sessionStorage.getItem('deepshell.openTabs') || 'null');
             } catch (e) { /* ignore */ }
-            if (!saved || !saved.ids || !saved.ids.length) {
+            if (!saved) {
+                return;
+            }
+            var entries = [];
+            if (saved.tabs && saved.tabs.length) {
+                entries = saved.tabs.map(function (t) {
+                    return { connId: t.connId, key: t.key };
+                });
+            } else if (saved.ids && saved.ids.length) {
+                // 兼容旧版本的 { ids, active }
+                entries = saved.ids.map(function (id) {
+                    return { connId: id, key: null };
+                });
+            }
+            if (!entries.length) {
                 return;
             }
             var self = this;
             var missing = 0;
-            saved.ids.forEach(function (id) {
-                var exists = self.connections.some(function (c) { return c.id === id; });
+            entries.forEach(function (entry) {
+                var exists = self.connections.some(function (c) { return c.id === entry.connId; });
                 if (exists) {
-                    self.openTab(id);
+                    self.openTab(entry.connId, entry.key);
                 } else {
                     missing++;
                 }
             });
-            if (saved.active) {
-                var at = this.tabs.find(function (t) { return t.connId === saved.active; });
+            var activeKey = saved.activeKey || null;
+            if (!activeKey && saved.active) {
+                var legacy = this.tabs.find(function (t) { return t.connId === saved.active; });
+                activeKey = legacy ? legacy.clientKey : null;
+            }
+            if (activeKey) {
+                var at = this.tabs.find(function (t) { return t.clientKey === activeKey; });
                 if (at) {
                     this.activate(at.key);
                 }
             }
             if (this.tabs.length) {
-                ELEMENT.Message.success('已恢复 ' + this.tabs.length + ' 个会话（重新连接中）');
+                ELEMENT.Message.success('已恢复 ' + this.tabs.length + ' 个会话（正在恢复连接）');
             }
             if (missing > 0) {
                 ELEMENT.Message.warning(missing + ' 个连接已不存在，未恢复');
@@ -4280,8 +4488,9 @@ new Vue({
                 this.tabs.slice(0, idx).forEach(function (x) { self.closeTab(x); });
             }
         },
-        reconnectTab: function (tab) {
+        reconnectTab: function (tab, silent) {
             var self = this;
+            clearReconnectTimer(tab);
             // 连接可能已在连接管理中改过名称/地址，重连时同步到标签
             var conn = this.connections.find(function (c) { return c.id === tab.connId; });
             if (conn) {
@@ -4289,6 +4498,7 @@ new Vue({
                 tab.host = conn.host;
             }
             // 静默回收旧连接与终端，避免旧回调写入已销毁的终端
+            tab.explicitClose = true;
             if (tab.ws) {
                 try {
                     tab.ws.onclose = null;
@@ -4304,32 +4514,45 @@ new Vue({
                 tab.searchAddon = null;
             }
             tab.sessionId = null;
-            tab.status = 'connecting';
-            tab.sftpEntries = [];
-            tab.sftpPath = '';
-            tab.sftpHome = null;
-            tab.sftpHistory = [];
-            tab.termCwd = null;
-            tab.diskEntries = [];
-            tab.diskTotalKb = null;
-            tab.diskError = '';
-            tab.diskTruncated = false;
-            tab.stats = null;
-            tab.procList = [];
-            tab._comp = null;
+            tab.status = silent ? 'reconnecting' : 'connecting';
+            tab.explicitClose = false;
+            tab.serverClosed = false;
+            if (!silent) {
+                tab.reconnectAttempts = 0;
+                tab.sftpEntries = [];
+                tab.sftpPath = '';
+                tab.sftpHome = null;
+                tab.sftpHistory = [];
+                tab.termCwd = null;
+                tab.diskEntries = [];
+                tab.diskTotalKb = null;
+                tab.diskError = '';
+                tab.diskTruncated = false;
+                tab.stats = null;
+                tab.procList = [];
+                tab._comp = null;
+            }
             this.activate(tab.key);
             this.$nextTick(function () {
                 self.initTerminal(tab);
             });
         },
         disconnectTab: function (tab) {
+            this.cancelTransfersForTab(tab);
+            clearReconnectTimer(tab);
+            tab.explicitClose = true;
+            tab.serverClosed = true;
             if (tab.ws && (tab.ws.readyState === 0 || tab.ws.readyState === 1)) {
-                try { tab.ws.close(); } catch (e) { /* ignore */ }
-            } else {
-                tab.status = 'closed';
-                if (tab.term) {
-                    tab.term.write('\r\n\x1b[33m● 已断开\x1b[0m\r\n');
-                }
+                try {
+                    if (tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({ type: 'close' }));
+                    }
+                    tab.ws.close();
+                } catch (e) { /* ignore */ }
+            }
+            tab.status = 'closed';
+            if (tab.term) {
+                tab.term.write('\r\n\x1b[33m● 已断开\x1b[0m\r\n');
             }
         },
         fitActive: function () {
@@ -4339,7 +4562,7 @@ new Vue({
             }
         },
         statusText: function (tab) {
-            var map = { connecting: '连接中…', open: '已连接', closed: '已断开', error: '连接失败' };
+            var map = { connecting: '连接中…', reconnecting: '重连中…', open: '已连接', closed: '已断开', error: '连接失败' };
             return map[tab.status] || tab.status;
         },
 
@@ -4554,13 +4777,46 @@ new Vue({
             if (!t || !t.sessionId) {
                 return;
             }
-            var url = '/api/sftp/download?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.pathJoin(t.sftpPath, row.name));
+            this.downloadPath(t, this.pathJoin(t.sftpPath, row.name));
+        },
+        downloadPath: function (tab, path) {
+            if (!tab || !tab.sessionId) {
+                return;
+            }
+            var url = '/api/sftp/download?sessionId=' + encodeURIComponent(tab.sessionId)
+                + '&path=' + encodeURIComponent(path);
             var a = document.createElement('a');
             a.href = url;
             document.body.appendChild(a);
             a.click();
             a.remove();
+        },
+        /** 文件夹先打包成 zip 再下载（复用服务端压缩能力） */
+        downloadDir: function (row) {
+            var t = this.activeTab;
+            if (!t || !t.sessionId || !row.dir) {
+                return;
+            }
+            var self = this;
+            var zipName = row.name + '.zip';
+            var exists = (t.sftpEntries || []).some(function (e) { return e.name === zipName; });
+            if (exists) {
+                zipName = row.name + '-' + Date.now() + '.zip';
+            }
+            http.post('/api/sftp/compress', {
+                sessionId: t.sessionId,
+                destDir: t.sftpPath,
+                paths: [self.pathJoin(t.sftpPath, row.name)],
+                name: zipName,
+                format: 'zip',
+                level: 'normal',
+                overwrite: false
+            }).then(function (r) {
+                var path = (r && r.path) || self.pathJoin(t.sftpPath, zipName);
+                self.downloadPath(t, path);
+                ELEMENT.Message.success('已生成并开始下载：' + zipName + '（压缩包保留在服务器当前目录）');
+                self.loadDir(t.sftpPath, t);
+            }).catch(function () { /* 已由拦截器提示 */ });
         },
         uploadFile: function (param) {
             var t = this.activeTab;
@@ -4568,18 +4824,262 @@ new Vue({
                 ELEMENT.Message.warning('请先建立连接');
                 return;
             }
-            var self = this;
-            this.uploadOne(t, t.sftpPath, param.file).then(function () {
-                ELEMENT.Message.success('上传完成: ' + param.file.name);
-                self.loadDir(t.sftpPath, t);
-            }).catch(function () { /* 已提示 */ });
+            this.enqueueUpload(t, t.sftpPath, param.file, param.file.name);
+            if (param.onSuccess) {
+                param.onSuccess();
+            }
         },
         uploadOne: function (tab, dir, file) {
+            // 兼容可视化桌面上传：仍走整文件接口
             var fd = new FormData();
             fd.append('sessionId', tab.sessionId);
             fd.append('path', dir);
             fd.append('file', file);
             return http.post('/api/sftp/upload', fd);
+        },
+        /* ---------- 分片上传队列（支持失败重试/续传） ---------- */
+        enqueueUpload: function (tab, dir, file, relativePath) {
+            if (!tab || !tab.sessionId || !file) {
+                return null;
+            }
+            var item = {
+                id: 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+                kind: 'upload',
+                name: file.name,
+                dir: dir,
+                rel: relativePath || file.name,
+                size: file.size || 0,
+                offset: 0,
+                status: 'pending',
+                error: '',
+                uploadId: '',
+                file: file,
+                tabKey: tab.key,
+                clientKey: tab.clientKey
+            };
+            this.transfers.push(item);
+            this.transferPanelOpen = true;
+            this.pumpTransfers();
+            return item;
+        },
+        pumpTransfers: function () {
+            var running = this.transfers.some(function (t) {
+                return t.status === 'uploading' || t.status === 'processing';
+            });
+            if (running) {
+                return;
+            }
+            var next = this.transfers.find(function (t) { return t.status === 'pending'; });
+            if (next) {
+                this.uploadTransfer(next);
+            }
+        },
+        uploadTransfer: function (item) {
+            var self = this;
+            var tab = this.tabs.find(function (t) { return t.clientKey === item.clientKey; })
+                || this.tabs.find(function (t) { return t.key === item.tabKey; });
+            if (!tab || !tab.sessionId) {
+                item.status = 'error';
+                item.error = '会话已断开';
+                this.pumpTransfers();
+                return;
+            }
+            item.status = 'uploading';
+            item.error = '';
+            http.post('/api/sftp/upload/init', {
+                sessionId: tab.sessionId,
+                dir: item.dir,
+                name: item.name,
+                relativePath: item.rel,
+                size: item.size,
+                uploadId: item.uploadId || null
+            }).then(function (r) {
+                item.uploadId = r.uploadId;
+                item.offset = r.offset || 0;
+                function sendNext() {
+                    if (item.status === 'cancelled' || item.offset >= item.size) {
+                        return Promise.resolve();
+                    }
+                    var offsetBefore = item.offset;
+                    var end = Math.min(item.offset + UPLOAD_CHUNK_SIZE, item.size);
+                    var fd = new FormData();
+                    fd.append('uploadId', item.uploadId);
+                    fd.append('offset', String(item.offset));
+                    fd.append('chunk', item.file.slice(offsetBefore, end), item.name);
+                    return http.post('/api/sftp/upload/chunk', fd, {
+                        timeout: 120000,
+                        onUploadProgress: function (e) {
+                            if (e && e.total) {
+                                item.offset = offsetBefore + Math.min(e.loaded, e.total);
+                            }
+                        }
+                    }).then(function (res) {
+                        item.offset = res.offset;
+                        return sendNext();
+                    });
+                }
+                return sendNext().then(function () {
+                    if (item.status === 'cancelled') {
+                        if (item.uploadId) {
+                            http.post('/api/sftp/upload/abort', { uploadId: item.uploadId })
+                                .catch(function () { /* ignore */ });
+                        }
+                        return null;
+                    }
+                    item.status = 'processing';
+                    return http.post('/api/sftp/upload/complete', { uploadId: item.uploadId });
+                }).then(function (res) {
+                    if (!res) {
+                        item.uploadId = '';
+                        return;
+                    }
+                    item.status = 'done';
+                    item.offset = item.size;
+                    item.uploadId = '';
+                    if (tab.sftpPath === item.dir) {
+                        self.loadDir(item.dir, tab);
+                    }
+                });
+            }).catch(function (err) {
+                if (item.status === 'cancelled') {
+                    return;
+                }
+                item.status = 'error';
+                item.error = (err && err.message) ? err.message : '上传失败';
+                // 保留 uploadId 与 offset：点重试时从服务端已收到的位置继续
+            }).then(function () {
+                self.pumpTransfers();
+            });
+        },
+        cancelTransfer: function (item) {
+            var wasRunning = item.status === 'uploading' || item.status === 'processing';
+            item.status = 'cancelled';
+            if (!wasRunning && item.uploadId) {
+                http.post('/api/sftp/upload/abort', { uploadId: item.uploadId }).catch(function () {});
+                item.uploadId = '';
+            }
+            this.pumpTransfers();
+        },
+        retryTransfer: function (item) {
+            if (item.status !== 'error' && item.status !== 'cancelled') {
+                return;
+            }
+            if (!item.file) {
+                ELEMENT.Message.warning('原始文件已不可用，请重新选择文件');
+                return;
+            }
+            item.status = 'pending';
+            item.error = '';
+            this.pumpTransfers();
+        },
+        clearFinishedTransfers: function () {
+            this.transfers = this.transfers.filter(function (t) {
+                return t.status === 'pending' || t.status === 'uploading' || t.status === 'processing';
+            });
+        },
+        cancelTransfersForTab: function (tab) {
+            var self = this;
+            if (!tab) {
+                return;
+            }
+            this.transfers.forEach(function (t) {
+                if (t.clientKey === tab.clientKey
+                        && (t.status === 'pending' || t.status === 'uploading' || t.status === 'processing')) {
+                    self.cancelTransfer(t);
+                }
+            });
+        },
+        transferPct: function (item) {
+            if (!item.size) {
+                return item.status === 'done' ? 100 : 0;
+            }
+            return Math.max(0, Math.min(100, Math.round((item.offset || 0) * 100 / item.size)));
+        },
+        transferStatusText: function (item) {
+            if (item.status === 'pending') return '等待中';
+            if (item.status === 'uploading') {
+                return this.fmtSize(item.offset || 0) + ' / ' + this.fmtSize(item.size);
+            }
+            if (item.status === 'processing') return '正在写入服务器…';
+            if (item.status === 'done') return '已完成';
+            if (item.status === 'cancelled') return '已取消';
+            return item.error || '失败';
+        },
+        triggerFolderUpload: function () {
+            var el = this.$refs.folderInput;
+            if (el) {
+                el.click();
+            }
+        },
+        onFolderInput: function (e) {
+            var t = this.activeTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('请先建立连接');
+                return;
+            }
+            var dir = t.sftpPath || t.sftpHome;
+            var files = e.target.files || [];
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                this.enqueueUpload(t, dir, f, f.webkitRelativePath || f.name);
+            }
+            e.target.value = '';
+            if (files.length) {
+                ELEMENT.Message.success('已加入传输队列：' + files.length + ' 个文件');
+            }
+        },
+        /* ---------- 权限 ---------- */
+        openPerm: function (row) {
+            var t = this.activeTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            this.permForm = {
+                path: this.entryPath(row),
+                name: row.name,
+                mode: permsToOctal(row.perms) || (row.dir ? '755' : '644')
+            };
+            this.permVisible = true;
+        },
+        openPermFromDesktop: function () {
+            var p = this.desktop.props;
+            if (!p) {
+                return;
+            }
+            this.permForm = {
+                path: p.path,
+                name: p.name,
+                mode: permsToOctal(p.perms) || (p.dir ? '755' : '644')
+            };
+            this.permVisible = true;
+        },
+        savePerm: function () {
+            var t = this.desktop.propsVisible ? this.desktopTab : this.activeTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪');
+                return;
+            }
+            var mode = String(this.permForm.mode || '').trim();
+            if (!/^[0-7]{3,4}$/.test(mode)) {
+                ELEMENT.Message.warning('请输入 3-4 位八进制权限，如 644 / 755');
+                return;
+            }
+            var self = this;
+            this.permSaving = true;
+            http.post('/api/sftp/chmod', {
+                sessionId: t.sessionId,
+                path: this.permForm.path,
+                mode: parseInt(mode, 8)
+            }).then(function () {
+                ELEMENT.Message.success('权限已修改');
+                self.permVisible = false;
+                if (t.sftpPath) {
+                    self.loadDir(t.sftpPath, t);
+                }
+            }).catch(function () { /* 已由拦截器提示 */ })
+                .then(function () {
+                    self.permSaving = false;
+                });
         },
         /* ---------- 从系统拖入文件直接上传 ---------- */
         hasFileDrag: function (e) {
@@ -4680,38 +5180,12 @@ new Vue({
                 return;
             }
             var self = this;
-            var loading = ELEMENT.Message({
-                message: '正在上传 ' + files.length + ' 个文件到 ' + dir + ' …',
-                duration: 0,
-                iconClass: 'el-icon-loading'
-            });
-            var ok = 0;
-            var fail = 0;
-            var chain = Promise.resolve();
             files.forEach(function (f) {
-                chain = chain.then(function () {
-                    return self.uploadOne(t, dir, f).then(function () {
-                        ok++;
-                    }).catch(function () {
-                        fail++;
-                    });
-                });
+                self.enqueueUpload(t, dir, f, f.name);
             });
-            chain.then(function () {
-                loading.close();
-                if (fail === 0) {
-                    ELEMENT.Message.success(files.length === 1
-                        ? ('文件上传成功：' + files[0].name)
-                        : ('文件上传成功：' + files.length + ' 个文件 → ' + dir));
-                } else if (ok > 0) {
-                    ELEMENT.Message.warning('上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个');
-                } else {
-                    ELEMENT.Message.error('上传失败');
-                }
-                if (t.sftpPath === dir) {
-                    self.loadDir(dir, t);
-                }
-            });
+            ELEMENT.Message.success(files.length === 1
+                ? ('已加入传输队列：' + files[0].name)
+                : ('已加入传输队列：' + files.length + ' 个文件 → ' + dir));
         },
         mkdir: function () {
             var t = this.activeTab;

@@ -3,6 +3,7 @@ package com.itdct.deepshell.web;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.dto.ConnectionForm;
 import com.itdct.deepshell.entity.SshConnection;
+import com.itdct.deepshell.service.AuditService;
 import com.itdct.deepshell.service.ConnectionService;
 import com.itdct.deepshell.service.ConnectionTransferService;
 import org.springframework.http.HttpHeaders;
@@ -23,10 +24,13 @@ public class ConnectionController {
 
     private final ConnectionService service;
     private final ConnectionTransferService transferService;
+    private final AuditService audit;
 
-    public ConnectionController(ConnectionService service, ConnectionTransferService transferService) {
+    public ConnectionController(ConnectionService service, ConnectionTransferService transferService,
+                                AuditService audit) {
         this.service = service;
         this.transferService = transferService;
+        this.audit = audit;
     }
 
     @GetMapping
@@ -41,17 +45,30 @@ public class ConnectionController {
 
     @PostMapping
     public R<SshConnection> create(@RequestBody ConnectionForm form) {
-        return R.ok(service.create(form));
+        SshConnection saved = service.create(form);
+        audit.record("CONNECTION_CREATE", saved.getName(), "OK",
+                saved.getUsername() + "@" + saved.getHost() + ":" + saved.getPort());
+        return R.ok(saved);
     }
 
     @PutMapping("/{id}")
     public R<SshConnection> update(@PathVariable Long id, @RequestBody ConnectionForm form) {
-        return R.ok(service.update(id, form));
+        SshConnection saved = service.update(id, form);
+        audit.record("CONNECTION_UPDATE", saved.getName(), "OK",
+                saved.getUsername() + "@" + saved.getHost() + ":" + saved.getPort());
+        return R.ok(saved);
     }
 
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
+        String name = "";
+        try {
+            name = service.get(id).getName();
+        } catch (Exception ignore) {
+            // 连接已不存在时仍继续删除
+        }
         service.delete(id);
+        audit.record("CONNECTION_DELETE", name, "OK", "id=" + id);
         return R.ok();
     }
 
@@ -97,6 +114,8 @@ public class ConnectionController {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setContentDispositionFormData("attachment", fileName);
+        audit.record("CONNECTION_EXPORT", fileName, "OK",
+                idList == null ? "全部连接" : (idList.size() + " 条"));
         return new ResponseEntity<>(body, headers, org.springframework.http.HttpStatus.OK);
     }
 
@@ -146,6 +165,8 @@ public class ConnectionController {
             msg.append("，无法解析的文件 ").append(fileFail).append(" 个");
         }
         m.put("message", msg.toString());
+        audit.record("CONNECTION_IMPORT", files.length + " 个文件", imported > 0 ? "OK" : "FAIL",
+                "成功 " + imported + " 条，失败 " + failed + " 条，跳过 " + skipped + " 条");
         return R.ok(m);
     }
 

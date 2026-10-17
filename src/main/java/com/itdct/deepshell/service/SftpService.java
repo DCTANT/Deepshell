@@ -95,6 +95,63 @@ public class SftpService {
         return withSftp(sessionId, ChannelSftp::getHome);
     }
 
+    /** 修改文件/目录权限（八进制模式，如 0644、0755） */
+    public void chmod(String sessionId, String path, int mode) throws Exception {
+        if (path == null || path.trim().isEmpty()) {
+            throw new IllegalArgumentException("路径不能为空");
+        }
+        if (mode < 0 || mode > 07777) {
+            throw new IllegalArgumentException("权限模式不合法，应为八进制 0 - 7777");
+        }
+        withSftp(sessionId, c -> {
+            c.chmod(mode, path);
+            return null;
+        });
+    }
+
+    /** 把本地上传临时文件写入远端，relativePath 可包含多级目录，自动创建父目录 */
+    public void putLocalFile(String sessionId, String dirPath, String relativePath,
+                             java.nio.file.Path localFile) throws Exception {
+        String rel = relativePath == null ? "" : relativePath.replace('\\', '/');
+        while (rel.startsWith("/")) {
+            rel = rel.substring(1);
+        }
+        if (rel.isEmpty()) {
+            throw new IllegalArgumentException("目标文件名不能为空");
+        }
+        final String target = join(dirPath, rel);
+        withSftp(sessionId, c -> {
+            ensureDir(c, parentOf(target));
+            try (InputStream in = java.nio.file.Files.newInputStream(localFile)) {
+                c.put(in, target, ChannelSftp.OVERWRITE);
+            }
+            return null;
+        });
+    }
+
+    private void ensureDir(ChannelSftp c, String dir) throws Exception {
+        if (dir == null || dir.isEmpty() || "/".equals(dir)) {
+            return;
+        }
+        StringBuilder current = new StringBuilder();
+        for (String part : dir.split("/")) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            current.append('/').append(part);
+            String path = current.toString();
+            try {
+                c.stat(path);
+            } catch (SftpException e) {
+                if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+                    c.mkdir(path);
+                } else {
+                    throw e;
+                }
+            }
+        }
+    }
+
     public void mkdir(String sessionId, String path) throws Exception {
         withSftp(sessionId, c -> {
             c.mkdir(path);

@@ -31,12 +31,15 @@ public class AiAgentService {
     private final AiChatClient chatClient;
     private final SshSessionManager sessions;
     private final ConnectionService connections;
+    private final AuditService audit;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public AiAgentService(AiChatClient chatClient, SshSessionManager sessions, ConnectionService connections) {
+    public AiAgentService(AiChatClient chatClient, SshSessionManager sessions,
+                          ConnectionService connections, AuditService audit) {
         this.chatClient = chatClient;
         this.sessions = sessions;
         this.connections = connections;
+        this.audit = audit;
     }
 
     public static class AgentMessage {
@@ -106,10 +109,12 @@ public class AiAgentService {
             if (danger != null) {
                 r.needConfirm = true;
                 r.danger = danger;
+                audit.record("AI_COMMAND", parsed.command, "CONFIRM", "待确认：" + danger);
                 return r;
             }
             if (!auto) {
                 r.needConfirm = true;
+                audit.record("AI_COMMAND", parsed.command, "CONFIRM", "手动确认模式");
                 return r;
             }
             fillExec(r, s, parsed.command, cwd);
@@ -143,10 +148,14 @@ public class AiAgentService {
             r.cwd = res.cwd;
             r.truncated = res.truncated;
             r.timedOut = res.timedOut;
+            audit.record("AI_COMMAND", command,
+                    r.exitCode != null && r.exitCode != 0 ? "FAIL" : "OK",
+                    "exit=" + r.exitCode + (r.timedOut ? " timeout" : ""));
         } catch (Exception e) {
             log.warn("AI 终端命令执行失败: {}", e.toString());
             r.executed = false;
             r.error = "命令执行失败：" + e.getMessage();
+            audit.record("AI_COMMAND", command, "FAIL", r.error);
         }
     }
 
