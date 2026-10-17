@@ -28,7 +28,7 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
         if (!openBrowser) {
             return;
         }
-        final String url = "http://localhost:" + port + "/";
+        final String url = "http://127.0.0.1:" + port + "/";
         Thread t = new Thread(() -> {
             try {
                 Thread.sleep(600);

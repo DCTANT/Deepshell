@@ -61,7 +61,7 @@ deepshell-1.0.0/
 
 开发模式（在 IntelliJ IDEA 中运行 `DeepShellApplication`）数据目录默认为 `~/.deepshell`；分发包数据全部位于程序目录 `data/` 下，拷贝整个目录即可迁移。
 
-启动后访问 **http://localhost:18080**
+启动后访问 **http://127.0.0.1:18080**（也可以用 localhost；局域网模式下请用本机 127.0.0.1 或局域网 IP）
 
 ## 使用说明
 
