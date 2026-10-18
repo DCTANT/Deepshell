@@ -1674,6 +1674,16 @@ body.resizing .term-host {
     color: #7b88a0;
 }
 
+.ws-panel .sftp-selection {
+    background: #1e2530;
+    border-top-color: #2a3140;
+    border-bottom-color: #2a3140;
+}
+
+.ws-panel .sftp-selection-label {
+    color: #9fb2cd;
+}
+
 .ws-panel .cmd-item {
     background: #1a212d;
     border-color: #2a3140;
