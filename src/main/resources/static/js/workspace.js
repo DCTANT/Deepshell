@@ -576,6 +576,8 @@ new Vue({
             iconOrder: [],
             iconHidden: [],
             iconSelected: '',
+            iconSelectedKeys: [],
+            iconMarquee: { visible: false, left: 0, top: 0, width: 0, height: 0 },
             focusSurface: false,
             iconDragKey: '',
             iconDropKey: '',
@@ -2584,6 +2586,7 @@ new Vue({
             var self = this;
             this.stopDesktopWindowGestures();
             this.cancelDesktopMarquee();
+            this.cancelDesktopIconMarquee();
             this.closeDesktopSubMenus();
             this.cancelDesktopThumbQueue();
             this.disconnectDesktopThumbObserver();
@@ -2602,6 +2605,8 @@ new Vue({
             this.desktop.iconOrder = [];
             this.desktop.iconHidden = [];
             this.desktop.iconSelected = '';
+            this.desktop.iconSelectedKeys = [];
+            this.desktop.iconMarquee.visible = false;
             this.desktop.focusSurface = false;
             this.desktop.iconDragKey = '';
             this.desktop.iconDropKey = '';
@@ -2635,6 +2640,7 @@ new Vue({
             this.stopDesktopDragScroll();
             this.stopDesktopClock();
             this.cancelDesktopMarquee();
+            this.cancelDesktopIconMarquee();
             this.cancelDesktopThumbQueue();
             this.disconnectDesktopThumbObserver();
             this.resetSurfaceThumbs();
@@ -2923,8 +2929,10 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.iconSelectedKeys = [];
             this.desktop.focusSurface = false;
             this.desktop.calendarOpen = false;
+            this.cancelDesktopIconMarquee();
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
@@ -3263,6 +3271,7 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.iconSelectedKeys = [];
             this.desktop.focusSurface = true;
             this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
@@ -3464,6 +3473,8 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.iconSelectedKeys = [];
+            this.cancelDesktopIconMarquee();
             return this.loadDesktopSurface();
         },
         resetSurfaceThumbs: function () {
@@ -3711,9 +3722,13 @@ new Vue({
                 return allKeys.indexOf(a) - allKeys.indexOf(b);
             });
             this.desktop.iconOrder = visible;
+            this.desktop.iconSelectedKeys = this.desktop.iconSelectedKeys.filter(function (k) {
+                return visible.indexOf(k) >= 0;
+            });
             if (this.desktop.iconSelected
                     && visible.indexOf(this.desktop.iconSelected) < 0) {
-                this.desktop.iconSelected = '';
+                this.desktop.iconSelected = this.desktop.iconSelectedKeys.length
+                    ? this.desktop.iconSelectedKeys[this.desktop.iconSelectedKeys.length - 1] : '';
             }
         },
         saveDesktopIconLayout: function () {
@@ -3764,21 +3779,205 @@ new Vue({
                     this.desktop.iconOrder.push(key);
                 }
             }
+            if (hidden) {
+                var selIdx = this.desktop.iconSelectedKeys.indexOf(key);
+                if (selIdx >= 0) {
+                    this.desktop.iconSelectedKeys.splice(selIdx, 1);
+                }
+            }
             if (hidden && this.desktop.iconSelected === key) {
-                this.desktop.iconSelected = '';
+                this.desktop.iconSelected = this.desktop.iconSelectedKeys.length
+                    ? this.desktop.iconSelectedKeys[this.desktop.iconSelectedKeys.length - 1] : '';
             }
             this.saveDesktopIconLayout();
         },
-        selectDesktopIcon: function (item) {
+        selectDesktopIcon: function (item, ev) {
             if (!item) {
                 return;
             }
             this.desktop.focusSurface = true;
-            this.desktop.iconSelected = item.key;
+            var keys = this.desktop.iconSelectedKeys.slice();
+            var multi = !!(ev && (ev.ctrlKey || ev.metaKey));
+            var range = !!(ev && ev.shiftKey);
+            if (range && this.desktop.iconSelected) {
+                var all = this.desktopIconItems.map(function (x) { return x.key; });
+                var a = all.indexOf(this.desktop.iconSelected);
+                var b = all.indexOf(item.key);
+                keys = a >= 0 && b >= 0
+                    ? all.slice(Math.min(a, b), Math.max(a, b) + 1)
+                    : [item.key];
+            } else if (multi) {
+                var i = keys.indexOf(item.key);
+                if (i >= 0) {
+                    keys.splice(i, 1);
+                } else {
+                    keys.push(item.key);
+                }
+            } else {
+                keys = [item.key];
+            }
+            if (!keys.length) {
+                this.desktop.iconSelected = '';
+            } else if (keys.indexOf(item.key) >= 0) {
+                this.desktop.iconSelected = item.key;
+            } else if (keys.indexOf(this.desktop.iconSelected) < 0) {
+                this.desktop.iconSelected = keys[keys.length - 1];
+            }
+            this.desktop.iconSelectedKeys = keys;
             this.desktop.iconMenu.visible = false;
             if (this.desktop.menu.visible) {
                 this.desktop.menu.visible = false;
             }
+        },
+        isDesktopIconSelected: function (key) {
+            return this.desktop.iconSelectedKeys.indexOf(key) >= 0;
+        },
+        desktopSelectedIconItems: function () {
+            var map = this.desktopIconItemMap;
+            var out = [];
+            this.desktop.iconSelectedKeys.forEach(function (key) {
+                if (map[key]) {
+                    out.push(map[key]);
+                }
+            });
+            return out;
+        },
+        desktopSurfaceSelectedRows: function () {
+            var out = [];
+            this.desktopSelectedIconItems().forEach(function (item) {
+                if (item.entry) {
+                    out.push(item.entry);
+                }
+            });
+            return out;
+        },
+        selectAllDesktopIcons: function () {
+            var keys = this.desktopIconItems.map(function (item) { return item.key; });
+            this.desktop.iconSelectedKeys = keys;
+            this.desktop.iconSelected = keys.length ? keys[keys.length - 1] : '';
+            this.desktop.focusSurface = true;
+        },
+        /* ---------- 桌面背景空白处拖拽框选 ---------- */
+        onDesktopIconsMouseDown: function (ev) {
+            if (ev.button !== 0 || !this.desktop.visible) {
+                return;
+            }
+            if (this.desktop.settingsVisible || this.desktop.startOpen
+                    || this.desktop.menu.visible || this.hasDesktopDialogOpen()) {
+                return;
+            }
+            var target = ev.target;
+            if (!target || !target.closest
+                    || target.closest('.dsk-icon, .dsk-icons-msg, .dsk-wall-menu, .dsk-start-menu')) {
+                return;
+            }
+            ev.preventDefault();
+            var active = document.activeElement;
+            if (active && active !== document.body && active.blur) {
+                active.blur();
+            }
+            this.cancelDesktopIconMarquee();
+            var nodes = document.querySelectorAll('.dsk-icon[data-icon-key]');
+            var items = [];
+            for (var i = 0; i < nodes.length; i++) {
+                var r = nodes[i].getBoundingClientRect();
+                items.push({
+                    key: nodes[i].getAttribute('data-icon-key'),
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom
+                });
+            }
+            var additive = !!(ev.ctrlKey || ev.metaKey);
+            this._deskIconMarquee = {
+                startX: ev.clientX,
+                startY: ev.clientY,
+                lastX: ev.clientX,
+                lastY: ev.clientY,
+                moved: false,
+                base: additive ? this.desktop.iconSelectedKeys.slice() : [],
+                additive: additive,
+                items: items
+            };
+            document.addEventListener('mousemove', this.onDesktopIconMarqueeMove);
+            document.addEventListener('mouseup', this.onDesktopIconMarqueeUp);
+        },
+        onDesktopIconMarqueeMove: function (ev) {
+            var m = this._deskIconMarquee;
+            if (!m) {
+                return;
+            }
+            if (ev.buttons === 0) {
+                this.onDesktopIconMarqueeUp();
+                return;
+            }
+            m.lastX = ev.clientX;
+            m.lastY = ev.clientY;
+            if (!m.moved) {
+                if (Math.abs(m.lastX - m.startX) < 4 && Math.abs(m.lastY - m.startY) < 4) {
+                    return;
+                }
+                m.moved = true;
+            }
+            this.updateDesktopIconMarquee();
+        },
+        updateDesktopIconMarquee: function () {
+            var m = this._deskIconMarquee;
+            if (!m || !m.moved) {
+                return;
+            }
+            var root = this.$refs.desktopRoot;
+            var rr = root ? root.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+            var left = Math.max(rr.left, Math.min(m.startX, m.lastX));
+            var right = Math.min(rr.right, Math.max(m.startX, m.lastX));
+            var top = Math.max(rr.top, Math.min(m.startY, m.lastY));
+            var bottom = Math.min(rr.bottom - 48, Math.max(m.startY, m.lastY));
+            var q = this.desktop.iconMarquee;
+            q.visible = true;
+            q.left = left;
+            q.top = top;
+            q.width = Math.max(0, right - left);
+            q.height = Math.max(0, bottom - top);
+            var sel = m.additive ? m.base.slice() : [];
+            var last = '';
+            for (var i = 0; i < m.items.length; i++) {
+                var it = m.items[i];
+                if (it.right >= left && it.left <= right && it.bottom >= top && it.top <= bottom) {
+                    if (sel.indexOf(it.key) < 0) {
+                        sel.push(it.key);
+                    }
+                    last = it.key;
+                }
+            }
+            this.desktop.iconSelectedKeys = sel;
+            this.desktop.iconSelected = last || (sel.length ? sel[sel.length - 1] : '');
+            this.desktop.focusSurface = true;
+        },
+        onDesktopIconMarqueeUp: function () {
+            var moved = !!(this._deskIconMarquee && this._deskIconMarquee.moved);
+            if (moved) {
+                this.updateDesktopIconMarquee();
+            }
+            this.cancelDesktopIconMarquee();
+            if (moved) {
+                // 框选结束后补发的 click 不应清掉刚框好的选区
+                var suppressClick = function (e) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    document.removeEventListener('click', suppressClick, true);
+                };
+                document.addEventListener('click', suppressClick, true);
+                setTimeout(function () {
+                    document.removeEventListener('click', suppressClick, true);
+                }, 300);
+            }
+        },
+        cancelDesktopIconMarquee: function () {
+            document.removeEventListener('mousemove', this.onDesktopIconMarqueeMove);
+            document.removeEventListener('mouseup', this.onDesktopIconMarqueeUp);
+            this._deskIconMarquee = null;
+            this.desktop.iconMarquee.visible = false;
         },
         openDesktopIcon: function (item) {
             if (!item) {
@@ -4060,6 +4259,7 @@ new Vue({
             }
             this.desktop.iconDragKey = item.key;
             this.desktop.iconSelected = item.key;
+            this.desktop.iconSelectedKeys = [item.key];
             if (ev.dataTransfer) {
                 ev.dataTransfer.effectAllowed = 'move';
                 try {
@@ -4104,7 +4304,13 @@ new Vue({
             if (!item) {
                 return;
             }
-            this.selectDesktopIcon(item);
+            if (this.desktop.iconSelectedKeys.indexOf(item.key) >= 0) {
+                // 右键的是已选中图标：保留多选，只把锚点移到它上面
+                this.desktop.iconSelected = item.key;
+                this.desktop.focusSurface = true;
+            } else {
+                this.selectDesktopIcon(item, ev);
+            }
             if (item.type !== 'app') {
                 this.openDesktopSurfaceMenu(ev, item);
                 return;
@@ -4161,12 +4367,19 @@ new Vue({
         desktopMenuContextWin: function () {
             if (this.desktop.menu.surface) {
                 var row = this.desktop.menu.target;
+                var names = [];
+                this.desktopSurfaceSelectedRows().forEach(function (r) {
+                    names.push(r.name);
+                });
+                if (!names.length && row) {
+                    names = [row.name];
+                }
                 return {
                     id: '__surface__',
                     type: 'surface',
                     path: this.desktop.surface.dir,
                     entries: this.desktop.surface.entries,
-                    selected: row ? [row.name] : [],
+                    selected: names,
                     lastSelected: row ? row.name : '',
                     sortBy: 'name',
                     sortDir: 'asc'
@@ -4876,18 +5089,19 @@ new Vue({
             });
         },
         /* 桌面背景上的图标与资源管理器窗口共用同一套文件操作 */
-        desktopSurfaceSelection: function () {
-            var key = this.desktop.iconSelected;
-            return key ? (this.desktopIconItemMap[key] || null) : null;
-        },
         desktopSurfaceContextWin: function () {
+            var names = [];
+            this.desktopSurfaceSelectedRows().forEach(function (row) {
+                names.push(row.name);
+            });
+            var anchor = this.desktop.iconSelected ? this.desktopIconItemMap[this.desktop.iconSelected] : null;
             return {
                 id: '__surface__',
                 type: 'surface',
                 path: this.desktop.surface.dir,
                 entries: this.desktop.surface.entries || [],
-                selected: [],
-                lastSelected: '',
+                selected: names,
+                lastSelected: anchor && anchor.entry ? anchor.entry.name : '',
                 sortBy: 'name',
                 sortDir: 'asc'
             };
@@ -5171,7 +5385,9 @@ new Vue({
                 this.desktop.iconMenu.visible = false;
             }
             this.desktop.iconSelected = '';
+            this.desktop.iconSelectedKeys = [];
             this.desktop.focusSurface = true;
+            this.cancelDesktopIconMarquee();
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
@@ -6240,8 +6456,13 @@ new Vue({
             }
             // 桌面背景图标与资源管理器窗口各自维护选中项，按键跟随最近一次点击的上下文
             var surfaceFocused = !!this.desktop.focusSurface;
-            var surfaceItem = surfaceFocused ? this.desktopSurfaceSelection() : null;
-            var surfaceRow = surfaceItem && surfaceItem.entry ? surfaceItem.entry : null;
+            var surfaceItems = surfaceFocused ? this.desktopSelectedIconItems() : [];
+            var surfaceRows = [];
+            surfaceItems.forEach(function (it) {
+                if (it.entry) {
+                    surfaceRows.push(it.entry);
+                }
+            });
             var surfaceWin = surfaceFocused ? this.desktopSurfaceContextWin() : null;
             var active = this.desktopWindowById(this.desktop.activeWinId);
             var win = active && active.type !== 'ai' ? active : null;
@@ -6257,23 +6478,23 @@ new Vue({
                 e.preventDefault();
             } else if (e.key === 'F2') {
                 e.preventDefault();
-                if (surfaceRow) {
-                    this.desktopRename(surfaceRow, surfaceWin);
+                if (surfaceRows.length === 1) {
+                    this.desktopRename(surfaceRows[0], surfaceWin);
                 } else if (selected.length === 1) {
                     this.desktopRename(selected[0], win);
                 }
             } else if (e.key === 'Delete' || e.key === 'Del') {
-                if (surfaceRow) {
+                if (surfaceRows.length) {
                     e.preventDefault();
-                    this.desktopDeleteRows([surfaceRow], surfaceWin);
+                    this.desktopDeleteRows(surfaceRows, surfaceWin);
                 } else if (selected.length) {
                     e.preventDefault();
                     this.desktopDeleteRows(selected, win);
                 }
             } else if (e.key === 'Enter') {
-                if (surfaceItem) {
+                if (surfaceItems.length === 1) {
                     e.preventDefault();
-                    this.openDesktopIcon(surfaceItem);
+                    this.openDesktopIcon(surfaceItems[0]);
                 } else if (selected.length === 1) {
                     e.preventDefault();
                     this.desktopOpenEntry(selected[0], win);
@@ -6292,8 +6513,8 @@ new Vue({
                 }
             } else if (e.ctrlKey || e.metaKey) {
                 var key = String(e.key || '').toLowerCase();
-                var rows = surfaceRow ? [surfaceRow] : selected;
-                var targetWin = surfaceRow ? surfaceWin : win;
+                var rows = surfaceRows.length ? surfaceRows : selected;
+                var targetWin = surfaceRows.length ? surfaceWin : win;
                 if ((key === 'x' || key === 'c') && rows.length) {
                     e.preventDefault();
                     if (key === 'x') {
@@ -6307,6 +6528,7 @@ new Vue({
                 } else if (key === 'a') {
                     if (surfaceFocused) {
                         e.preventDefault();
+                        this.selectAllDesktopIcons();
                     } else if (win) {
                         e.preventDefault();
                         this.desktopSelectAll(win);
@@ -9830,6 +10052,7 @@ new Vue({
         }, true);
         window.addEventListener('blur', function () {
             self.cancelDesktopMarquee();
+            self.cancelDesktopIconMarquee();
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
             }

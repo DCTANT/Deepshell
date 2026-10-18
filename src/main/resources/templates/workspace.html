@@ -494,6 +494,7 @@
          @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
          @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
         <div class="dsk-wallpaper" @click="onDesktopSurfaceClick"
+             @mousedown="onDesktopIconsMouseDown"
              @contextmenu.prevent="onDesktopWallContextMenu">
             <div class="dsk-wallpaper-img" v-if="desktopBgSettings.url"
                  :style="{ backgroundImage: 'url(' + desktopBgSettings.url + ')',
@@ -502,13 +503,17 @@
                                ? ('blur(' + desktopBgSettings.blur + 'px)') : 'none' }"></div>
         </div>
 
+        <div class="dsk-marquee" v-if="desktop.iconMarquee.visible"
+             :style="{ left: desktop.iconMarquee.left + 'px', top: desktop.iconMarquee.top + 'px',
+                       width: desktop.iconMarquee.width + 'px', height: desktop.iconMarquee.height + 'px' }"></div>
+
         <div class="dsk-icons">
             <div v-for="icon in desktopIconItems" :key="icon.key" class="dsk-icon"
-                 :class="{ selected: desktop.iconSelected === icon.key,
+                 :class="{ selected: isDesktopIconSelected(icon.key),
                            dragging: desktop.iconDragKey === icon.key,
                            'drop-target': desktop.iconDropKey === icon.key }"
                  :data-icon-key="icon.key" :title="icon.label" draggable="true"
-                 @click.stop="selectDesktopIcon(icon)"
+                 @click.stop="selectDesktopIcon(icon, $event)"
                  @dblclick.stop="openDesktopIcon(icon)"
                  @contextmenu.prevent.stop="openDesktopIconMenu($event, icon)"
                  @dragstart.stop="onDesktopIconDragStart($event, icon)"
