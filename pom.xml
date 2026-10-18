@@ -16,6 +16,20 @@
     <version>1.0.0</version>
     <name>deepshell</name>
     <description>现代化 Web 终端工具：SpringBoot + Thymeleaf + ElementUI + xterm.js</description>
+    <url>https://gitee.com/decentant/deepshell</url>
+
+    <licenses>
+        <license>
+            <name>GNU Affero General Public License v3.0 only</name>
+            <url>https://www.gnu.org/licenses/agpl-3.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+        <license>
+            <name>Commercial License</name>
+            <url>https://gitee.com/decentant/deepshell/blob/master/COMMERCIAL.md</url>
+            <distribution>manual</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>1.8</java.version>

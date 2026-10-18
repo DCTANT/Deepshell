@@ -135,3 +135,15 @@ deepshell.auth.captcha-fail-times: 2   # 同一 IP 连续失败多少次后要�
 ```
 
 > 登录账号密码在配置文件中为明文，请务必修改默认密码；开启登录后建议不要将服务直接暴露到公网。Token 有效期还可在右上角菜单「登录与安全」中在线调整（1 - 720 小时），设置保存在数据目录的 `auth.properties` 中。验证码按 TCP 连接的对端 IP 计数，不信任 `X-Forwarded-For`，避免伪造请求头绕过阈值。
+
+## 开源协议
+
+本项目采用 **AGPL-3.0-only** 协议开源，完整条款见 [LICENSE](LICENSE)。
+
+- 个人使用、学习、审计、修改和自部署均免费。
+- 分发修改版，或通过网络向用户提供服务时，必须按 AGPL-3.0 向用户提供完整对应的源代码。
+- 如需闭源集成、商业分发、SaaS 不公开源码或 OEM 贴牌，请购买商业授权，详见 [COMMERCIAL.md](COMMERCIAL.md)。
+- "DeepShell" 名称与 Logo 的商标使用权不随代码授权，详见 [TRADEMARK.md](TRADEMARK.md)。
+- 贡献代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，并同意 [CLA.md](CLA.md)。
+
+Copyright (C) 2026 DecentAnt
