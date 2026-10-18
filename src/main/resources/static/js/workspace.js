@@ -377,8 +377,27 @@ function loadBgSettings() {
     return loadStored('deepshell.bg', { url: '', opacity: 0.35, blur: 0 });
 }
 
-function loadDesktopBgSettings() {
-    return loadStored('deepshell.desktopBg', { url: '', opacity: 0.35, blur: 0 });
+function loadDesktopBgSettings(connId) {
+    var def = { url: '', opacity: 0.35, blur: 0 };
+    var stored = null;
+    try {
+        var s = connId != null ? localStorage.getItem('deepshell.desktopBg.' + connId) : null;
+        if (!s) {
+            // 兼容旧版全局桌面背景：该连接还没单独设置过时沿用
+            s = localStorage.getItem('deepshell.desktopBg');
+        }
+        if (s) {
+            stored = JSON.parse(s);
+        }
+    } catch (e) { /* ignore */ }
+    if (stored && typeof stored === 'object') {
+        for (var k in stored) {
+            if (Object.prototype.hasOwnProperty.call(stored, k)) {
+                def[k] = stored[k];
+            }
+        }
+    }
+    return def;
 }
 
 var sortFolders = function (a, b) {
@@ -705,7 +724,6 @@ new Vue({
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
-        desktopBgSettings: loadDesktopBgSettings(),
         bgTarget: 'terminal',
         bgDraft: { url: '', opacity: 0.35, blur: 0 },
         openAfterConnect: loadOpenAfterConnect(),
@@ -976,6 +994,10 @@ new Vue({
             var self = this;
             return this.tabs.find(function (t) { return t.key === self.desktop.tabKey; }, this)
                 || this.activeTab || null;
+        },
+        desktopBgSettings: function () {
+            var t = this.desktopTab;
+            return (t && t.desktopBg) || { url: '', opacity: 0.35, blur: 0 };
         },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
@@ -1314,6 +1336,7 @@ new Vue({
                 cmdText: '',
                 cmdVisible: true,
                 cmdHistory: loadHistory(connId),
+                desktopBg: loadDesktopBgSettings(connId),
                 sendTargets: [],
                 aiVisible: false,
                 aiText: '',
@@ -1810,14 +1833,13 @@ new Vue({
                 return;
             }
             t.aiVisible = !t.aiVisible;
-            if (t.aiVisible) {
-                var self = this;
-                this.$nextTick(function () {
-                    if (self.$refs.aiInput) {
-                        self.$refs.aiInput.focus();
-                    }
-                });
-            }
+            var self = this;
+            this.$nextTick(function () {
+                self.fitActive();
+                if (t.aiVisible && self.$refs.aiInput) {
+                    self.$refs.aiInput.focus();
+                }
+            });
         },
         onAiKeydown: function (e) {
             if (e.key === 'Enter') {
@@ -1825,8 +1847,8 @@ new Vue({
                 this.aiGenerate();
             } else if (e.key === 'Escape') {
                 e.stopPropagation();
-                if (this.activeTab) {
-                    this.activeTab.aiVisible = false;
+                if (this.activeTab && this.activeTab.aiVisible) {
+                    this.toggleAiBar();
                 }
             }
         },
@@ -1856,6 +1878,7 @@ new Vue({
                 t.aiText = '';
                 ELEMENT.Message.success('已生成命令，确认后回车执行');
                 self.$nextTick(function () {
+                    self.fitActive();
                     if (self.$refs.cmdInput) {
                         self.$refs.cmdInput.focus();
                     }
@@ -2513,6 +2536,8 @@ new Vue({
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
             }
+            // 同一连接可能在多个标签打开，进入桌面时以存储中的最新背景为准
+            t.desktopBg = loadDesktopBgSettings(t.connId);
             var conv = this.aiActiveConv(t);
             var p = (conv && conv.cwd) || t.termCwd || t.sftpPath || t.sftpHome || '/';
             var self = this;
@@ -7032,9 +7057,14 @@ new Vue({
                 }
             });
         },
-        applyDesktopBg: function () {
+        applyDesktopBg: function (tab) {
+            var t = tab || this.desktopTab;
+            if (!t || !t.desktopBg) {
+                return;
+            }
+            var key = t.connId != null ? 'deepshell.desktopBg.' + t.connId : 'deepshell.desktopBg';
             try {
-                localStorage.setItem('deepshell.desktopBg', JSON.stringify(this.desktopBgSettings));
+                localStorage.setItem(key, JSON.stringify(t.desktopBg));
             } catch (e) { /* ignore */ }
         },
         openBgSettings: function (target) {
@@ -7049,10 +7079,14 @@ new Vue({
         },
         applyBgDraft: function () {
             if (this.bgTarget === 'desktop') {
-                this.desktopBgSettings.url = this.bgDraft.url;
-                this.desktopBgSettings.opacity = this.bgDraft.opacity;
-                this.desktopBgSettings.blur = this.bgDraft.blur;
-                this.applyDesktopBg();
+                var t = this.desktopTab;
+                if (!t || !t.desktopBg) {
+                    return;
+                }
+                t.desktopBg.url = this.bgDraft.url;
+                t.desktopBg.opacity = this.bgDraft.opacity;
+                t.desktopBg.blur = this.bgDraft.blur;
+                this.applyDesktopBg(t);
             } else {
                 this.bgSettings.url = this.bgDraft.url;
                 this.bgSettings.opacity = this.bgDraft.opacity;
@@ -7065,6 +7099,12 @@ new Vue({
             var fd = new FormData();
             fd.append('file', param.file);
             var url = this.bgTarget === 'desktop' ? '/api/desktop-bg' : '/api/terminal-bg';
+            if (this.bgTarget === 'desktop') {
+                var t = this.desktopTab;
+                if (t && t.connId != null) {
+                    fd.append('connId', t.connId);
+                }
+            }
             http.post(url, fd).then(function (imgUrl) {
                 self.bgDraft.url = imgUrl;
                 self.applyBgDraft();

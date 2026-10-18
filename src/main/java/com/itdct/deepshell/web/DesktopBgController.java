@@ -18,12 +18,13 @@ public class DesktopBgController {
     }
 
     @PostMapping
-    public R<String> upload(@RequestParam("file") MultipartFile file) throws Exception {
-        return R.ok(service.upload("desktop", file));
+    public R<String> upload(@RequestParam(value = "connId", required = false) Long connId,
+                            @RequestParam("file") MultipartFile file) throws Exception {
+        return R.ok(service.upload("desktop", connId, file));
     }
 
     @GetMapping("/img")
-    public ResponseEntity<byte[]> img() throws Exception {
-        return service.image("desktop");
+    public ResponseEntity<byte[]> img(@RequestParam(value = "connId", required = false) Long connId) throws Exception {
+        return service.image("desktop", connId);
     }
 }

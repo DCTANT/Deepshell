@@ -32,11 +32,20 @@ public class BackgroundImageService {
         throw new IllegalArgumentException("未知背景类型");
     }
 
-    private String url(String scope) {
-        return "terminal".equals(scope) ? "/api/terminal-bg/img" : "/api/desktop-bg/img";
+    /** AI 桌面背景按连接分目录存放；connId 为空时使用旧的全局目录 */
+    private Path desktopDir(Long connId) {
+        Path base = dir("desktop");
+        return connId == null ? base : base.resolve(String.valueOf(connId));
     }
 
-    public String upload(String scope, MultipartFile file) throws Exception {
+    private String url(String scope, Long connId) {
+        if ("terminal".equals(scope)) {
+            return "/api/terminal-bg/img";
+        }
+        return connId == null ? "/api/desktop-bg/img" : "/api/desktop-bg/img?connId=" + connId;
+    }
+
+    public String upload(String scope, Long connId, MultipartFile file) throws Exception {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("文件为空");
         }
@@ -45,7 +54,7 @@ public class BackgroundImageService {
         if (!ALLOWED.contains(ext)) {
             throw new IllegalArgumentException("仅支持图片格式: " + ALLOWED);
         }
-        Path d = dir(scope);
+        Path d = "desktop".equals(scope) ? desktopDir(connId) : dir(scope);
         Files.createDirectories(d);
         try (Stream<Path> s = Files.list(d)) {
             s.filter(Files::isRegularFile)
@@ -58,19 +67,15 @@ public class BackgroundImageService {
                     });
         }
         Files.copy(file.getInputStream(), d.resolve("bg." + ext), StandardCopyOption.REPLACE_EXISTING);
-        return url(scope);
+        return url(scope, connId);
     }
 
-    public ResponseEntity<byte[]> image(String scope) throws Exception {
-        Path d = dir(scope);
-        if (!Files.isDirectory(d)) {
-            return ResponseEntity.notFound().build();
-        }
-        Path f;
-        try (Stream<Path> s = Files.list(d)) {
-            f = s.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().startsWith("bg."))
-                    .findFirst().orElse(null);
+    public ResponseEntity<byte[]> image(String scope, Long connId) throws Exception {
+        Path d = "desktop".equals(scope) ? desktopDir(connId) : dir(scope);
+        Path f = findImage(d);
+        if (f == null && "desktop".equals(scope) && connId != null) {
+            // 该连接还没有独立背景时沿用旧的全局背景
+            f = findImage(dir("desktop"));
         }
         if (f == null) {
             return ResponseEntity.notFound().build();
@@ -94,5 +99,16 @@ public class BackgroundImageService {
         h.setContentType(mt);
         h.setCacheControl("no-cache");
         return new ResponseEntity<>(data, h, HttpStatus.OK);
+    }
+
+    private Path findImage(Path d) throws Exception {
+        if (!Files.isDirectory(d)) {
+            return null;
+        }
+        try (Stream<Path> s = Files.list(d)) {
+            return s.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().startsWith("bg."))
+                    .findFirst().orElse(null);
+        }
     }
 }

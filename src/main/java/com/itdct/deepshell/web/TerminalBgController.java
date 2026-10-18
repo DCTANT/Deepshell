@@ -19,11 +19,11 @@ public class TerminalBgController {
 
     @PostMapping
     public R<String> upload(@RequestParam("file") MultipartFile file) throws Exception {
-        return R.ok(service.upload("terminal", file));
+        return R.ok(service.upload("terminal", null, file));
     }
 
     @GetMapping("/img")
     public ResponseEntity<byte[]> img() throws Exception {
-        return service.image("terminal");
+        return service.image("terminal", null);
     }
 }
