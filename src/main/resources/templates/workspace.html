@@ -592,43 +592,57 @@
         <span class="dim">会话 {{ tabs.length }} 个</span>
     </div>
 
-    <!-- AI 可视化桌面（Windows 资源管理器式文件页） -->
+    <!-- AI 可视化桌面（虚拟桌面 + 多窗口资源管理器） -->
     <div class="ai-desktop" v-if="desktop.visible" ref="desktopRoot" tabindex="-1"
          @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
          @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
-        <div class="dsk-topbar">
-            <button class="dsk-back" title="返回工作台" @click="closeAiDesktop">
-                <i class="el-icon-back"></i>
-            </button>
-            <div class="dsk-brand">Deep<b>Shell</b><span class="dsk-brand-sep">/</span>AI 可视化桌面</div>
-            <span class="dsk-host" v-if="desktopTab">
-                <i class="el-icon-monitor"></i>{{ desktopTab.title }}
-                <span class="dsk-host-addr">{{ desktopTab.host }}</span>
-            </span>
-            <span class="spacer"></span>
-            <span class="dsk-ai-chip" v-if="desktopAiDir" title="AI 当前工作目录，点击定位"
-                  @click="desktopGo(desktopAiDir)">
-                <i class="el-icon-cpu"></i>AI 目录：{{ desktopAiDir }}
-            </span>
-            <el-button size="mini" class="dsk-close-btn" icon="el-icon-close"
-                       @click="closeAiDesktop">返回工作台</el-button>
-        </div>
+        <div class="dsk-wallpaper" @click="onDesktopSurfaceClick"
+             @contextmenu.prevent="onDesktopWallContextMenu"></div>
 
-        <div class="dsk-toolbar">
+        <div class="dsk-window-layer">
+            <div v-for="w in desktop.windows" :key="w.id" class="dsk-window"
+                 :class="{ active: w.id === desktop.activeWinId, maximized: w.max,
+                           dragging: w.dragging, resizing: w.resizing }"
+                 :style="desktopWindowStyle(w)" :data-win-id="w.id" v-show="!w.min"
+                 @mousedown.capture="activateDesktopWindow(w.id)"
+                 @dragenter.capture="activateDesktopWindow(w.id)">
+                <div class="dsk-titlebar" @mousedown="startDesktopWindowDrag($event, w)"
+                     @dblclick="toggleDesktopWindowMax(w)">
+                    <span class="dsk-titlebar-icon"><i class="el-icon-folder-opened"></i></span>
+                    <span class="dsk-titlebar-text">
+                        <span class="dsk-titlebar-title">{{ desktopWindowTitle(w) }}</span>
+                        <span class="dsk-titlebar-sub" :title="desktopWindowSubtitle(w)">
+                            {{ desktopWindowSubtitle(w) }}
+                        </span>
+                    </span>
+                    <span class="spacer"></span>
+                    <span class="dsk-win-actions" @mousedown.stop @dblclick.stop>
+                        <button class="dsk-win-btn" title="最小化"
+                                @click.stop="minimizeDesktopWindow(w)"><i class="el-icon-minus"></i></button>
+                        <button class="dsk-win-btn" :title="w.max ? '向下还原' : '最大化'"
+                                @click.stop="toggleDesktopWindowMax(w)">
+                            <i :class="w.max ? 'el-icon-copy-document' : 'el-icon-full-screen'"></i>
+                        </button>
+                        <button class="dsk-win-btn close" title="关闭"
+                                @click.stop="closeDesktopWindow(w)"><i class="el-icon-close"></i></button>
+                    </span>
+                </div>
+
+                <div class="dsk-toolbar">
             <el-button-group class="dsk-nav">
                 <el-button size="mini" icon="el-icon-back" title="后退"
-                           :disabled="!desktop.history.length" @click="desktopGoBack"></el-button>
+                           :disabled="!w.history.length" @click="desktopGoBack"></el-button>
                 <el-button size="mini" icon="el-icon-right" title="前进"
-                           :disabled="!desktop.future.length" @click="desktopGoForward"></el-button>
+                           :disabled="!w.future.length" @click="desktopGoForward"></el-button>
                 <el-button size="mini" icon="el-icon-top" title="上一级"
-                           :disabled="desktop.path === '/'" @click="desktopUp"></el-button>
-                <el-button size="mini" :icon="desktop.loading ? 'el-icon-loading' : 'el-icon-refresh'"
-                           title="刷新" @click="desktopRefresh"></el-button>
+                           :disabled="w.path === '/'" @click="desktopUp"></el-button>
+                <el-button size="mini" :icon="w.loading ? 'el-icon-loading' : 'el-icon-refresh'"
+                           title="刷新" @click="desktopRefresh(w)"></el-button>
             </el-button-group>
             <div class="dsk-address">
-                <template v-if="!desktop.pathEditing">
+                <template v-if="!w.pathEditing">
                     <div class="dsk-crumbs">
-                        <span v-for="(c, i) in desktopCrumbs" :key="c.path" class="dsk-crumb-line">
+                        <span v-for="(c, i) in deskCrumbs(w)" :key="c.path" class="dsk-crumb-line">
                             <i v-if="i" class="el-icon-arrow-right dsk-crumb-sep"></i>
                             <span class="dsk-crumb" :title="c.path"
                                   @click="desktopGo(c.path)">{{ c.name }}</span>
@@ -637,44 +651,43 @@
                     <i class="el-icon-edit dsk-edit-path" title="编辑路径"
                        @click="startDesktopPathEdit"></i>
                 </template>
-                <el-input v-else ref="deskPathInput" size="mini" v-model="desktop.pathInput"
-                          class="dsk-path-input" @keyup.enter.native="commitDesktopPathEdit"
-                          @keyup.esc.native="desktop.pathEditing = false"
-                          @blur="commitDesktopPathEdit"></el-input>
+                <el-input v-else :id="'dsk-path-input-' + w.id" size="mini" v-model="w.pathInput"
+                          class="dsk-path-input" @keyup.enter.native="commitDesktopPathEdit(w)"
+                          @keyup.esc.native="w.pathEditing = false"
+                          @blur="commitDesktopPathEdit(w)"></el-input>
             </div>
-            <el-input size="mini" v-model="desktop.keyword" clearable prefix-icon="el-icon-search"
+            <span class="dsk-ai-chip" v-if="desktopAiDir" title="AI 当前工作目录，点击定位" @click="desktopGo(desktopAiDir)"><i class="el-icon-cpu"></i>AI 目录：{{ desktopAiDir }}</span>
+            <el-input size="mini" v-model="w.keyword" clearable prefix-icon="el-icon-search"
                       class="dsk-search" placeholder="筛选当前目录"
                       @input="desktopClearSelection"></el-input>
             <el-dropdown size="mini" trigger="click" @command="desktopSortCommand">
                 <el-button size="mini" icon="el-icon-sort" class="dsk-sort-btn">
-                    {{ desktopSortLabel }}<i class="el-icon-arrow-down el-icon--right"></i>
+                    {{ deskSortLabel(w) }}<i class="el-icon-arrow-down el-icon--right"></i>
                 </el-button>
                 <el-dropdown-menu slot="dropdown">
-                    <el-dropdown-item command="name">名称{{ desktop.sortBy === 'name' ? (desktop.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
-                    <el-dropdown-item command="size">大小{{ desktop.sortBy === 'size' ? (desktop.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
-                    <el-dropdown-item command="mtime">修改时间{{ desktop.sortBy === 'mtime' ? (desktop.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
+                    <el-dropdown-item command="name">名称{{ w.sortBy === 'name' ? (w.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
+                    <el-dropdown-item command="size">大小{{ w.sortBy === 'size' ? (w.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
+                    <el-dropdown-item command="mtime">修改时间{{ w.sortBy === 'mtime' ? (w.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
                 </el-dropdown-menu>
             </el-dropdown>
             <div class="dsk-views">
                 <span v-for="v in desktopViews" :key="v.id" class="dsk-view-btn"
-                      :class="{ active: desktop.viewMode === v.id }" :title="v.label"
+                      :class="{ active: w.viewMode === v.id }" :title="v.label"
                       @click="setDesktopView(v.id)"><i :class="v.icon"></i></span>
             </div>
             <span class="dsk-toolbar-sep"></span>
             <el-button size="mini" icon="el-icon-folder-add" title="新建文件夹"
-                       @click="desktopNewFolder"></el-button>
+                       @click="desktopNewFolder(w)"></el-button>
             <el-button size="mini" icon="el-icon-document-add" title="新建文件"
-                       @click="desktopNewFile"></el-button>
+                       @click="desktopNewFile(w)"></el-button>
             <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"
                        @click="pickDesktopUpload"></el-button>
-            <input ref="desktopUpload" type="file" multiple class="dsk-upload-input"
-                   @change="onDesktopUploadPick">
         </div>
 
         <div class="dsk-body">
             <aside class="dsk-side">
                 <div class="dsk-side-sec"><i class="el-icon-cpu"></i>AI 工作目录</div>
-                <div class="dsk-side-item" :class="{ active: desktopAiDir && desktop.path === desktopAiDir,
+                <div class="dsk-side-item" :class="{ active: desktopAiDir && w.path === desktopAiDir,
                                                      disabled: !desktopAiDir }"
                      :title="desktopAiDir || 'AI 尚未切换过目录'"
                      @click="desktopAiDir && desktopGo(desktopAiDir)">
@@ -682,16 +695,16 @@
                     <span class="dsk-side-name">AI 当前目录</span>
                 </div>
                 <div class="dsk-side-sec"><i class="el-icon-star-off"></i>快速访问</div>
-                <div class="dsk-side-item" :class="{ active: desktop.path === desktopHomeDir }"
+                <div class="dsk-side-item" :class="{ active: w.path === desktopHomeDir }"
                      @click="desktopGoHome">
                     <i class="el-icon-user"></i><span class="dsk-side-name">主目录</span>
                 </div>
-                <div class="dsk-side-item" :class="{ active: desktop.path === '/' }" @click="desktopGo('/')">
+                <div class="dsk-side-item" :class="{ active: w.path === '/' }" @click="desktopGo('/')">
                     <i class="el-icon-office-building"></i><span class="dsk-side-name">根目录</span>
                     <span class="dsk-side-path">/</span>
                 </div>
                 <div class="dsk-side-item" v-for="q in desktopQuickDirs" :key="q.path"
-                     :class="{ active: desktop.path === q.path }" :title="q.path"
+                     :class="{ active: w.path === q.path }" :title="q.path"
                      @click="desktopGo(q.path)">
                     <i class="el-icon-folder"></i><span class="dsk-side-name">{{ q.label }}</span>
                     <span class="dsk-side-path">{{ q.path }}</span>
@@ -699,7 +712,7 @@
                 <template v-if="desktopCommonDirs.length">
                     <div class="dsk-side-sec"><i class="el-icon-star-on"></i>常用目录</div>
                     <div class="dsk-side-item" v-for="d in desktopCommonDirs" :key="'cd' + d.id"
-                         :class="{ active: desktop.path === d.path }" :title="d.path"
+                         :class="{ active: w.path === d.path }" :title="d.path"
                          @click="desktopGo(d.path)">
                         <i class="el-icon-folder-opened"></i>
                         <span class="dsk-side-name">{{ d.path }}</span>
@@ -707,45 +720,45 @@
                 </template>
                 <div class="dsk-side-sec"><i class="el-icon-view"></i>视图</div>
                 <div class="dsk-side-item" v-for="v in desktopViews" :key="'sv' + v.id"
-                     :class="{ active: desktop.viewMode === v.id }" @click="setDesktopView(v.id)">
+                     :class="{ active: w.viewMode === v.id }" @click="setDesktopView(v.id)">
                     <i :class="v.icon"></i><span class="dsk-side-name">{{ v.label }}</span>
                 </div>
             </aside>
 
             <main class="dsk-main">
-                <div class="dsk-files" ref="deskFiles" @click="onDesktopFilesClick"
+                <div class="dsk-files" :id="'dsk-files-' + w.id" @click="onDesktopFilesClick"
                      @mousedown="onDesktopFilesMouseDown"
                      @contextmenu.prevent="desktopBlankContextMenu($event)"
                      @dragover="onDesktopSurfaceDragOver" @drop="onDesktopSurfaceDrop"
                      @dragleave="onDesktopSurfaceDragLeave">
-                    <div class="dsk-marquee" v-if="desktop.marquee.visible"
-                         :style="{ left: desktop.marquee.left + 'px', top: desktop.marquee.top + 'px',
-                                   width: desktop.marquee.width + 'px', height: desktop.marquee.height + 'px' }"></div>
-                    <div class="dsk-error" v-if="desktop.error">
-                        <i class="el-icon-warning-outline"></i> {{ desktop.error }}
+                    <div class="dsk-marquee" v-if="w.marquee.visible"
+                         :style="{ left: w.marquee.left + 'px', top: w.marquee.top + 'px',
+                                   width: w.marquee.width + 'px', height: w.marquee.height + 'px' }"></div>
+                    <div class="dsk-error" v-if="w.error">
+                        <i class="el-icon-warning-outline"></i> {{ w.error }}
                     </div>
-                    <div class="dsk-loading" v-if="desktop.loading">
+                    <div class="dsk-loading" v-if="w.loading">
                         <i class="el-icon-loading"></i> 正在读取目录…
                     </div>
-                    <div class="dsk-empty" v-if="!desktop.loading && !desktop.error && !desktop.entries.length">
+                    <div class="dsk-empty" v-if="!w.loading && !w.error && !w.entries.length">
                         <i class="el-icon-folder-opened"></i>
                         <p>当前目录为空</p>
-                        <el-button size="mini" icon="el-icon-folder-add" @click="desktopNewFolder">
+                        <el-button size="mini" icon="el-icon-folder-add" @click="desktopNewFolder(w)">
                             新建文件夹
                         </el-button>
                     </div>
-                    <div class="dsk-empty" v-else-if="!desktop.loading && !desktopShownEntries.length && desktop.keyword">
+                    <div class="dsk-empty" v-else-if="!w.loading && !deskShownEntries(w).length && w.keyword">
                         <i class="el-icon-search"></i>
-                        <p>没有匹配「{{ desktop.keyword }}」的项目</p>
+                        <p>没有匹配「{{ w.keyword }}」的项目</p>
                     </div>
 
-                    <div v-if="isDesktopGrid && desktopShownEntries.length" class="dsk-grid"
-                         :class="desktop.viewMode">
-                        <div v-for="row in desktopShownEntries" :key="'g' + row.name" class="dsk-item"
+                    <div v-if="isDeskGrid(w) && deskShownEntries(w).length" class="dsk-grid"
+                         :class="w.viewMode">
+                        <div v-for="row in deskShownEntries(w)" :key="'g' + row.name" class="dsk-item"
                              :data-name="row.name"
-                             :class="{ selected: isDesktopSelected(row),
-                                       dragging: isDesktopDragging(row),
-                                       'drop-target': desktop.dropTarget === row.name && row.dir }"
+                             :class="{ selected: isDeskSelected(w, row),
+                                       dragging: isDeskDragging(w, row),
+                                       'drop-target': w.dropTarget === row.name && row.dir }"
                              :title="row.name" draggable="true"
                              @click.stop="desktopSelect(row, $event)"
                              @dblclick.stop="desktopOpenEntry(row)"
@@ -761,10 +774,10 @@
                                     <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
                                     <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
                                 </svg>
-                                <span v-else-if="desktopShowThumb(row)" class="dsk-thumb">
-                                    <img v-if="desktopThumbSrc(row)" :src="desktopThumbSrc(row)" :alt="row.name"
+                                <span v-else-if="deskShowThumb(w, row)" class="dsk-thumb">
+                                    <img v-if="deskThumbSrc(w, row)" :src="deskThumbSrc(w, row)" :alt="row.name"
                                          decoding="async" draggable="false"
-                                         @error="onDesktopThumbError(row)">
+                                         @error="onDeskThumbError(w, row)">
                                 </span>
                                 <span v-else class="dsk-file-ico" :class="'fi-' + desktopFileKind(row)">
                                     <span class="dsk-ext" :class="{ long: desktopExtLabel(row).length > 3 }">{{ desktopExtLabel(row) }}</span>
@@ -772,25 +785,25 @@
                                 <i v-if="row.link" class="el-icon-link dsk-link" title="符号链接"></i>
                             </span>
                             <span class="dsk-name">{{ row.name }}</span>
-                            <span class="dsk-meta" v-if="desktop.viewMode === 'large'">
+                            <span class="dsk-meta" v-if="w.viewMode === 'large'">
                                 {{ row.dir ? '文件夹' : fmtSize(row.size) }}
                             </span>
                         </div>
                     </div>
 
-                    <div v-else-if="!isDesktopGrid && desktopShownEntries.length" class="dsk-list">
+                    <div v-else-if="!isDeskGrid(w) && deskShownEntries(w).length" class="dsk-list">
                         <div class="dsk-list-head">
-                            <span class="dsk-lh" @click="desktopSortBy('name')">名称 <i :class="desktopSortIcon('name')"></i></span>
-                            <span class="dsk-lh" @click="desktopSortBy('size')">大小 <i :class="desktopSortIcon('size')"></i></span>
-                            <span class="dsk-lh" @click="desktopSortBy('mtime')">修改时间 <i :class="desktopSortIcon('mtime')"></i></span>
+                            <span class="dsk-lh" @click="desktopSortBy('name')">名称 <i :class="deskSortIcon(w, 'name')"></i></span>
+                            <span class="dsk-lh" @click="desktopSortBy('size')">大小 <i :class="deskSortIcon(w, 'size')"></i></span>
+                            <span class="dsk-lh" @click="desktopSortBy('mtime')">修改时间 <i :class="deskSortIcon(w, 'mtime')"></i></span>
                             <span class="dsk-lh">权限</span>
                         </div>
                         <div class="dsk-list-body">
-                            <div v-for="row in desktopShownEntries" :key="'l' + row.name" class="dsk-row"
+                            <div v-for="row in deskShownEntries(w)" :key="'l' + row.name" class="dsk-row"
                                  :data-name="row.name"
-                                 :class="{ selected: isDesktopSelected(row),
-                                           dragging: isDesktopDragging(row),
-                                           'drop-target': desktop.dropTarget === row.name && row.dir }"
+                                 :class="{ selected: isDeskSelected(w, row),
+                                           dragging: isDeskDragging(w, row),
+                                           'drop-target': w.dropTarget === row.name && row.dir }"
                                  draggable="true"
                                  @click.stop="desktopSelect(row, $event)"
                                  @dblclick.stop="desktopOpenEntry(row)"
@@ -820,22 +833,39 @@
                         </div>
                     </div>
 
-                    <div class="dsk-drop-hint" v-if="desktop.fileDragOver">
+                    <div class="dsk-drop-hint" v-if="w.fileDragOver">
                         <i class="el-icon-upload"></i>
-                        <div>松开鼠标上传到 {{ desktop.path }}</div>
+                        <div>松开鼠标上传到 {{ w.path }}</div>
                         <div class="dsk-drop-hint-tip">拖到文件夹图标上可上传到该文件夹</div>
                     </div>
                 </div>
 
                 <div class="dsk-status">
-                    <span v-if="desktop.loading"><i class="el-icon-loading"></i> 正在读取…</span>
-                    <span v-else>{{ desktopShownEntries.length }} 项<template v-if="desktop.keyword">（共 {{ desktop.entries.length }} 项）</template></span>
-                    <span v-if="desktop.selected.length" class="dsk-status-sel">已选择 {{ desktop.selected.length }} 项</span>
+                    <span v-if="w.loading"><i class="el-icon-loading"></i> 正在读取…</span>
+                    <span v-else>{{ deskShownEntries(w).length }} 项<template v-if="w.keyword">（共 {{ w.entries.length }} 项）</template></span>
+                    <span v-if="w.selected.length" class="dsk-status-sel">已选择 {{ w.selected.length }} 项</span>
                     <span class="spacer"></span>
-                    <span class="dsk-status-path" :title="desktop.path">{{ desktop.path }}</span>
+                    <span class="dsk-status-path" :title="w.path">{{ w.path }}</span>
                 </div>
             </main>
         </div>
+                <template v-if="!w.max">
+                    <span v-for="dir in desktopResizeDirs" :key="dir" class="dsk-resize"
+                          :class="'r-' + dir"
+                          @mousedown.stop.prevent="startDesktopWindowResize($event, w, dir)"></span>
+                </template>
+            </div>
+            <div class="dsk-window-empty" v-if="!desktop.windows.length">
+                <i class="el-icon-folder-opened"></i>
+                <p>桌面上没有打开的窗口</p>
+                <el-button size="small" icon="el-icon-folder-add"
+                           @click="openDesktopExplorerWindow()">新建资源管理器窗口</el-button>
+                <div class="dsk-window-empty-tip">也可以在桌面空白处右键，或从开始菜单重新打开</div>
+            </div>
+        </div>
+
+        <input ref="desktopUpload" type="file" multiple class="dsk-upload-input"
+               @change="onDesktopUploadPick">
 
         <!-- Windows 风格任务栏 -->
         <div class="dsk-taskbar">
@@ -856,9 +886,14 @@
                     <i v-if="a.id === 'ai' && desktopTab && desktopTab.chatBusy"
                        class="dsk-task-busy" title="AI 正在执行任务"></i>
                 </button>
-                <button class="dsk-task-app active" title="AI 可视化桌面" @click.stop>
+                <span class="dsk-taskbar-sep"></span>
+                <button v-for="w in desktop.windows" :key="'tw' + w.id"
+                        class="dsk-task-app dsk-task-win"
+                        :class="{ active: w.id === desktop.activeWinId && !w.min, 'is-min': w.min }"
+                        :title="desktopWindowSubtitle(w)"
+                        @click.stop="toggleDesktopTaskbarWindow(w)">
                     <i class="el-icon-folder-opened"></i>
-                    <span class="dsk-task-label">AI 桌面</span>
+                    <span class="dsk-task-label">{{ desktopWindowTitle(w) }}</span>
                 </button>
             </div>
             <span class="spacer"></span>
@@ -886,7 +921,7 @@
                 <span class="dsk-clock-time">{{ desktopClockTime }}</span>
                 <span class="dsk-clock-date" v-if="desktop.clockShowDate">{{ desktopClockDate }}</span>
             </div>
-            <button class="dsk-show-desktop" title="返回工作台" @click.stop="closeAiDesktop">
+            <button class="dsk-show-desktop" title="显示桌面 / 还原所有窗口" @click.stop="toggleShowDesktop">
                 <i class="el-icon-s-fold"></i>
             </button>
         </div>
@@ -897,8 +932,8 @@
                 <div class="dsk-start-avatar"><i class="el-icon-monitor"></i></div>
                 <div class="dsk-start-user">
                     <div class="dsk-start-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
-                    <div class="dsk-start-host" :title="desktop.path">
-                        {{ desktopTab ? desktopTab.host : '' }} · {{ desktop.path }}
+                    <div class="dsk-start-host" :title="desk.path || desktopHomeDir">
+                        {{ desktopTab ? desktopTab.host : '' }} · {{ desk.path || desktopHomeDir || '/' }}
                     </div>
                 </div>
                 <button class="dsk-start-x" title="关闭" @click="desktop.startOpen = false">
@@ -974,8 +1009,8 @@
                     <button class="dsk-start-searchgo" :disabled="desktop.startSearching"
                             @click="desktopSearchServer">
                         <i :class="desktop.startSearching ? 'el-icon-loading' : 'el-icon-search'"></i>
-                        <span v-if="desktop.startSearching">正在搜索 {{ desktop.path }} …</span>
-                        <span v-else>在「{{ desktop.path }}」子目录中搜索 “{{ desktopStartQuery }}”</span>
+                        <span v-if="desktop.startSearching">正在搜索 {{ desktop.startRootPath || desk.path || '/' }} …</span>
+                        <span v-else>在「{{ desktop.startRootPath || desk.path || desktopHomeDir || '/' }}」子目录中搜索 “{{ desktopStartQuery }}”</span>
                     </button>
                     <div class="dsk-start-hint">最多搜索 6 层子目录，最多返回 100 项；结果可能受权限限制</div>
                     <div class="dsk-start-error" v-if="desktop.startError">{{ desktop.startError }}</div>
@@ -1004,7 +1039,7 @@
                     <i class="el-icon-cpu"></i>系统信息
                 </button>
                 <span class="spacer"></span>
-                <button class="dsk-start-foot-btn primary" @click="closeAiDesktop">
+                <button class="dsk-start-foot-btn primary" @click="closeAiDesktop()">
                     <i class="el-icon-back"></i>返回工作台
                 </button>
                 <div class="dsk-start-power" @click.stop>
@@ -1085,7 +1120,7 @@
                                     </div>
                                     <div class="dsk-set-views">
                                         <button v-for="v in desktopViews" :key="'set' + v.id"
-                                                :class="{ active: desktop.viewMode === v.id }"
+                                                :class="{ active: desk.viewMode === v.id }"
                                                 @click="setDesktopView(v.id)">
                                             <i :class="v.icon"></i><span>{{ v.label }}</span>
                                         </button>
@@ -1230,7 +1265,7 @@
                                     <div class="dsk-set-info">
                                         <b>关闭桌面</b><span>立即收起桌面，返回终端工作台</span>
                                     </div>
-                                    <el-button size="mini" icon="el-icon-s-fold" @click="closeAiDesktop">
+                                    <el-button size="mini" icon="el-icon-s-fold" @click="closeAiDesktop()">
                                         立即返回
                                     </el-button>
                                 </div>
@@ -1374,6 +1409,10 @@
                     <i class="el-icon-folder-opened"></i>打开
                 </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
+                     @click="desktopMenuAction('openNewWindow')">
+                    <i class="el-icon-folder-add"></i>在新窗口打开
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
                      @click="desktopMenuAction('terminal')">
                     <i class="el-icon-position"></i>在终端中打开
                 </div>
@@ -1411,7 +1450,7 @@
                     <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
                 </div>
                 <div class="dsk-menu-item danger" @click="desktopMenuAction('delete')">
-                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('删除 ' + desktop.selected.length + ' 项') : '删除' }}
+                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('删除 ' + desk.selected.length + ' 项') : '删除' }}
                     <span class="dsk-menu-key">Del</span>
                 </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('props')">
@@ -1475,7 +1514,7 @@
         <div class="dsk-menu dsk-menu-sub" ref="deskDownloadSub" v-if="desktop.downloadSub.visible"
              :style="{ left: desktop.downloadSub.x + 'px', top: desktop.downloadSub.y + 'px' }"
              @click.stop @contextmenu.prevent>
-            <div class="dsk-menu-title">下载 {{ desktop.selected.length }} 项</div>
+            <div class="dsk-menu-title">下载 {{ desk.selected.length }} 项</div>
             <div class="dsk-menu-item" @click="desktopMenuAction('downloadBundle')">
                 <i class="el-icon-box"></i>
                 <span class="dsk-menu-sub-name">打包下载</span>
@@ -1491,6 +1530,20 @@
                 <span class="dsk-menu-sub-name">下载到本机…</span>
             </div>
         </div>
+
+        <!-- 桌面空白右键菜单 -->
+        <div class="dsk-menu dsk-wall-menu" v-if="desktop.wallMenu.visible"
+             :style="{ left: desktop.wallMenu.x + 'px', top: desktop.wallMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">桌面</div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('newWindow')">
+                <i class="el-icon-folder-add"></i>新建资源管理器窗口
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('return')">
+                <i class="el-icon-back"></i>返回工作台
+            </div>
+        </div>
     </div>
 
     <div class="file-drop-mask" v-if="fileDragOver">
@@ -1498,7 +1551,7 @@
             <i class="el-icon-upload"></i>
             <div class="file-drop-title">松开鼠标上传文件</div>
             <div class="file-drop-dir">
-                目标目录：{{ (desktop.visible && desktop.path)
+                目标目录：{{ (desktop.visible && desk.path)
                     || (activeTab && (activeTab.sftpPath || activeTab.sftpHome)) || '（等待会话就绪）' }}
             </div>
         </div>
@@ -1817,7 +1870,7 @@
                 <div class="arc-sources-title">
                     <i class="el-icon-folder-opened"></i>
                     压缩 {{ archiveSources.length }} 项
-                    <span class="dim">到 {{ desktop.path }}</span>
+                    <span class="dim">到 {{ desk.path }}</span>
                 </div>
                 <div class="arc-chips">
                     <span v-for="r in archiveSources" :key="'arcsrc' + r.name" class="arc-chip">
@@ -1852,7 +1905,7 @@
                     </el-select>
                 </el-form-item>
                 <el-form-item label="输出目录">
-                    <span class="arc-path">{{ desktop.path }}</span>
+                    <span class="arc-path">{{ desk.path }}</span>
                 </el-form-item>
                 <el-form-item label="覆盖同名">
                     <el-switch v-model="archiveForm.overwrite" size="mini"></el-switch>

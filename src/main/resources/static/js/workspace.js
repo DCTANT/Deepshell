@@ -148,6 +148,45 @@ function loadDesktopIdleMinutes() {
     return 0;
 }
 
+/* AI 可视化桌面：每个资源管理器窗口拥有独立的浏览状态与几何信息 */
+function createDesktopWindow(id) {
+    return {
+        id: id || '',
+        path: '',
+        pathInput: '',
+        pathEditing: false,
+        entries: [],
+        loading: false,
+        error: '',
+        history: [],
+        future: [],
+        viewMode: loadDesktopView(),
+        sortBy: 'name',
+        sortDir: 'asc',
+        keyword: '',
+        selected: [],
+        lastSelected: '',
+        marquee: { visible: false, left: 0, top: 0, width: 0, height: 0 },
+        dragNames: [],
+        dropTarget: '',
+        fileDragOver: false,
+        pendingSelect: '',
+        pendingOpen: false,
+        thumbSrc: {},
+        thumbFailed: {},
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+        min: false,
+        max: false,
+        normal: null,
+        z: 0,
+        dragging: false,
+        resizing: false
+    };
+}
+
 function loadOpenAfterConnect() {
     try {
         var v = localStorage.getItem('deepshell.openAfterConnect');
@@ -385,30 +424,19 @@ new Vue({
             { id: 'network', label: '网络与连接', icon: 'el-icon-connection' },
             { id: 'system', label: '系统信息', icon: 'el-icon-cpu' }
         ],
+        desktopResizeDirs: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
         desktop: {
             visible: false,
             tabKey: '',
-            path: '',
-            pathInput: '',
-            pathEditing: false,
-            entries: [],
-            loading: false,
-            error: '',
-            history: [],
-            future: [],
-            viewMode: loadDesktopView(),
-            sortBy: 'name',
-            sortDir: 'asc',
-            keyword: '',
-            selected: [],
-            lastSelected: '',
-            marquee: { visible: false, left: 0, top: 0, width: 0, height: 0 },
+            windows: [],
+            activeWinId: '',
+            zSeq: 0,
+            ghost: createDesktopWindow(''),
+            wallMenu: { visible: false, x: 0, y: 0 },
+            showDesktopIds: [],
             menu: { visible: false, x: 0, y: 0, target: null },
             propsVisible: false,
             props: null,
-            dragNames: [],
-            dropTarget: '',
-            fileDragOver: false,
             startOpen: false,
             powerOpen: false,
             startSearch: '',
@@ -416,11 +444,9 @@ new Vue({
             startSearched: false,
             startResults: [],
             startError: '',
+            startRootPath: '',
+            startWinId: '',
             clockNow: Date.now(),
-            pendingSelect: '',
-            pendingOpen: false,
-            thumbSrc: {},
-            thumbFailed: {},
             settingsVisible: false,
             settingsSection: 'appearance',
             compressSub: { visible: false, x: 0, y: 0 },
@@ -627,6 +653,8 @@ new Vue({
             this.desktop.startSearched = false;
             this.desktop.startResults = [];
             this.desktop.startError = '';
+            this.desktop.startRootPath = '';
+            this.desktop.startWinId = '';
             var self = this;
             this.$nextTick(function () {
                 if (self.$refs.desktopStartBody) {
@@ -636,14 +664,23 @@ new Vue({
         },
         'desktop.thumbnailsEnabled': function (v) {
             try { localStorage.setItem('deepshell.desktopThumbs', v ? '1' : '0'); } catch (e) { /* ignore */ }
-            this.$nextTick(this.setupDesktopThumbs);
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(self.desk);
+            });
         },
-        'desktop.viewMode': function () {
-            this.$nextTick(this.setupDesktopThumbs);
+        'desk.viewMode': function () {
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(self.desk);
+            });
         },
         // 目录内容 / 筛选 / 排序变化后，重新观察当前渲染出的网格项
         desktopShownEntries: function () {
-            this.$nextTick(this.setupDesktopThumbs);
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(self.desk);
+            });
         },
         'desktop.showHidden': function (v) {
             try { localStorage.setItem('deepshell.desktopShowHidden', v ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -696,6 +733,18 @@ new Vue({
             return this.commonDirsByConn[t.connId] || [];
         },
         /* ---------- AI 可视化桌面 ---------- */
+        /* 当前聚焦的资源管理器窗口；没有窗口时返回占位对象，避免空引用 */
+        desk: function () {
+            var id = this.desktop.activeWinId;
+            if (id) {
+                for (var i = 0; i < this.desktop.windows.length; i++) {
+                    if (this.desktop.windows[i].id === id) {
+                        return this.desktop.windows[i];
+                    }
+                }
+            }
+            return this.desktop.ghost;
+        },
         desktopTab: function () {
             var self = this;
             return this.tabs.find(function (t) { return t.key === self.desktop.tabKey; }, this)
@@ -729,59 +778,11 @@ new Vue({
                 { label: '应用', path: '/opt' }
             ];
         },
-        desktopCrumbs: function () {
-            var p = this.desktop.path;
-            if (!p) {
-                return [];
-            }
-            var out = [{ name: '/', path: '/' }];
-            var segs = p.split('/').filter(function (s) { return !!s; });
-            var acc = '';
-            segs.forEach(function (s) {
-                acc += '/' + s;
-                out.push({ name: s, path: acc });
-            });
-            return out;
-        },
-        isDesktopGrid: function () {
-            return this.desktop.viewMode !== 'list';
-        },
         desktopShownEntries: function () {
-            var kw = (this.desktop.keyword || '').trim().toLowerCase();
-            var showHidden = this.desktop.showHidden;
-            var rows = (this.desktop.entries || []).filter(function (r) {
-                if (!showHidden && String(r.name).charAt(0) === '.') {
-                    return false;
-                }
-                return !kw || String(r.name).toLowerCase().indexOf(kw) >= 0;
-            });
-            var by = this.desktop.sortBy;
-            var dir = this.desktop.sortDir === 'desc' ? -1 : 1;
-            rows.sort(function (a, b) {
-                if (a.dir !== b.dir) {
-                    return a.dir ? -1 : 1;
-                }
-                var v;
-                if (by === 'size') {
-                    v = (a.size || 0) - (b.size || 0);
-                } else if (by === 'mtime') {
-                    v = (a.mtime || 0) - (b.mtime || 0);
-                } else {
-                    v = String(a.name).localeCompare(String(b.name), 'zh-CN', {
-                        numeric: true,
-                        sensitivity: 'base'
-                    });
-                }
-                return v * dir;
-            });
-            return rows;
-        },
-        desktopSortLabel: function () {
-            var map = { name: '名称', size: '大小', mtime: '修改时间' };
-            return map[this.desktop.sortBy] + (this.desktop.sortDir === 'asc' ? ' ↑' : ' ↓');
+            return this.deskShownEntries(this.desk);
         },
         desktopMenuMulti: function () {
-            return this.desktop.selected.length > 1;
+            return this.desk.selected.length > 1;
         },
         desktopMenuHasFile: function () {
             return this.desktopSelectedRows().some(function (r) { return !r.dir; });
@@ -791,13 +792,13 @@ new Vue({
             if (!name) {
                 return false;
             }
-            return (this.desktop.entries || []).some(function (r) {
+            return (this.desk.entries || []).some(function (r) {
                 return r.name === name;
             });
         },
         desktopMenuTitle: function () {
             if (this.desktopMenuMulti) {
-                return '已选择 ' + this.desktop.selected.length + ' 项';
+                return '已选择 ' + this.desk.selected.length + ' 项';
             }
             var r = this.desktop.menu.target;
             return r ? (r.dir ? '文件夹 · ' + r.name : '文件 · ' + r.name) : '当前目录';
@@ -820,7 +821,7 @@ new Vue({
                 return [];
             }
             var showHidden = this.desktop.showHidden;
-            return (this.desktop.entries || []).filter(function (r) {
+            return (this.desk.entries || []).filter(function (r) {
                 if (!showHidden && String(r.name).charAt(0) === '.') {
                     return false;
                 }
@@ -2235,51 +2236,74 @@ new Vue({
             }
             var conv = this.aiActiveConv(t);
             var p = (conv && conv.cwd) || t.termCwd || t.sftpPath || t.sftpHome || '/';
-            this.desktop.tabKey = t.key;
-            this.desktop.visible = true;
-            this.desktop.history = [];
-            this.desktop.future = [];
+            var self = this;
+            if (!this.desktop.visible || this.desktop.tabKey !== t.key) {
+                this.resetDesktopShell(t);
+                this.desktop.visible = true;
+                this.startDesktopClock();
+                this.$nextTick(function () {
+                    if (!self.desktop.visible) {
+                        return;
+                    }
+                    self.openDesktopWindow(p, true);
+                    if (self.$refs.desktopRoot) {
+                        self.$refs.desktopRoot.focus();
+                    }
+                });
+                return;
+            }
+            // 已经在该连接的桌面里：再开一个资源管理器窗口
+            this.openDesktopWindow(this.desk.path || p);
+        },
+        resetDesktopShell: function (t) {
+            var self = this;
+            this.stopDesktopWindowGestures();
             this.cancelDesktopMarquee();
-            this.desktop.selected = [];
-            this.desktop.lastSelected = '';
-            this.desktop.keyword = '';
-            this.desktop.error = '';
-            this.desktop.pathEditing = false;
+            this.closeDesktopSubMenus();
+            this.cancelDesktopThumbQueue();
+            this.disconnectDesktopThumbObserver();
+            this.desktop.windows.forEach(function (w) {
+                self.releaseDesktopWindowThumbs(w);
+            });
+            this.desktop.windows = [];
+            this.desktop.activeWinId = '';
+            this.desktop.zSeq = 0;
+            this.desktop.showDesktopIds = [];
+            this.desktop.tabKey = t ? t.key : '';
             this.desktop.menu.visible = false;
-            this.desktop.dragNames = [];
-            this.desktop.dropTarget = '';
-            this.desktop.fileDragOver = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.propsVisible = false;
+            this.desktop.props = null;
+            this.desktop.settingsVisible = false;
             this.desktop.startOpen = false;
+            this.desktop.powerOpen = false;
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
             this.desktop.startSearched = false;
             this.desktop.startError = '';
             this.desktop.startSearching = false;
-            this.desktop.settingsVisible = false;
-            this.desktop.pendingSelect = '';
-            this.desktop.pendingOpen = false;
-            this.closeDesktopSubMenus();
-            this.loadDesktopDir(p);
-            this.startDesktopClock();
-            var self = this;
-            this.$nextTick(function () {
-                if (self.$refs.desktopRoot) {
-                    self.$refs.desktopRoot.focus();
-                }
-            });
+            this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
+            this._deskLastActivity = Date.now();
         },
         closeAiDesktop: function (skipSftpRefresh) {
+            this.saveDesktopWinLayouts();
+            this.stopDesktopWindowGestures();
             this.stopDesktopDragScroll();
             this.stopDesktopClock();
             this.cancelDesktopMarquee();
-            this.resetDesktopThumbs();
+            this.cancelDesktopThumbQueue();
+            this.disconnectDesktopThumbObserver();
+            var self = this;
+            this.desktop.windows.forEach(function (w) {
+                self.releaseDesktopWindowThumbs(w);
+            });
             this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
             this.desktop.visible = false;
+            this.desktop.windows = [];
+            this.desktop.activeWinId = '';
+            this.desktop.showDesktopIds = [];
             this.desktop.menu.visible = false;
-            this.desktop.pathEditing = false;
-            this.desktop.dragNames = [];
-            this.desktop.dropTarget = '';
-            this.desktop.fileDragOver = false;
+            this.desktop.wallMenu.visible = false;
             this.desktop.startOpen = false;
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
@@ -2287,10 +2311,8 @@ new Vue({
             this.desktop.startError = '';
             this.desktop.startSearching = false;
             this.desktop.settingsVisible = false;
-            this.desktop.pendingSelect = '';
-            this.desktop.pendingOpen = false;
+            this.desktop.powerOpen = false;
             this.closeDesktopSubMenus();
-            var self = this;
             this.$nextTick(function () {
                 var t = self.activeTab;
                 if (t && t.term) {
@@ -2301,6 +2323,614 @@ new Vue({
                     self.loadDir(t.sftpPath, t);
                 }
             });
+        },
+
+        /* ---------- 桌面窗口管理 ---------- */
+        desktopWindowById: function (id) {
+            if (!id) {
+                return null;
+            }
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].id === id) {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
+        desktopWindowTitle: function (w) {
+            var p = (w && w.path) || '';
+            if (!p || p === '/') {
+                return '/';
+            }
+            var idx = p.lastIndexOf('/');
+            return idx >= 0 ? (p.substring(idx + 1) || '/') : p;
+        },
+        desktopWindowSubtitle: function (w) {
+            var host = this.desktopTab ? this.desktopTab.host : '';
+            var path = (w && w.path) || '';
+            return host ? (path ? host + ' · ' + path : host) : path;
+        },
+        desktopWindowStyle: function (w) {
+            if (!w) {
+                return {};
+            }
+            if (w.max) {
+                return { zIndex: w.z };
+            }
+            return {
+                left: w.x + 'px',
+                top: w.y + 'px',
+                width: w.w + 'px',
+                height: w.h + 'px',
+                zIndex: w.z
+            };
+        },
+        desktopLayoutKey: function () {
+            var t = this.desktopTab;
+            if (!t) {
+                return '';
+            }
+            return 'deepshell.desktopWinLayout.' + (t.connId != null ? t.connId : t.key);
+        },
+        loadDesktopWinLayouts: function () {
+            var key = this.desktopLayoutKey();
+            if (!key) {
+                return [];
+            }
+            try {
+                var arr = JSON.parse(localStorage.getItem(key) || '[]');
+                return Array.isArray(arr) ? arr : [];
+            } catch (e) {
+                return [];
+            }
+        },
+        saveDesktopWinLayouts: function () {
+            if (!this.desktop.visible) {
+                return;
+            }
+            var key = this.desktopLayoutKey();
+            if (!key) {
+                return;
+            }
+            var list = this.desktop.windows.map(function (w) {
+                var g = w.max && w.normal ? w.normal : { x: w.x, y: w.y, w: w.w, h: w.h };
+                return {
+                    x: Math.round(g.x || 0),
+                    y: Math.round(g.y || 0),
+                    w: Math.round(g.w || 0),
+                    h: Math.round(g.h || 0),
+                    max: !!w.max
+                };
+            });
+            try {
+                localStorage.setItem(key, JSON.stringify(list));
+            } catch (e) { /* ignore */ }
+        },
+        scheduleSaveDesktopWinLayouts: function () {
+            var self = this;
+            if (this._deskLayoutTimer) {
+                clearTimeout(this._deskLayoutTimer);
+            }
+            this._deskLayoutTimer = setTimeout(function () {
+                self._deskLayoutTimer = null;
+                self.saveDesktopWinLayouts();
+            }, 250);
+        },
+        desktopWindowWorkArea: function () {
+            var root = this.$refs.desktopRoot;
+            var width = root ? root.clientWidth : window.innerWidth;
+            var height = root ? root.clientHeight : window.innerHeight;
+            return {
+                width: Math.max(320, width),
+                height: Math.max(220, height - 48)
+            };
+        },
+        desktopDefaultWindowGeometry: function (index) {
+            var area = this.desktopWindowWorkArea();
+            var narrow = area.width < 760;
+            var width = narrow ? area.width
+                : Math.min(1100, Math.max(720, Math.round(area.width * 0.68)));
+            var height = narrow ? area.height
+                : Math.min(780, Math.max(480, Math.round(area.height * 0.78)));
+            width = Math.max(Math.min(520, area.width), Math.min(width, area.width - 16));
+            height = Math.max(Math.min(320, area.height), Math.min(height, area.height - 16));
+            var x = Math.round((area.width - width) / 2) + (index || 0) * 26;
+            var y = Math.round((area.height - height) / 2) + (index || 0) * 26;
+            x = Math.max(0, Math.min(x, area.width - width));
+            y = Math.max(0, Math.min(y, area.height - height));
+            return { x: x, y: y, w: width, h: height, max: narrow };
+        },
+        applyDesktopWindowGeometry: function (w, layout) {
+            var area = this.desktopWindowWorkArea();
+            var g = layout || this.desktopDefaultWindowGeometry(this.desktop.windows.length - 1);
+            var minW = Math.min(520, area.width);
+            var minH = Math.min(320, area.height);
+            var width = Math.min(Math.max(Number(g.w) || minW, minW), area.width);
+            var height = Math.min(Math.max(Number(g.h) || minH, minH), area.height);
+            var x = Math.max(0, Math.min(Number(g.x) || 0, area.width - width));
+            var y = Math.max(0, Math.min(Number(g.y) || 0, area.height - height));
+            w.x = Math.round(x);
+            w.y = Math.round(y);
+            w.w = Math.round(width);
+            w.h = Math.round(height);
+            w.normal = { x: w.x, y: w.y, w: w.w, h: w.h };
+            w.max = !!g.max || area.width < 760;
+        },
+        openDesktopWindow: function (path, first) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !this.desktop.visible) {
+                return null;
+            }
+            var seq = (this._deskWinSeq || 0) + 1;
+            this._deskWinSeq = seq;
+            var w = createDesktopWindow('dw' + seq);
+            w.viewMode = loadDesktopView();
+            var layouts = this.loadDesktopWinLayouts();
+            this.desktop.windows.push(w);
+            var idx = this.desktop.windows.length - 1;
+            var layout = first ? (layouts[0] || null) : (layouts[idx] || null);
+            this.applyDesktopWindowGeometry(w, layout);
+            w.z = ++this.desktop.zSeq;
+            this.desktop.activeWinId = w.id;
+            this.desktop.showDesktopIds = [];
+            this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.startOpen = false;
+            this.closeDesktopSubMenus();
+            this.loadDesktopDir(path || this.desktopHomeDir || '/', null, w);
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(w);
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        openDesktopExplorerWindow: function (path) {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            return this.openDesktopWindow(path || this.desk.path || this.desktopHomeDir || '/');
+        },
+        activateDesktopWindow: function (id) {
+            var w = this.desktopWindowById(id);
+            if (!w) {
+                return;
+            }
+            var changed = this.desktop.activeWinId !== id;
+            if (w.min) {
+                w.min = false;
+                changed = true;
+            }
+            this.desktop.activeWinId = id;
+            w.z = ++this.desktop.zSeq;
+            this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.closeDesktopSubMenus();
+            if (this.desktop.startOpen) {
+                this.desktop.startOpen = false;
+            }
+            if (changed) {
+                this.desktop.windows.forEach(function (other) {
+                    if (other !== w) {
+                        other.fileDragOver = false;
+                        other.dropTarget = '';
+                    }
+                });
+                var self = this;
+                this.$nextTick(function () {
+                    self.setupDesktopThumbs(w);
+                });
+            }
+        },
+        pickDesktopActive: function (excludeId) {
+            var best = null;
+            this.desktop.windows.forEach(function (w) {
+                if (w.id !== excludeId && !w.min && (!best || w.z > best.z)) {
+                    best = w;
+                }
+            });
+            this.desktop.activeWinId = best ? best.id : '';
+            if (best) {
+                var self = this;
+                this.$nextTick(function () {
+                    self.setupDesktopThumbs(best);
+                });
+            }
+        },
+        minimizeDesktopWindow: function (w) {
+            if (!w) {
+                return;
+            }
+            w.min = true;
+            if (this.desktop.activeWinId === w.id) {
+                this.pickDesktopActive(w.id);
+            }
+            this.saveDesktopWinLayouts();
+        },
+        restoreDesktopWindow: function (w) {
+            if (!w) {
+                return;
+            }
+            w.min = false;
+            this.activateDesktopWindow(w.id);
+            this.saveDesktopWinLayouts();
+        },
+        toggleDesktopWindowMax: function (w) {
+            if (!w) {
+                return;
+            }
+            this.activateDesktopWindow(w.id);
+            if (w.max) {
+                w.max = false;
+                var area = this.desktopWindowWorkArea();
+                w.w = Math.min(Math.max(w.w, Math.min(520, area.width)), area.width);
+                w.h = Math.min(Math.max(w.h, Math.min(320, area.height)), area.height);
+                w.x = Math.min(Math.max(0, w.x), Math.max(0, area.width - w.w));
+                w.y = Math.min(Math.max(0, w.y), Math.max(0, area.height - w.h));
+            } else {
+                w.normal = { x: w.x, y: w.y, w: w.w, h: w.h };
+                w.max = true;
+            }
+            this.saveDesktopWinLayouts();
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(w);
+            });
+        },
+        closeDesktopWindow: function (w) {
+            if (!w) {
+                return;
+            }
+            this.releaseDesktopWindowThumbs(w);
+            var idx = this.desktop.windows.indexOf(w);
+            if (idx >= 0) {
+                this.desktop.windows.splice(idx, 1);
+            }
+            var wasActive = this.desktop.activeWinId === w.id;
+            if (this.desktop.showDesktopIds.indexOf(w.id) >= 0) {
+                this.desktop.showDesktopIds = this.desktop.showDesktopIds.filter(function (id) {
+                    return id !== w.id;
+                });
+            }
+            if (wasActive) {
+                this.pickDesktopActive(w.id);
+            }
+            if (!this.desktop.windows.length) {
+                this.desktop.activeWinId = '';
+                this.desktop.showDesktopIds = [];
+            }
+            this.saveDesktopWinLayouts();
+        },
+        toggleDesktopTaskbarWindow: function (w) {
+            if (!w) {
+                return;
+            }
+            if (w.min) {
+                this.restoreDesktopWindow(w);
+            } else if (this.desktop.activeWinId === w.id) {
+                this.minimizeDesktopWindow(w);
+            } else {
+                this.activateDesktopWindow(w.id);
+            }
+        },
+        toggleShowDesktop: function () {
+            var visible = this.desktop.windows.filter(function (w) {
+                return !w.min;
+            });
+            var self = this;
+            if (visible.length) {
+                this.desktop.showDesktopIds = visible.map(function (w) {
+                    return w.id;
+                });
+                visible.forEach(function (w) {
+                    w.min = true;
+                });
+                this.desktop.activeWinId = '';
+                this.desktop.menu.visible = false;
+                this.desktop.wallMenu.visible = false;
+                this.desktop.startOpen = false;
+                this.closeDesktopSubMenus();
+                return;
+            }
+            var restoreIds = this.desktop.showDesktopIds.slice();
+            this.desktop.windows.forEach(function (w) {
+                w.min = false;
+            });
+            var target = null;
+            for (var i = restoreIds.length - 1; i >= 0; i--) {
+                target = this.desktopWindowById(restoreIds[i]);
+                if (target) {
+                    break;
+                }
+            }
+            if (!target) {
+                this.desktop.windows.forEach(function (w) {
+                    if (!target || w.z > target.z) {
+                        target = w;
+                    }
+                });
+            }
+            this.desktop.showDesktopIds = [];
+            if (target) {
+                this.desktop.activeWinId = target.id;
+                target.z = ++this.desktop.zSeq;
+                this.$nextTick(function () {
+                    self.setupDesktopThumbs(target);
+                });
+            }
+        },
+        fitDesktopWindows: function () {
+            if (!this.desktop.visible) {
+                return;
+            }
+            var area = this.desktopWindowWorkArea();
+            var minW = Math.min(520, area.width);
+            var minH = Math.min(320, area.height);
+            this.desktop.windows.forEach(function (w) {
+                if (w.max) {
+                    return;
+                }
+                w.w = Math.min(Math.max(w.w, minW), area.width);
+                w.h = Math.min(Math.max(w.h, minH), area.height);
+                w.x = Math.min(Math.max(0, w.x), Math.max(0, area.width - w.w));
+                w.y = Math.min(Math.max(0, w.y), Math.max(0, area.height - w.h));
+            });
+            this.scheduleSaveDesktopWinLayouts();
+        },
+        startDesktopWindowDrag: function (ev, w) {
+            if (!w || ev.button !== 0 || w.max) {
+                return;
+            }
+            this.activateDesktopWindow(w.id);
+            w.dragging = true;
+            this._deskMove = {
+                w: w,
+                startX: ev.clientX,
+                startY: ev.clientY,
+                ox: w.x,
+                oy: w.y,
+                area: this.desktopWindowWorkArea()
+            };
+            document.addEventListener('mousemove', this.onDesktopWindowDragMove);
+            document.addEventListener('mouseup', this.onDesktopWindowDragUp);
+            ev.preventDefault();
+        },
+        onDesktopWindowDragMove: function (ev) {
+            var s = this._deskMove;
+            if (!s) {
+                return;
+            }
+            var x = s.ox + (ev.clientX - s.startX);
+            var y = s.oy + (ev.clientY - s.startY);
+            s.w.x = Math.max(0, Math.min(x, s.area.width - s.w.w));
+            s.w.y = Math.max(0, Math.min(y, s.area.height - s.w.h));
+        },
+        onDesktopWindowDragUp: function () {
+            var s = this._deskMove;
+            this._deskMove = null;
+            document.removeEventListener('mousemove', this.onDesktopWindowDragMove);
+            document.removeEventListener('mouseup', this.onDesktopWindowDragUp);
+            if (s && s.w) {
+                s.w.dragging = false;
+                this.scheduleSaveDesktopWinLayouts();
+            }
+        },
+        startDesktopWindowResize: function (ev, w, dir) {
+            if (!w || ev.button !== 0 || w.max) {
+                return;
+            }
+            this.activateDesktopWindow(w.id);
+            w.resizing = true;
+            this._deskResize = {
+                w: w,
+                dir: dir,
+                startX: ev.clientX,
+                startY: ev.clientY,
+                ox: w.x,
+                oy: w.y,
+                ow: w.w,
+                oh: w.h,
+                area: this.desktopWindowWorkArea()
+            };
+            document.addEventListener('mousemove', this.onDesktopWindowResizeMove);
+            document.addEventListener('mouseup', this.onDesktopWindowResizeUp);
+            ev.preventDefault();
+            ev.stopPropagation();
+        },
+        onDesktopWindowResizeMove: function (ev) {
+            var s = this._deskResize;
+            if (!s) {
+                return;
+            }
+            var area = s.area;
+            var minW = Math.min(520, area.width);
+            var minH = Math.min(320, area.height);
+            var dx = ev.clientX - s.startX;
+            var dy = ev.clientY - s.startY;
+            var x = s.ox;
+            var y = s.oy;
+            var w = s.ow;
+            var h = s.oh;
+            if (s.dir.indexOf('e') >= 0) {
+                w = Math.max(minW, Math.min(s.ow + dx, area.width - s.ox));
+            }
+            if (s.dir.indexOf('w') >= 0) {
+                x = Math.max(0, Math.min(s.ox + dx, s.ox + s.ow - minW));
+                w = s.ox + s.ow - x;
+            }
+            if (s.dir.indexOf('s') >= 0) {
+                h = Math.max(minH, Math.min(s.oh + dy, area.height - s.oy));
+            }
+            if (s.dir.indexOf('n') >= 0) {
+                y = Math.max(0, Math.min(s.oy + dy, s.oy + s.oh - minH));
+                h = s.oy + s.oh - y;
+            }
+            s.w.x = x;
+            s.w.y = y;
+            s.w.w = w;
+            s.w.h = h;
+        },
+        onDesktopWindowResizeUp: function () {
+            var s = this._deskResize;
+            this._deskResize = null;
+            document.removeEventListener('mousemove', this.onDesktopWindowResizeMove);
+            document.removeEventListener('mouseup', this.onDesktopWindowResizeUp);
+            if (s && s.w) {
+                s.w.resizing = false;
+                this.scheduleSaveDesktopWinLayouts();
+                var self = this;
+                this.$nextTick(function () {
+                    self.setupDesktopThumbs(s.w);
+                });
+            }
+        },
+        stopDesktopWindowGestures: function () {
+            document.removeEventListener('mousemove', this.onDesktopWindowDragMove);
+            document.removeEventListener('mouseup', this.onDesktopWindowDragUp);
+            document.removeEventListener('mousemove', this.onDesktopWindowResizeMove);
+            document.removeEventListener('mouseup', this.onDesktopWindowResizeUp);
+            if (this._deskMove && this._deskMove.w) {
+                this._deskMove.w.dragging = false;
+            }
+            if (this._deskResize && this._deskResize.w) {
+                this._deskResize.w.resizing = false;
+            }
+            this._deskMove = null;
+            this._deskResize = null;
+        },
+        onDesktopWallContextMenu: function (ev) {
+            this.desktop.startOpen = false;
+            this.desktop.menu.visible = false;
+            this.closeDesktopSubMenus();
+            this.desktop.wallMenu = {
+                visible: true,
+                x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 220)),
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 130))
+            };
+        },
+        desktopWallMenuAction: function (action) {
+            this.desktop.wallMenu.visible = false;
+            if (action === 'newWindow') {
+                this.openDesktopExplorerWindow();
+            } else if (action === 'return') {
+                this.closeAiDesktop();
+            }
+        },
+
+        /* ---------- 按窗口计算视图（模板循环使用） ---------- */
+        deskShownEntries: function (w) {
+            var d = w || this.desk;
+            var kw = (d.keyword || '').trim().toLowerCase();
+            var showHidden = this.desktop.showHidden;
+            var rows = (d.entries || []).filter(function (r) {
+                if (!showHidden && String(r.name).charAt(0) === '.') {
+                    return false;
+                }
+                return !kw || String(r.name).toLowerCase().indexOf(kw) >= 0;
+            });
+            var by = d.sortBy;
+            var dir = d.sortDir === 'desc' ? -1 : 1;
+            rows.sort(function (a, b) {
+                if (a.dir !== b.dir) {
+                    return a.dir ? -1 : 1;
+                }
+                var v;
+                if (by === 'size') {
+                    v = (a.size || 0) - (b.size || 0);
+                } else if (by === 'mtime') {
+                    v = (a.mtime || 0) - (b.mtime || 0);
+                } else {
+                    v = String(a.name).localeCompare(String(b.name), 'zh-CN', {
+                        numeric: true,
+                        sensitivity: 'base'
+                    });
+                }
+                return v * dir;
+            });
+            return rows;
+        },
+        deskCrumbs: function (w) {
+            var d = w || this.desk;
+            var p = d.path;
+            if (!p) {
+                return [];
+            }
+            var out = [{ name: '/', path: '/' }];
+            var segs = p.split('/').filter(function (s) { return !!s; });
+            var acc = '';
+            segs.forEach(function (s) {
+                acc += '/' + s;
+                out.push({ name: s, path: acc });
+            });
+            return out;
+        },
+        isDeskGrid: function (w) {
+            return (w || this.desk).viewMode !== 'list';
+        },
+        deskSortLabel: function (w) {
+            var d = w || this.desk;
+            var map = { name: '名称', size: '大小', mtime: '修改时间' };
+            return map[d.sortBy] + (d.sortDir === 'asc' ? ' ↑' : ' ↓');
+        },
+        deskSortIcon: function (w, field) {
+            var d = w || this.desk;
+            if (d.sortBy !== field) {
+                return '';
+            }
+            return d.sortDir === 'asc' ? 'el-icon-top' : 'el-icon-bottom';
+        },
+        isDeskSelected: function (w, row) {
+            return (w || this.desk).selected.indexOf(row.name) >= 0;
+        },
+        isDeskDragging: function (w, row) {
+            return (w || this.desk).dragNames.indexOf(row.name) >= 0;
+        },
+        deskEntryPath: function (w, row) {
+            return this.pathJoin((w || this.desk).path, row.name);
+        },
+        deskRowByName: function (w, name) {
+            if (!name) {
+                return null;
+            }
+            var rows = (w || this.desk).entries || [];
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].name === name) {
+                    return rows[i];
+                }
+            }
+            return null;
+        },
+        deskShowThumb: function (w, row) {
+            var d = w || this.desk;
+            if (!this.desktop.thumbnailsEnabled) {
+                return false;
+            }
+            if (d.viewMode !== 'large' && d.viewMode !== 'medium') {
+                return false;
+            }
+            if (!this.isDesktopImage(row)) {
+                return false;
+            }
+            if (row.size && row.size > 30 * 1024 * 1024) {
+                return false;
+            }
+            return !d.thumbFailed[this.deskEntryPath(d, row)];
+        },
+        deskThumbSrc: function (w, row) {
+            var d = w || this.desk;
+            return d.thumbSrc[this.deskEntryPath(d, row)] || '';
+        },
+        onDeskThumbError: function (w, row) {
+            var d = w || this.desk;
+            var path = this.deskEntryPath(d, row);
+            var src = d.thumbSrc[path];
+            if (src) {
+                try { URL.revokeObjectURL(src); } catch (e) { /* ignore */ }
+                this.$delete(d.thumbSrc, path);
+            }
+            this.$set(d.thumbFailed, path, true);
         },
         startDesktopClock: function () {
             this.stopDesktopClock();
@@ -2326,7 +2956,8 @@ new Vue({
                 || this.aboutVisible || this.lanVisible || this.authSetVisible || this.aiSetVisible
                 || this.sysInfoVisible || this.procDetailVisible || this.connectDialogVisible
                 || this.connImportVisible
-                || this.connExportVisible || this.cmdEditDialog || this.editVisible || this.renameVisible;
+                || this.connExportVisible || this.cmdEditDialog || this.editVisible || this.renameVisible
+                || this.desktop.propsVisible;
         },
         checkDesktopIdle: function () {
             var mins = this.desktop.idleMinutes;
@@ -2338,9 +2969,11 @@ new Vue({
                 this._deskLastActivity = Date.now();
                 return;
             }
+            var busy = this.desktop.windows.some(function (w) {
+                return w.loading || w.dragNames.length || w.fileDragOver;
+            });
             if (this.desktop.settingsVisible || this.desktop.startOpen
-                    || this.desktop.menu.visible || this.desktop.dragNames.length
-                    || this.desktop.loading || this._deskDragDepth) {
+                    || this.desktop.menu.visible || busy || this._deskDragDepth) {
                 this._deskLastActivity = Date.now();
                 return;
             }
@@ -2354,17 +2987,18 @@ new Vue({
                 ELEMENT.Message.info('桌面空闲已 ' + mins + ' 分钟，已自动返回工作台');
             }
         },
-        normalizeDesktopPath: function (path) {
+        normalizeDesktopPath: function (path, win) {
+            var d = win || this.desk;
             var p = (path == null ? '' : String(path)).trim();
             var home = this.desktopHomeDir;
             if (!p) {
-                p = this.desktop.path || home || '/';
+                p = d.path || home || '/';
             } else if (p === '~') {
                 p = home || '/';
             } else if (p.indexOf('~/') === 0) {
                 p = this.pathJoin(home || '/', p.slice(2));
             } else if (p.charAt(0) !== '/') {
-                p = this.pathJoin(this.desktop.path || home || '/', p);
+                p = this.pathJoin(d.path || home || '/', p);
             }
             p = p.replace(/\/{2,}/g, '/');
             while (p.length > 1 && p.charAt(p.length - 1) === '/') {
@@ -2372,131 +3006,151 @@ new Vue({
             }
             return p;
         },
-        loadDesktopDir: function (path, nav) {
+        deskFilesEl: function (w) {
+            var id = (w && w.id) || this.desktop.activeWinId;
+            if (!id || !this.$el) {
+                return null;
+            }
+            return this.$el.querySelector('#dsk-files-' + id);
+        },
+        loadDesktopDir: function (path, nav, win) {
             var t = this.desktopTab;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
             }
             var self = this;
-            var target = this.normalizeDesktopPath(path);
-            var prevPath = this.desktop.path;
-            var seq = (this._deskLoadSeq || 0) + 1;
-            this._deskLoadSeq = seq;
-            this.cancelDesktopMarquee();
+            var d = win || this.desk;
+            var target = this.normalizeDesktopPath(path, d);
+            var prevPath = d.path;
+            var seq = (d.loadSeq || 0) + 1;
+            d.loadSeq = seq;
+            if (d.id === this.desktop.activeWinId) {
+                this.cancelDesktopMarquee();
+                this.cancelDesktopThumbQueue();
+                this.disconnectDesktopThumbObserver();
+            }
             if (nav !== 'back' && nav !== 'forward' && nav !== 'refresh' && target !== prevPath) {
                 // 新开一条浏览路径：原来的“前进”栈失效
-                this.desktop.future = [];
+                d.future = [];
             }
-            this.resetDesktopThumbs();
-            this.desktop.loading = true;
-            this.desktop.error = '';
-            this.desktop.pathEditing = false;
+            this.resetDesktopThumbs(d);
+            d.loading = true;
+            d.error = '';
+            d.pathEditing = false;
             http.get('/api/sftp/list', { params: { sessionId: t.sessionId, path: target } }).then(function (list) {
-                if (seq !== self._deskLoadSeq) {
+                if (seq !== d.loadSeq) {
                     return;
                 }
                 if (nav !== 'back' && prevPath && target !== prevPath
-                        && self.desktop.history[self.desktop.history.length - 1] !== prevPath) {
-                    self.desktop.history.push(prevPath);
-                    if (self.desktop.history.length > 50) {
-                        self.desktop.history.shift();
+                        && d.history[d.history.length - 1] !== prevPath) {
+                    d.history.push(prevPath);
+                    if (d.history.length > 50) {
+                        d.history.shift();
                     }
                 }
                 if (nav === 'back' && prevPath && target !== prevPath) {
-                    self.desktop.future.push(prevPath);
-                    if (self.desktop.future.length > 50) {
-                        self.desktop.future.shift();
+                    d.future.push(prevPath);
+                    if (d.future.length > 50) {
+                        d.future.shift();
                     }
                 }
                 if (target !== prevPath) {
-                    self.desktop.selected = [];
-                    self.desktop.lastSelected = '';
+                    d.selected = [];
+                    d.lastSelected = '';
                 } else {
                     // 刷新后保留仍然存在的选中项
                     var names = (list || []).map(function (r) { return r.name; });
-                    self.desktop.selected = self.desktop.selected.filter(function (n) {
+                    d.selected = d.selected.filter(function (n) {
                         return names.indexOf(n) >= 0;
                     });
                 }
-                self.desktop.entries = list || [];
-                self.desktop.path = target;
-                self.desktop.pathInput = target;
-                self.desktop.loading = false;
-                var pendingName = self.desktop.pendingSelect;
-                var pendingOpen = self.desktop.pendingOpen;
-                self.desktop.pendingSelect = '';
-                self.desktop.pendingOpen = false;
+                d.entries = list || [];
+                d.path = target;
+                d.pathInput = target;
+                d.loading = false;
+                var pendingName = d.pendingSelect;
+                var pendingOpen = d.pendingOpen;
+                d.pendingSelect = '';
+                d.pendingOpen = false;
                 var pendingHit = null;
                 if (pendingName) {
                     pendingHit = (list || []).find(function (r) { return r.name === pendingName; });
                     if (pendingHit) {
-                        self.desktop.selected = [pendingName];
-                        self.desktop.lastSelected = pendingName;
+                        d.selected = [pendingName];
+                        d.lastSelected = pendingName;
                     }
                 }
                 if (pendingHit) {
-                    self.scrollDesktopEntry(pendingName);
+                    self.scrollDesktopEntry(pendingName, d);
                     if (pendingOpen) {
-                        self.desktopOpenEntry(pendingHit);
+                        self.desktopOpenEntry(pendingHit, d);
                     }
                 } else {
                     self.$nextTick(function () {
-                        if (self.$refs.deskFiles) {
-                            self.$refs.deskFiles.scrollTop = 0;
+                        var root = self.deskFilesEl(d);
+                        if (root) {
+                            root.scrollTop = 0;
                         }
                     });
                 }
+                if (d.id === self.desktop.activeWinId) {
+                    self.$nextTick(function () {
+                        self.setupDesktopThumbs(d);
+                    });
+                }
             }).catch(function (e) {
-                if (seq !== self._deskLoadSeq) {
+                if (seq !== d.loadSeq) {
                     return;
                 }
-                if (nav === 'back' && self.desktop.history[self.desktop.history.length - 1] === target) {
-                    self.desktop.history.push(target);
+                if (nav === 'back' && d.history[d.history.length - 1] === target) {
+                    d.history.push(target);
                 }
-                if (!self.desktop.path) {
-                    self.desktop.path = target;
-                    self.desktop.pathInput = target;
+                if (!d.path) {
+                    d.path = target;
+                    d.pathInput = target;
                 }
-                self.desktop.pendingSelect = '';
-                self.desktop.pendingOpen = false;
-                self.desktop.error = '无法读取目录：' + target
+                d.pendingSelect = '';
+                d.pendingOpen = false;
+                d.error = '无法读取目录：' + target
                     + (e && e.message ? '（' + e.message + '）' : '（路径不存在或无权限）');
-                self.desktop.loading = false;
+                d.loading = false;
             });
         },
-        desktopGo: function (path) {
-            var p = this.normalizeDesktopPath(path);
+        desktopGo: function (path, win) {
+            var d = win || this.desk;
+            var p = this.normalizeDesktopPath(path, d);
             if (!p) {
                 return;
             }
-            if (p === this.desktop.path && !this.desktop.error) {
+            if (p === d.path && !d.error) {
                 return;
             }
-            this.loadDesktopDir(p);
+            this.loadDesktopDir(p, null, d);
         },
-        desktopRefresh: function () {
-            if (!this.desktop.path) {
+        desktopRefresh: function (win) {
+            var d = win || this.desk;
+            if (!d.path) {
                 return;
             }
-            this.loadDesktopDir(this.desktop.path, 'refresh');
+            this.loadDesktopDir(d.path, 'refresh', d);
         },
         desktopGoBack: function () {
-            if (!this.desktop.history.length || this.desktop.loading) {
+            if (!this.desk.history.length || this.desk.loading) {
                 return;
             }
-            var p = this.desktop.history.pop();
+            var p = this.desk.history.pop();
             this.loadDesktopDir(p, 'back');
         },
         desktopGoForward: function () {
-            if (!this.desktop.future.length || this.desktop.loading) {
+            if (!this.desk.future.length || this.desk.loading) {
                 return;
             }
-            var p = this.desktop.future.pop();
+            var p = this.desk.future.pop();
             this.loadDesktopDir(p, 'forward');
         },
         desktopUp: function () {
-            var p = this.desktop.path || '/';
+            var p = this.desk.path || '/';
             if (p === '/') {
                 return;
             }
@@ -2507,11 +3161,12 @@ new Vue({
             this.loadDesktopDir(this.desktopHomeDir || '/');
         },
         startDesktopPathEdit: function () {
-            this.desktop.pathInput = this.desktop.path;
-            this.desktop.pathEditing = true;
+            var d = this.desk;
+            d.pathInput = d.path;
+            d.pathEditing = true;
             var self = this;
             this.$nextTick(function () {
-                var r = self.$refs.deskPathInput;
+                var r = document.getElementById('dsk-path-input-' + d.id);
                 if (r) {
                     r.focus();
                     if (r.select) {
@@ -2520,31 +3175,37 @@ new Vue({
                 }
             });
         },
-        commitDesktopPathEdit: function () {
-            if (!this.desktop.pathEditing) {
+        commitDesktopPathEdit: function (win) {
+            var d = win || this.desk;
+            if (!d.pathEditing) {
                 return;
             }
-            this.desktop.pathEditing = false;
-            var p = this.normalizeDesktopPath(this.desktop.pathInput);
+            d.pathEditing = false;
+            var p = this.normalizeDesktopPath(d.pathInput, d);
             if (!p) {
                 return;
             }
-            if (p === this.desktop.path) {
-                this.desktopRefresh();
+            if (p === d.path) {
+                this.desktopRefresh(d);
             } else {
-                this.loadDesktopDir(p);
+                this.loadDesktopDir(p, null, d);
             }
         },
         setDesktopView: function (v) {
-            this.desktop.viewMode = v;
+            var d = this.desk;
+            d.viewMode = v;
             try { localStorage.setItem('deepshell.desktopView', v); } catch (e) { /* ignore */ }
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(d);
+            });
         },
         desktopSortBy: function (field) {
-            if (this.desktop.sortBy === field) {
-                this.desktop.sortDir = this.desktop.sortDir === 'asc' ? 'desc' : 'asc';
+            if (this.desk.sortBy === field) {
+                this.desk.sortDir = this.desk.sortDir === 'asc' ? 'desc' : 'asc';
             } else {
-                this.desktop.sortBy = field;
-                this.desktop.sortDir = field === 'name' ? 'asc' : 'desc';
+                this.desk.sortBy = field;
+                this.desk.sortDir = field === 'name' ? 'asc' : 'desc';
             }
         },
         desktopSortCommand: function (cmd) {
@@ -2552,15 +3213,9 @@ new Vue({
                 this.desktopSortBy(cmd);
             }
         },
-        desktopSortIcon: function (field) {
-            if (this.desktop.sortBy !== field) {
-                return '';
-            }
-            return this.desktop.sortDir === 'asc' ? 'el-icon-top' : 'el-icon-bottom';
-        },
         desktopClearSelection: function () {
-            this.desktop.selected = [];
-            this.desktop.lastSelected = '';
+            this.desk.selected = [];
+            this.desk.lastSelected = '';
         },
         onDesktopFilesClick: function (ev) {
             var el = ev && ev.target;
@@ -2575,7 +3230,7 @@ new Vue({
             if (ev.button !== 0 || !this.desktop.visible) {
                 return;
             }
-            if (this.desktop.loading || this.desktop.pathEditing
+            if (this.desk.loading || this.desk.pathEditing
                     || this.desktop.settingsVisible || this.desktop.startOpen
                     || this.desktop.menu.visible || this.hasDesktopDialogOpen()) {
                 return;
@@ -2585,7 +3240,8 @@ new Vue({
                     '.dsk-item, .dsk-row, .dsk-list-head, .dsk-empty, .dsk-error, .dsk-loading')) {
                 return;
             }
-            var root = this.$refs.deskFiles;
+            var d = this.desk;
+            var root = this.deskFilesEl(d);
             if (!root) {
                 return;
             }
@@ -2614,11 +3270,12 @@ new Vue({
             }
             var additive = !!(ev.ctrlKey || ev.metaKey);
             this._marquee = {
+                win: d,
                 startX: ev.clientX,
                 startY: ev.clientY,
                 lastX: ev.clientX,
                 lastY: ev.clientY,
-                base: additive ? this.desktop.selected.slice() : [],
+                base: additive ? d.selected.slice() : [],
                 additive: additive,
                 moved: false,
                 items: items,
@@ -2660,8 +3317,12 @@ new Vue({
         },
         updateDesktopMarquee: function () {
             var m = this._marquee;
-            var root = this.$refs.deskFiles;
-            if (!m || !m.moved || !root) {
+            if (!m || !m.moved) {
+                return;
+            }
+            var d = m.win || this.desk;
+            var root = this.deskFilesEl(d);
+            if (!root) {
                 return;
             }
             var rr = root.getBoundingClientRect();
@@ -2669,11 +3330,11 @@ new Vue({
             var right = Math.min(rr.right, Math.max(m.startX, m.lastX));
             var top = Math.max(rr.top, Math.min(m.startY, m.lastY));
             var bottom = Math.min(rr.bottom, Math.max(m.startY, m.lastY));
-            this.desktop.marquee.visible = true;
-            this.desktop.marquee.left = left;
-            this.desktop.marquee.top = top;
-            this.desktop.marquee.width = Math.max(0, right - left);
-            this.desktop.marquee.height = Math.max(0, bottom - top);
+            d.marquee.visible = true;
+            d.marquee.left = left;
+            d.marquee.top = top;
+            d.marquee.width = Math.max(0, right - left);
+            d.marquee.height = Math.max(0, bottom - top);
 
             // 用拖动开始时的元素矩形 + 滚动差值计算命中，避免每帧都强制浏览器重排
             var dx = root.scrollLeft - m.scrollLeft;
@@ -2693,28 +3354,31 @@ new Vue({
                     last = it.name;
                 }
             }
-            var same = sel.length === this.desktop.selected.length;
+            var same = sel.length === d.selected.length;
             if (same) {
                 for (var j = 0; j < sel.length; j++) {
-                    if (sel[j] !== this.desktop.selected[j]) {
+                    if (sel[j] !== d.selected[j]) {
                         same = false;
                         break;
                     }
                 }
             }
             if (!same) {
-                this.desktop.selected = sel;
+                d.selected = sel;
             }
             if (last) {
-                this.desktop.lastSelected = last;
+                d.lastSelected = last;
             } else if (!m.additive) {
-                this.desktop.lastSelected = '';
+                d.lastSelected = '';
             }
         },
         autoScrollDesktopMarquee: function () {
             var m = this._marquee;
-            var root = this.$refs.deskFiles;
-            if (!m || !m.moved || !root) {
+            if (!m || !m.moved) {
+                return;
+            }
+            var root = this.deskFilesEl(m.win || this.desk);
+            if (!root) {
                 return;
             }
             var rr = root.getBoundingClientRect();
@@ -2769,14 +3433,21 @@ new Vue({
                 window.cancelAnimationFrame(this._marqueeRaf);
                 this._marqueeRaf = 0;
             }
+            var m = this._marquee;
             this._marquee = null;
-            if (this.desktop.marquee.visible) {
-                this.desktop.marquee.visible = false;
+            if (m && m.win && m.win.marquee.visible) {
+                m.win.marquee.visible = false;
             }
         },
-        scrollDesktopEntry: function (name) {
+        scrollDesktopEntry: function (name, win) {
+            var self = this;
+            var d = win || this.desk;
             this.$nextTick(function () {
-                var els = document.querySelectorAll('.dsk-item, .dsk-row');
+                var root = self.deskFilesEl(d);
+                if (!root) {
+                    return;
+                }
+                var els = root.querySelectorAll('.dsk-item, .dsk-row');
                 for (var i = 0; i < els.length; i++) {
                     if (els[i].getAttribute('data-name') === name) {
                         try {
@@ -2788,19 +3459,16 @@ new Vue({
             });
         },
         isDesktopSelected: function (row) {
-            return this.desktop.selected.indexOf(row.name) >= 0;
-        },
-        isDesktopDragging: function (row) {
-            return this.desktop.dragNames.indexOf(row.name) >= 0;
+            return this.desk.selected.indexOf(row.name) >= 0;
         },
         desktopSelect: function (row, ev) {
             var rows = this.desktopShownEntries;
-            var sel = this.desktop.selected.slice();
-            if (ev && ev.shiftKey && this.desktop.lastSelected) {
+            var sel = this.desk.selected.slice();
+            if (ev && ev.shiftKey && this.desk.lastSelected) {
                 var a = -1;
                 var b = -1;
                 rows.forEach(function (r, i) {
-                    if (r.name === this.desktop.lastSelected) {
+                    if (r.name === this.desk.lastSelected) {
                         a = i;
                     }
                     if (r.name === row.name) {
@@ -2831,16 +3499,16 @@ new Vue({
             } else {
                 sel = [row.name];
             }
-            this.desktop.selected = sel;
-            this.desktop.lastSelected = row.name;
+            this.desk.selected = sel;
+            this.desk.lastSelected = row.name;
             this.desktop.menu.visible = false;
         },
         desktopSelectAll: function () {
-            this.desktop.selected = this.desktopShownEntries.map(function (r) { return r.name; });
+            this.desk.selected = this.desktopShownEntries.map(function (r) { return r.name; });
         },
         desktopSelectedRows: function () {
-            var names = this.desktop.selected;
-            return (this.desktop.entries || []).filter(function (r) {
+            var names = this.desk.selected;
+            return (this.desk.entries || []).filter(function (r) {
                 return names.indexOf(r.name) >= 0;
             });
         },
@@ -2852,78 +3520,52 @@ new Vue({
             var target = this.desktop.menu.target;
             return target ? [target] : [];
         },
-        desktopOpenEntry: function (row) {
+        desktopOpenEntry: function (row, win) {
             if (!row) {
                 return;
             }
+            var d = win || this.desk;
             if (row.dir) {
-                this.desktopGo(this.pathJoin(this.desktop.path, row.name));
+                this.desktopGo(this.pathJoin(d.path, row.name), d);
             } else if (this.isDesktopImage(row)) {
-                this.openDesktopImagePreview(row);
+                this.openDesktopImagePreview(row, d);
             } else {
-                this.desktopOpenEdit(row);
+                this.desktopOpenEdit(row, d);
             }
         },
-        desktopEntryPath: function (row) {
-            return this.pathJoin(this.desktop.path, row.name);
+        desktopEntryPath: function (row, win) {
+            var d = win || this.desk;
+            return this.pathJoin(d.path, row.name);
         },
         /* 图片在新标签页打开：桌面保持原路径，关掉标签页即可继续浏览 */
-        openDesktopImagePreview: function (row) {
+        openDesktopImagePreview: function (row, win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId || !this.isDesktopImage(row)) {
                 return;
             }
             var query = '?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row))
-                + '&sortBy=' + encodeURIComponent(this.desktop.sortBy)
-                + '&sortDir=' + encodeURIComponent(this.desktop.sortDir)
+                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d))
+                + '&sortBy=' + encodeURIComponent(d.sortBy)
+                + '&sortDir=' + encodeURIComponent(d.sortDir)
                 + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
             if (!window.open('/image-viewer' + query, '_blank')) {
                 ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
             }
         },
         /* ---------- 图片缩略图 / 新标签页预览 ---------- */
-        desktopShowThumb: function (row) {
-            if (!this.desktop.thumbnailsEnabled) {
-                return false;
-            }
-            if (this.desktop.viewMode !== 'large' && this.desktop.viewMode !== 'medium') {
-                return false;
-            }
-            if (!this.isDesktopImage(row)) {
-                return false;
-            }
-            // 超大图片不自动拉取，避免远程连接被大文件拖慢；仍可双击预览
-            if (row.size && row.size > 30 * 1024 * 1024) {
-                return false;
-            }
-            return !this.desktop.thumbFailed[this.desktopEntryPath(row)];
-        },
-        desktopThumbSrc: function (row) {
-            return this.desktop.thumbSrc[this.desktopEntryPath(row)] || '';
-        },
-        desktopRowByName: function (name) {
-            if (!name) {
-                return null;
-            }
-            var rows = this.desktop.entries || [];
-            for (var i = 0; i < rows.length; i++) {
-                if (rows[i].name === name) {
-                    return rows[i];
-                }
-            }
-            return null;
-        },
-        /* 只观察当前滚动容器里露出来的网格项，避免一次性请求整目录图片 */
-        setupDesktopThumbs: function () {
+        /* 只观察当前活动窗口滚动容器里露出来的网格项，避免一次性请求整目录图片 */
+        setupDesktopThumbs: function (win) {
             var self = this;
+            var d = win || this.desk;
             this.disconnectDesktopThumbObserver();
-            if (!this.desktop.visible || !this.desktop.thumbnailsEnabled
-                    || (this.desktop.viewMode !== 'large' && this.desktop.viewMode !== 'medium')) {
-                this.cancelDesktopThumbQueue();
+            this.cancelDesktopThumbQueue();
+            if (!d.id || !this.desktop.visible || !this.desktop.thumbnailsEnabled
+                    || d.id !== this.desktop.activeWinId
+                    || (d.viewMode !== 'large' && d.viewMode !== 'medium')) {
                 return;
             }
-            var root = this.$refs.deskFiles;
+            var root = this.deskFilesEl(d);
             if (!root) {
                 return;
             }
@@ -2934,9 +3576,9 @@ new Vue({
             if (typeof IntersectionObserver === 'undefined') {
                 // 老浏览器兜底：交给限并发队列，不阻塞页面
                 for (var i = 0; i < items.length; i++) {
-                    var row = this.desktopRowByName(items[i].getAttribute('data-name'));
+                    var row = this.deskRowByName(d, items[i].getAttribute('data-name'));
                     if (row) {
-                        this.queueDesktopThumb(row);
+                        this.queueDesktopThumb(d, row);
                     }
                 }
                 return;
@@ -2947,17 +3589,17 @@ new Vue({
                         continue;
                     }
                     observer.unobserve(entries[k].target);
-                    var hit = self.desktopRowByName(entries[k].target.getAttribute('data-name'));
+                    var hit = self.deskRowByName(d, entries[k].target.getAttribute('data-name'));
                     if (hit) {
-                        self.queueDesktopThumb(hit);
+                        self.queueDesktopThumb(d, hit);
                     }
                 }
             }, { root: root, rootMargin: '240px 0px' });
             this._thumbObserver = observer;
             for (var j = 0; j < items.length; j++) {
-                var r = this.desktopRowByName(items[j].getAttribute('data-name'));
-                if (r && this.desktopShowThumb(r)
-                        && !this.desktop.thumbSrc[this.desktopEntryPath(r)]) {
+                var r = this.deskRowByName(d, items[j].getAttribute('data-name'));
+                if (r && this.deskShowThumb(d, r)
+                        && !d.thumbSrc[this.deskEntryPath(d, r)]) {
                     observer.observe(items[j]);
                 }
             }
@@ -2968,12 +3610,13 @@ new Vue({
                 this._thumbObserver = null;
             }
         },
-        queueDesktopThumb: function (row) {
-            if (!this.desktopShowThumb(row)) {
+        queueDesktopThumb: function (w, row) {
+            var d = w || this.desk;
+            if (!this.deskShowThumb(d, row)) {
                 return;
             }
-            var path = this.desktopEntryPath(row);
-            if (this.desktop.thumbSrc[path] || this.desktop.thumbFailed[path]) {
+            var path = this.deskEntryPath(d, row);
+            if (d.thumbSrc[path] || d.thumbFailed[path]) {
                 return;
             }
             if (!this._thumbQueued) {
@@ -2986,7 +3629,7 @@ new Vue({
             if (!this._thumbQueue) {
                 this._thumbQueue = [];
             }
-            this._thumbQueue.push({ path: path, mtime: row.mtime || 0 });
+            this._thumbQueue.push({ w: d, path: path, mtime: row.mtime || 0 });
             this.pumpDesktopThumbs();
         },
         /* 限并发：最多 2 个缩略图请求，给目录读取等 SFTP 操作留出通道 */
@@ -3005,8 +3648,10 @@ new Vue({
         loadDesktopThumb: function (item) {
             var self = this;
             var t = this.desktopTab;
-            if (!t || !t.sessionId || !this.desktop.visible
-                    || this.desktop.thumbSrc[item.path] || this.desktop.thumbFailed[item.path]) {
+            var d = item && item.w;
+            if (!t || !t.sessionId || !this.desktop.visible || !d
+                    || this.desktop.windows.indexOf(d) < 0
+                    || d.thumbSrc[item.path] || d.thumbFailed[item.path]) {
                 if (this._thumbQueued) {
                     this._thumbQueued[item.path] = false;
                 }
@@ -3036,16 +3681,17 @@ new Vue({
                     return resp.blob();
                 })
                 .then(function (blob) {
-                    if (gen !== (self._thumbGen || 0)) {
+                    if (gen !== (self._thumbGen || 0) || self.desktop.windows.indexOf(d) < 0) {
                         return;
                     }
-                    self.$set(self.desktop.thumbSrc, item.path, URL.createObjectURL(blob));
+                    self.$set(d.thumbSrc, item.path, URL.createObjectURL(blob));
                 })
                 .catch(function (e) {
-                    if (gen !== (self._thumbGen || 0) || (e && e.name === 'AbortError')) {
+                    if (gen !== (self._thumbGen || 0) || (e && e.name === 'AbortError')
+                            || self.desktop.windows.indexOf(d) < 0) {
                         return;
                     }
-                    self.$set(self.desktop.thumbFailed, item.path, true);
+                    self.$set(d.thumbFailed, item.path, true);
                 })
                 .then(function () {
                     if (ctrl && self._thumbCtrls) {
@@ -3075,37 +3721,32 @@ new Vue({
                 this._thumbCtrls = [];
             }
         },
-        resetDesktopThumbs: function () {
-            this.disconnectDesktopThumbObserver();
-            this.cancelDesktopThumbQueue();
-            var srcs = this.desktop.thumbSrc || {};
+        releaseDesktopWindowThumbs: function (d) {
+            if (!d) {
+                return;
+            }
+            var srcs = d.thumbSrc || {};
             Object.keys(srcs).forEach(function (k) {
                 try { URL.revokeObjectURL(srcs[k]); } catch (e) { /* ignore */ }
             });
-            this.desktop.thumbSrc = {};
-            this.desktop.thumbFailed = {};
+            d.thumbSrc = {};
+            d.thumbFailed = {};
         },
-        onDesktopThumbError: function (row) {
-            var path = this.desktopEntryPath(row);
-            var src = this.desktop.thumbSrc[path];
-            if (src) {
-                try { URL.revokeObjectURL(src); } catch (e) { /* ignore */ }
-                this.$delete(this.desktop.thumbSrc, path);
-            }
-            this.$set(this.desktop.thumbFailed, path, true);
+        resetDesktopThumbs: function (win) {
+            this.releaseDesktopWindowThumbs(win || this.desk);
         },
         desktopEntryContextMenu: function (ev, row) {
             this.desktop.startOpen = false;
             if (!this.isDesktopSelected(row)) {
-                this.desktop.selected = [row.name];
-                this.desktop.lastSelected = row.name;
+                this.desk.selected = [row.name];
+                this.desk.lastSelected = row.name;
             }
             this.openDesktopMenu(ev, row);
         },
         desktopBlankContextMenu: function (ev) {
             this.desktop.startOpen = false;
-            this.desktop.selected = [];
-            this.desktop.lastSelected = '';
+            this.desk.selected = [];
+            this.desk.lastSelected = '';
             this.openDesktopMenu(ev, null);
         },
         openDesktopMenu: function (ev, target) {
@@ -3134,6 +3775,9 @@ new Vue({
             if (this.desktop.menu.visible) {
                 this.desktop.menu.visible = false;
             }
+            if (this.desktop.wallMenu.visible) {
+                this.desktop.wallMenu.visible = false;
+            }
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
@@ -3147,6 +3791,10 @@ new Vue({
             var self = this;
             if (action === 'open') {
                 this.desktopOpenEntry(target || rows[0]);
+            } else if (action === 'openNewWindow') {
+                if (target && target.dir) {
+                    this.openDesktopExplorerWindow(this.desktopEntryPath(target, this.desk));
+                }
             } else if (action === 'compressDialog') {
                 this.desktopOpenArchiveDialog('zip');
             } else if (action.indexOf('compress:') === 0) {
@@ -3190,7 +3838,7 @@ new Vue({
             } else if (action === 'terminalHere') {
                 this.desktopOpenTerminal(null);
             } else if (action === 'copyCurrentPath') {
-                this.copyText(this.desktop.path);
+                this.copyText(this.desk.path);
             } else if (action === 'newFolder') {
                 this.desktopNewFolder();
             } else if (action === 'newFile') {
@@ -3379,10 +4027,11 @@ new Vue({
                 return;
             }
             var self = this;
+            var win = this.desk;
             var form = this.archiveForm;
             var rows = this.archiveSources;
             var paths = rows.map(function (r) {
-                return self.pathJoin(self.desktop.path, r.name);
+                return self.pathJoin(win.path, r.name);
             });
             this.archiveSaving = true;
             var loading = ELEMENT.Message({
@@ -3392,7 +4041,7 @@ new Vue({
             });
             http.post('/api/sftp/compress', {
                 sessionId: t.sessionId,
-                destDir: this.desktop.path,
+                destDir: win.path,
                 paths: paths,
                 name: form.name,
                 format: form.format,
@@ -3404,15 +4053,16 @@ new Vue({
                 self.archiveDialogVisible = false;
                 var finalName = d && d.name ? d.name : form.name;
                 ELEMENT.Message.success('压缩完成：' + finalName);
-                self.desktop.pendingSelect = finalName;
-                self.desktopRefresh();
+                win.pendingSelect = finalName;
+                self.desktopRefresh(win);
             }).catch(function () {
                 loading.close();
                 self.archiveSaving = false;
             });
         },
-        desktopDownloadRows: function (rows) {
+        desktopDownloadRows: function (rows, win) {
             rows = rows || [];
+            var d = win || this.desk;
             var files = rows.filter(function (r) { return !r.dir; });
             if (!files.length) {
                 ELEMENT.Message.info('所选项目都是文件夹，请使用「打包下载」');
@@ -3429,34 +4079,36 @@ new Vue({
             var self = this;
             files.forEach(function (r, i) {
                 setTimeout(function () {
-                    self.desktopDownloadOne(r);
+                    self.desktopDownloadOne(r, d);
                 }, i * 300);
             });
         },
         /* 多选打包下载：后端通过 SFTP 流式打包，浏览器只触发一次下载 */
-        desktopDownloadBundle: function (rows) {
+        desktopDownloadBundle: function (rows, win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             rows = rows || [];
             if (!t || !t.sessionId || !rows.length) {
                 return;
             }
             var self = this;
             var paths = rows.map(function (r) {
-                return self.desktopEntryPath(r);
+                return self.desktopEntryPath(r, d);
             });
-            this.requestBundleDownload(t.sessionId, this.desktop.path, paths, rows.length);
+            this.requestBundleDownload(t.sessionId, d.path, paths, rows.length);
         },
-        desktopDownloadToLocal: function (rows) {
+        desktopDownloadToLocal: function (rows, win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             rows = rows || [];
             if (!t || !t.sessionId || !rows.length) {
                 return;
             }
             var self = this;
             var paths = rows.map(function (r) {
-                return self.desktopEntryPath(r);
+                return self.desktopEntryPath(r, d);
             });
-            this.startLocalDownload(t.sessionId, this.desktop.path, paths, t.key);
+            this.startLocalDownload(t.sessionId, d.path, paths, t.key);
         },
         /* 桌面与 SFTP 面板共用的打包下载：预检 → 隐藏表单提交 */
         requestBundleDownload: function (sessionId, dir, paths, count) {
@@ -3516,21 +4168,23 @@ new Vue({
                 form.remove();
             }, 2000);
         },
-        desktopDownloadOne: function (row) {
+        desktopDownloadOne: function (row, win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId) {
                 return;
             }
             var url = '/api/sftp/download?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row));
+                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d));
             var a = document.createElement('a');
             a.href = url;
             document.body.appendChild(a);
             a.click();
             a.remove();
         },
-        desktopDeleteRows: function (rows) {
+        desktopDeleteRows: function (rows, win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId || !rows || !rows.length) {
                 return;
             }
@@ -3550,7 +4204,7 @@ new Vue({
                     chain = chain.then(function () {
                         return http.post('/api/sftp/delete', {
                             sessionId: t.sessionId,
-                            path: self.desktopEntryPath(r)
+                            path: self.desktopEntryPath(r, d)
                         }).then(function () {
                             ok++;
                         }).catch(function () {
@@ -3564,8 +4218,9 @@ new Vue({
                     } else {
                         ELEMENT.Message.warning('删除完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
                     }
-                    self.desktopRefresh();
-                    self.desktopClearSelection();
+                    d.selected = [];
+                    d.lastSelected = '';
+                    self.desktopRefresh(d);
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
@@ -3576,7 +4231,8 @@ new Vue({
             this.renameForm = {
                 path: this.desktopEntryPath(row),
                 newName: row.name,
-                desktop: true
+                desktop: true,
+                winId: this.desk.id
             };
             this.renameVisible = true;
         },
@@ -3677,8 +4333,9 @@ new Vue({
             var kind = kindMap[this.desktopFileKind(row)] || '文件';
             return (e ? e.toUpperCase() + ' ' : '') + kind + (row && row.link ? '（符号链接）' : '');
         },
-        desktopNewFolder: function () {
+        desktopNewFolder: function (win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
@@ -3694,15 +4351,16 @@ new Vue({
                 }
                 return http.post('/api/sftp/mkdir', {
                     sessionId: t.sessionId,
-                    path: self.pathJoin(self.desktop.path, name)
+                    path: self.pathJoin(d.path, name)
                 }).then(function () {
                     ELEMENT.Message.success('已创建文件夹：' + name);
-                    self.desktopRefresh();
+                    self.desktopRefresh(d);
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
-        desktopNewFile: function () {
+        desktopNewFile: function (win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
@@ -3716,23 +4374,24 @@ new Vue({
                 if (!name) {
                     return null;
                 }
-                var path = self.pathJoin(self.desktop.path, name);
+                var path = self.pathJoin(d.path, name);
                 return http.post('/api/sftp/touch', {
                     sessionId: t.sessionId,
                     path: path
                 }).then(function () {
                     ELEMENT.Message.success('已创建 ' + name);
-                    self.desktopRefresh();
+                    self.desktopRefresh(d);
                     self.openRemoteEdit(t, path);
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
-        desktopOpenEdit: function (row) {
+        desktopOpenEdit: function (row, win) {
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId || !row) {
                 return;
             }
-            this.openRemoteEdit(t, this.desktopEntryPath(row));
+            this.openRemoteEdit(t, this.desktopEntryPath(row, d));
         },
         desktopOpenTerminal: function (row) {
             var t = this.desktopTab;
@@ -3740,9 +4399,9 @@ new Vue({
                 ELEMENT.Message.warning('当前终端未连接，无法在终端中打开');
                 return;
             }
-            var dir = this.desktop.path;
+            var dir = this.desk.path;
             if (row) {
-                dir = row.dir ? this.desktopEntryPath(row) : this.desktop.path;
+                dir = row.dir ? this.desktopEntryPath(row) : this.desk.path;
             }
             var self = this;
             this.closeAiDesktop();
@@ -3751,6 +4410,7 @@ new Vue({
             });
         },
         pickDesktopUpload: function () {
+            this._deskUploadWinId = this.desk.id;
             var el = this.$refs.desktopUpload;
             if (el) {
                 el.value = '';
@@ -3764,19 +4424,21 @@ new Vue({
                 files.push(input.files[i]);
             }
             input.value = '';
-            this.desktopUploadFiles(files, this.desktop.path);
+            var d = this.desktopWindowById(this._deskUploadWinId) || this.desk;
+            this.desktopUploadFiles(files, d.path, d);
         },
-        desktopUploadFiles: function (files, destDir) {
+        desktopUploadFiles: function (files, destDir, win) {
             if (!files || !files.length) {
                 return Promise.resolve();
             }
             var t = this.desktopTab;
+            var d = win || this.desk;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return Promise.reject(new Error('session not ready'));
             }
             var self = this;
-            var dir = destDir || this.desktop.path;
+            var dir = destDir || d.path;
             var loading = ELEMENT.Message({
                 message: '正在上传 ' + files.length + ' 个文件到 ' + dir + ' …',
                 duration: 0,
@@ -3796,7 +4458,7 @@ new Vue({
             });
             return chain.then(function () {
                 loading.close();
-                self.desktop.fileDragOver = false;
+                d.fileDragOver = false;
                 self._deskDragDepth = 0;
                 if (fail === 0) {
                     ELEMENT.Message.success(files.length === 1
@@ -3807,11 +4469,11 @@ new Vue({
                 } else {
                     ELEMENT.Message.error('上传失败');
                 }
-                self.desktopRefresh();
+                self.desktopRefresh(d);
             });
         },
         desktopAutoScroll: function (ev) {
-            var el = this.$refs.deskFiles;
+            var el = this.deskFilesEl(this.desk);
             if (!el || !ev) {
                 return;
             }
@@ -3827,7 +4489,7 @@ new Vue({
             if (sp && !this._deskScrollTimer) {
                 var self = this;
                 this._deskScrollTimer = setInterval(function () {
-                    var sc = self.$refs.deskFiles;
+                    var sc = self.deskFilesEl(self.desk);
                     if (!sc || !self._deskScrollSpeed) {
                         clearInterval(self._deskScrollTimer);
                         self._deskScrollTimer = null;
@@ -3850,17 +4512,23 @@ new Vue({
                 ev.preventDefault();
                 return;
             }
+            var d = this.desk;
             if (!this.isDesktopSelected(row)) {
-                this.desktop.selected = [row.name];
-                this.desktop.lastSelected = row.name;
+                d.selected = [row.name];
+                d.lastSelected = row.name;
             }
             var rows = this.desktopTargetRows();
             if (!rows.length) {
                 rows = [row];
             }
             var self = this;
-            var paths = rows.map(function (r) { return self.desktopEntryPath(r); });
-            this.desktop.dragNames = rows.map(function (r) { return r.name; });
+            var paths = rows.map(function (r) { return self.desktopEntryPath(r, d); });
+            d.dragNames = rows.map(function (r) { return r.name; });
+            this._deskFileDrag = {
+                win: d,
+                names: d.dragNames.slice(),
+                paths: paths
+            };
             this.desktop.menu.visible = false;
             if (ev.dataTransfer) {
                 ev.dataTransfer.effectAllowed = 'move';
@@ -3871,108 +4539,124 @@ new Vue({
             }
         },
         onDesktopDragEnd: function () {
-            this.desktop.dragNames = [];
-            this.desktop.dropTarget = '';
+            this.desktop.windows.forEach(function (w) {
+                w.dragNames = [];
+                w.dropTarget = '';
+            });
+            this._deskFileDrag = null;
             this.stopDesktopDragScroll();
         },
         onDesktopDragOver: function (ev, row) {
+            var d = this.desk;
             var extFiles = this.hasFileDrag(ev);
             if (extFiles) {
                 if (ev.dataTransfer) {
                     ev.dataTransfer.dropEffect = 'copy';
                 }
-                this.desktop.dropTarget = row && row.dir ? row.name : '';
-                this.desktop.fileDragOver = true;
+                d.dropTarget = row && row.dir ? row.name : '';
+                d.fileDragOver = true;
                 this.desktopAutoScroll(ev);
                 return;
             }
-            if (!this.desktop.dragNames.length) {
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names.length) {
                 return;
             }
-            if (!row || !row.dir || this.desktop.dragNames.indexOf(row.name) >= 0) {
-                this.desktop.dropTarget = '';
+            if (!row || !row.dir || drag.names.indexOf(row.name) >= 0) {
+                d.dropTarget = '';
                 return;
             }
-            var destPath = this.desktopEntryPath(row);
-            var self = this;
-            var invalid = this.desktop.dragNames.some(function (name) {
-                var src = self.pathJoin(self.desktop.path, name);
+            var destPath = this.desktopEntryPath(row, d);
+            var invalid = drag.paths.some(function (src) {
                 return destPath === src || destPath.indexOf(src + '/') === 0;
             });
-            this.desktop.dropTarget = invalid ? '' : row.name;
+            d.dropTarget = invalid ? '' : row.name;
             this.desktopAutoScroll(ev);
         },
         onDesktopDragLeave: function (row) {
-            if (row && this.desktop.dropTarget === row.name) {
-                this.desktop.dropTarget = '';
+            if (row && this.desk.dropTarget === row.name) {
+                this.desk.dropTarget = '';
+            }
+            if (row && this.desk.fileDragOver) {
+                this.desk.fileDragOver = false;
             }
         },
         onDesktopDrop: function (ev, row) {
+            var d = this.desk;
             var files = [];
             if (ev.dataTransfer && ev.dataTransfer.files) {
                 for (var i = 0; i < ev.dataTransfer.files.length; i++) {
                     files.push(ev.dataTransfer.files[i]);
                 }
             }
-            var destDir = row && row.dir ? this.desktopEntryPath(row) : this.desktop.path;
-            this.desktop.dropTarget = '';
-            this.desktop.fileDragOver = false;
+            var destDir = row && row.dir ? this.desktopEntryPath(row, d) : d.path;
+            d.dropTarget = '';
+            d.fileDragOver = false;
             this._deskDragDepth = 0;
             this.stopDesktopDragScroll();
             if (files.length) {
                 ev.preventDefault();
                 ev.stopPropagation();
-                this.desktop.dragNames = [];
-                this.desktopUploadFiles(files, destDir);
+                this.desktop.windows.forEach(function (w) {
+                    w.dragNames = [];
+                });
+                this._deskFileDrag = null;
+                this.desktopUploadFiles(files, destDir, d);
                 return;
             }
-            if (!this.desktop.dragNames.length) {
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names.length) {
                 return;
             }
             ev.preventDefault();
             ev.stopPropagation();
-            var self = this;
-            var sources = this.desktop.dragNames.map(function (name) {
-                return self.pathJoin(self.desktop.path, name);
-            });
-            this.desktop.dragNames = [];
-            this.desktopMoveTo(sources, destDir);
+            drag.win.dragNames = [];
+            this._deskFileDrag = null;
+            this.desktopMoveTo(drag.paths, destDir, drag.win, d);
         },
         onDesktopSurfaceDragOver: function (ev) {
             if (this.hasFileDrag(ev)) {
                 ev.preventDefault();
-                this.desktop.dropTarget = '';
+                this.desk.dropTarget = '';
                 this.desktopAutoScroll(ev);
             }
         },
         onDesktopSurfaceDrop: function (ev) {
+            var d = this.desk;
             var files = [];
             if (ev.dataTransfer && ev.dataTransfer.files) {
                 for (var i = 0; i < ev.dataTransfer.files.length; i++) {
                     files.push(ev.dataTransfer.files[i]);
                 }
             }
-            this.desktop.dropTarget = '';
-            this.desktop.fileDragOver = false;
+            d.dropTarget = '';
+            d.fileDragOver = false;
             this._deskDragDepth = 0;
             this.stopDesktopDragScroll();
             if (files.length) {
                 ev.preventDefault();
                 ev.stopPropagation();
-                this.desktopUploadFiles(files, this.desktop.path);
+                this.desktopUploadFiles(files, d.path, d);
                 return;
             }
-            if (this.desktop.dragNames.length) {
+            var drag = this._deskFileDrag;
+            if (drag) {
                 ev.preventDefault();
                 ev.stopPropagation();
-                this.desktop.dragNames = [];
+                drag.win.dragNames = [];
+                this._deskFileDrag = null;
+                if (drag.win !== d) {
+                    this.desktopMoveTo(drag.paths, d.path, drag.win, d);
+                }
             }
         },
         onDesktopSurfaceDragLeave: function () {
-            this.desktop.dropTarget = '';
+            this.desk.dropTarget = '';
         },
-        desktopMoveTo: function (sources, destDir) {
+        desktopMoveTo: function (sources, destDir, win, targetWin) {
             var t = this.desktopTab;
+            var d = win || this.desk;
+            var target = targetWin || d;
             if (!t || !t.sessionId || !sources.length) {
                 return;
             }
@@ -4023,13 +4707,21 @@ new Vue({
                     } else {
                         ELEMENT.Message.warning('移动完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
                     }
-                    self.desktopClearSelection();
-                    self.desktopRefresh();
+                    if (self.desktop.windows.indexOf(d) >= 0) {
+                        d.selected = [];
+                        d.lastSelected = '';
+                        self.desktopRefresh(d);
+                    }
+                    if (target !== d && self.desktop.windows.indexOf(target) >= 0) {
+                        target.selected = [];
+                        target.lastSelected = '';
+                        self.desktopRefresh(target);
+                    }
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
         onDesktopSideButton: function (e) {
-            if (!this.desktop.visible || (e.button !== 3 && e.button !== 4)) {
+            if (!this.desktop.visible || !this.desk.id || (e.button !== 3 && e.button !== 4)) {
                 return;
             }
             // 侧键在桌面内接管为目录前进/后退，阻止浏览器自身的页面历史导航
@@ -4045,7 +4737,7 @@ new Vue({
             this._sideNavAt = now;
             this._sideNavButton = e.button;
             this.cancelDesktopMarquee();
-            if (this.desktop.settingsVisible || this.desktop.startOpen || this.desktop.pathEditing
+            if (this.desktop.settingsVisible || this.desktop.startOpen || this.desk.pathEditing
                     || this.desktop.menu.visible || this.hasDesktopDialogOpen()) {
                 return;
             }
@@ -4092,8 +4784,8 @@ new Vue({
                 } else if (this.desktop.startOpen) {
                     this.desktop.startOpen = false;
                     e.preventDefault();
-                } else if (this.desktop.pathEditing) {
-                    this.desktop.pathEditing = false;
+                } else if (this.desk.pathEditing) {
+                    this.desk.pathEditing = false;
                     e.preventDefault();
                 }
                 return;
@@ -4135,10 +4827,16 @@ new Vue({
             }
         },
         onAiDesktopMaybeRefresh: function (t, conv) {
-            if (this.desktop.visible && this.desktopTab === t
-                    && conv && conv.cwd && conv.cwd === this.desktop.path) {
-                this.desktopRefresh();
+            if (!this.desktop.visible || this.desktopTab !== t
+                    || !conv || !conv.cwd) {
+                return;
             }
+            var self = this;
+            this.desktop.windows.forEach(function (w) {
+                if (w.path === conv.cwd) {
+                    self.desktopRefresh(w);
+                }
+            });
         },
 
         /* ---------- 桌面任务栏 / 开始菜单 ---------- */
@@ -4152,6 +4850,7 @@ new Vue({
         openDesktopStart: function () {
             this.desktop.startOpen = true;
             this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
             this.closeDesktopSubMenus();
             var self = this;
             this.$nextTick(function () {
@@ -4169,6 +4868,10 @@ new Vue({
         },
         desktopStartGo: function (path) {
             this.desktop.startOpen = false;
+            if (!this.desk.id) {
+                this.openDesktopExplorerWindow(path);
+                return;
+            }
             this.desktopGo(path);
         },
         desktopLaunchApp: function (id) {
@@ -4177,6 +4880,10 @@ new Vue({
             }
             this.desktop.startOpen = false;
             var self = this;
+            if (id === 'file') {
+                this.openDesktopExplorerWindow();
+                return;
+            }
             if (id === 'sysinfo') {
                 this.openDesktopSysInfo();
                 return;
@@ -4236,11 +4943,17 @@ new Vue({
             this.$confirm('恢复桌面默认设置？默认视图将改为大图标，并重新开启图片缩略图和隐藏文件显示。',
                 '恢复默认设置', { type: 'warning', confirmButtonText: '恢复默认', cancelButtonText: '取消' })
                 .then(function () {
-                    self.setDesktopView('large');
+                    self.desktop.windows.forEach(function (w) {
+                        w.viewMode = 'large';
+                        w.sortBy = 'name';
+                        w.sortDir = 'asc';
+                    });
+                    self.desktop.ghost.viewMode = 'large';
+                    self.desktop.ghost.sortBy = 'name';
+                    self.desktop.ghost.sortDir = 'asc';
+                    try { localStorage.setItem('deepshell.desktopView', 'large'); } catch (e) { /* ignore */ }
                     self.desktop.thumbnailsEnabled = true;
                     self.desktop.showHidden = true;
-                    self.desktop.sortBy = 'name';
-                    self.desktop.sortDir = 'asc';
                     ELEMENT.Message.success('已恢复桌面默认设置');
                 })
                 .catch(function () { /* 取消 */ });
@@ -4343,6 +5056,10 @@ new Vue({
                 return;
             }
             var self = this;
+            var d = this.desk;
+            var rootPath = d.path || this.desktopHomeDir || '/';
+            this.desktop.startRootPath = rootPath;
+            this.desktop.startWinId = d.id || '';
             var seq = (this._deskSearchSeq || 0) + 1;
             this._deskSearchSeq = seq;
             this.desktop.startSearching = true;
@@ -4352,7 +5069,7 @@ new Vue({
             http.get('/api/files/search', {
                 params: {
                     sessionId: t.sessionId,
-                    root: this.desktop.path,
+                    root: rootPath,
                     keyword: q,
                     limit: 100
                 }
@@ -4385,6 +5102,10 @@ new Vue({
         },
         desktopOpenLocalSearchResult: function (row) {
             this.desktop.startOpen = false;
+            if (!this.desk.id) {
+                this.openDesktopExplorerWindow();
+                return;
+            }
             this.desktopOpenEntry(row);
         },
         desktopOpenSearchResult: function (row) {
@@ -4392,22 +5113,30 @@ new Vue({
                 return;
             }
             this.desktop.startOpen = false;
+            var d = this.desktopWindowById(this.desktop.startWinId) || this.desk;
+            if (!d.id) {
+                this.openDesktopExplorerWindow();
+                d = this.desk;
+                if (!d.id) {
+                    return;
+                }
+            }
             if (row.dir) {
-                this.desktop.pendingSelect = '';
-                this.desktop.pendingOpen = false;
-                this.desktopGo(row.path);
+                d.pendingSelect = '';
+                d.pendingOpen = false;
+                this.desktopGo(row.path, d);
                 return;
             }
             var p = row.path || '';
             var idx = p.lastIndexOf('/');
             var parent = idx <= 0 ? '/' : p.substring(0, idx);
             var name = idx >= 0 ? p.substring(idx + 1) : p;
-            this.desktop.pendingSelect = name;
-            this.desktop.pendingOpen = true;
-            if (parent === this.desktop.path) {
-                this.desktopRefresh();
+            d.pendingSelect = name;
+            d.pendingOpen = true;
+            if (parent === d.path) {
+                this.desktopRefresh(d);
             } else {
-                this.loadDesktopDir(parent);
+                this.loadDesktopDir(parent, null, d);
             }
         },
 
@@ -6022,7 +6751,7 @@ new Vue({
             }
             if (this.desktop.visible) {
                 this._deskDragDepth = (this._deskDragDepth || 0) + 1;
-                this.desktop.fileDragOver = true;
+                this.desk.fileDragOver = true;
                 return;
             }
             this._dragDepth = (this._dragDepth || 0) + 1;
@@ -6037,7 +6766,7 @@ new Vue({
                 e.dataTransfer.dropEffect = 'copy';
             }
             if (this.desktop.visible) {
-                this.desktop.fileDragOver = true;
+                this.desk.fileDragOver = true;
             } else {
                 this.fileDragOver = true;
             }
@@ -6050,7 +6779,10 @@ new Vue({
                 this._deskDragDepth = Math.max(0, (this._deskDragDepth || 1) - 1);
                 if (this._deskDragDepth === 0 || !e.relatedTarget) {
                     this._deskDragDepth = 0;
-                    this.desktop.fileDragOver = false;
+                    this.desktop.windows.forEach(function (w) {
+                        w.fileDragOver = false;
+                        w.dropTarget = '';
+                    });
                     this.stopDesktopDragScroll();
                 }
                 return;
@@ -6074,21 +6806,24 @@ new Vue({
             this._dragDepth = 0;
             this._deskDragDepth = 0;
             this.fileDragOver = false;
-            if (this.desktop.visible) {
-                this.desktop.fileDragOver = false;
+            if (this.desktop.visible && this.desk.id) {
+                this.desktop.windows.forEach(function (w) {
+                    w.fileDragOver = false;
+                    w.dropTarget = '';
+                });
                 this.stopDesktopDragScroll();
-                this.desktopUploadFiles(files, this.desktop.path);
+                this.desktopUploadFiles(files, this.desk.path, this.desk);
                 return;
             }
-            this.desktop.fileDragOver = false;
+            this.desk.fileDragOver = false;
             this.handleDroppedFiles(files);
         },
         handleDroppedFiles: function (files) {
             if (!files || !files.length) {
                 return;
             }
-            if (this.desktop.visible) {
-                this.desktopUploadFiles(files, this.desktop.path);
+            if (this.desktop.visible && this.desk.id) {
+                this.desktopUploadFiles(files, this.desk.path, this.desk);
                 return;
             }
             var t = this.activeTab;
@@ -6131,7 +6866,8 @@ new Vue({
             this.renameForm = {
                 path: this.pathJoin(this.activeTab.sftpPath, row.name),
                 newName: row.name,
-                desktop: false
+                desktop: false,
+                winId: ''
             };
             this.renameVisible = true;
         },
@@ -6170,7 +6906,7 @@ new Vue({
                 .then(function () {
                     self.renameVisible = false;
                     if (f.desktop) {
-                        self.desktopRefresh();
+                        self.desktopRefresh(self.desktopWindowById(f.winId) || undefined);
                     } else {
                         self.loadDir(t.sftpPath, t);
                     }
@@ -7352,6 +8088,7 @@ new Vue({
         }, 60 * 1000);
         window.addEventListener('resize', function () {
             self.fitActive();
+            self.fitDesktopWindows();
         });
         // 系统文件拖入浏览器窗口 → 上传到当前 SFTP 目录（仅识别 Files 类型，不影响内部拖拽）
         window.addEventListener('dragenter', function (e) {

@@ -2407,9 +2407,11 @@ body.resizing .term-host {
     position: fixed;
     inset: 0;
     z-index: 1500;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg);
+    overflow: hidden;
+    background:
+        radial-gradient(1000px 620px at 76% 12%, rgba(61, 126, 255, .28), transparent 62%),
+        radial-gradient(760px 520px at 10% 92%, rgba(45, 212, 191, .10), transparent 60%),
+        linear-gradient(135deg, var(--topbar) 0%, #16325c 52%, var(--topbar-2) 100%);
     color: var(--text);
     outline: none;
     font-size: 13px;
@@ -2417,6 +2419,242 @@ body.resizing .term-host {
 
 .ai-desktop * {
     box-sizing: border-box;
+}
+
+.dsk-wallpaper {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(130, 175, 255, .045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(130, 175, 255, .045) 1px, transparent 1px);
+    background-size: 52px 52px;
+    -webkit-mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, rgba(0, 0, 0, .55) 58%, transparent 100%);
+    mask-image: radial-gradient(ellipse at 50% 42%, #000 0%, rgba(0, 0, 0, .55) 58%, transparent 100%);
+}
+
+.dsk-window-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 48px;
+    z-index: 1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.dsk-window {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    min-width: 320px;
+    min-height: 220px;
+    overflow: hidden;
+    pointer-events: auto;
+    border: 1px solid rgba(112, 152, 210, .55);
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: 0 18px 46px rgba(2, 8, 20, .42), 0 2px 8px rgba(0, 0, 0, .22);
+    color: var(--text);
+    transition: box-shadow .12s ease, border-color .12s ease;
+}
+
+.dsk-window.active {
+    border-color: rgba(108, 166, 255, .85);
+    box-shadow: 0 26px 64px rgba(1, 6, 16, .55), 0 0 0 1px rgba(108, 166, 255, .28);
+}
+
+.dsk-window.maximized {
+    left: 0 !important;
+    top: 0 !important;
+    right: 0;
+    bottom: 0;
+    width: auto !important;
+    height: auto !important;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+}
+
+.dsk-window.dragging,
+.dsk-window.resizing {
+    transition: none;
+}
+
+.dsk-titlebar {
+    flex: 0 0 auto;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 0 0 10px;
+    background: linear-gradient(180deg, #f5f7fb, #e9eef7);
+    border-bottom: 1px solid #d8e1ee;
+    color: #34415a;
+    user-select: none;
+    cursor: default;
+}
+
+.dsk-window.active .dsk-titlebar {
+    background: linear-gradient(180deg, #eff5ff, #deeafa);
+    border-bottom-color: #c7d8f0;
+}
+
+.dsk-titlebar-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: #2f6fd6;
+    font-size: 15px;
+}
+
+.dsk-window:not(.active) .dsk-titlebar-icon {
+    color: #7e8ca3;
+}
+
+.dsk-titlebar-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    max-width: min(58vw, 640px);
+    line-height: 1.15;
+}
+
+.dsk-titlebar-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.dsk-titlebar-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #7f8da4;
+    font-size: 10.5px;
+}
+
+.dsk-window:not(.active) .dsk-titlebar-sub {
+    color: #9aa6b8;
+}
+
+.dsk-win-actions {
+    position: relative;
+    z-index: 10;
+    flex: 0 0 auto;
+    align-self: stretch;
+    display: flex;
+    margin-left: auto;
+}
+
+.dsk-win-btn {
+    width: 46px;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #4d5d75;
+    font-size: 14px;
+    cursor: default;
+}
+
+.dsk-window:not(.active) .dsk-win-btn {
+    color: #8794a8;
+}
+
+.dsk-win-btn:hover {
+    background: #d8e4f5;
+    color: #1f3555;
+}
+
+.dsk-win-btn.close:hover {
+    background: #e81123;
+    color: #fff;
+}
+
+.dsk-window > .dsk-toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+}
+
+.dsk-window .dsk-ai-chip {
+    flex: 0 1 auto;
+    max-width: 250px;
+    padding: 3px 9px;
+    border-color: #d3e2f8;
+    background: #eef5ff;
+    color: #2f6fd6;
+}
+
+.dsk-window .dsk-side {
+    width: 196px;
+}
+
+.dsk-resize {
+    position: absolute;
+    z-index: 8;
+}
+
+.r-n { left: 8px; right: 8px; top: 0; height: 5px; cursor: n-resize; }
+.r-s { left: 8px; right: 8px; bottom: 0; height: 5px; cursor: s-resize; }
+.r-e { top: 8px; bottom: 8px; right: 0; width: 5px; cursor: e-resize; }
+.r-w { top: 8px; bottom: 8px; left: 0; width: 5px; cursor: w-resize; }
+.r-ne { top: 0; right: 0; width: 12px; height: 12px; cursor: ne-resize; }
+.r-nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nw-resize; }
+.r-se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: se-resize; }
+.r-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: sw-resize; }
+
+.dsk-window-empty {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    pointer-events: none;
+    color: rgba(219, 234, 255, .62);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+}
+
+.dsk-window-empty > i {
+    font-size: 46px;
+    color: rgba(160, 200, 255, .5);
+}
+
+.dsk-window-empty p {
+    margin: 0;
+    font-size: 14px;
+}
+
+.dsk-window-empty .el-button {
+    pointer-events: auto;
+    border-color: rgba(140, 185, 255, .45);
+    background: rgba(20, 44, 82, .55);
+    color: #dcebff;
+}
+
+.dsk-window-empty .el-button:hover {
+    border-color: #6ea8ff;
+    background: rgba(40, 76, 132, .72);
+    color: #fff;
+}
+
+.dsk-window-empty-tip {
+    font-size: 11px;
+    color: rgba(190, 214, 245, .45);
 }
 
 .dsk-topbar {
@@ -3361,7 +3599,10 @@ body.resizing .term-host {
 }
 /* ---------- 可视桌面任务栏 ---------- */
 .dsk-taskbar {
-    flex: 0 0 auto;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
     height: 48px;
     display: flex;
     align-items: center;
@@ -3370,7 +3611,7 @@ body.resizing .term-host {
     background: linear-gradient(180deg, #181d27, #12161d);
     border-top: 1px solid #0c0f14;
     color: #d7deea;
-    z-index: 20;
+    z-index: 30;
 }
 
 .dsk-start-btn {
@@ -3449,6 +3690,38 @@ body.resizing .term-host {
     align-items: center;
     gap: 2px;
     min-width: 0;
+    flex: 1 1 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+
+.dsk-task-apps::-webkit-scrollbar {
+    display: none;
+}
+
+.dsk-taskbar-sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 24px;
+    margin: 0 4px;
+    background: #2c3648;
+}
+
+.dsk-task-win {
+    max-width: 180px;
+}
+
+.dsk-task-win > i {
+    color: #8fb6ee;
+}
+
+.dsk-task-win.is-min {
+    opacity: .62;
+}
+
+.dsk-task-win.is-min .dsk-task-label {
+    color: #8d9ab0;
 }
 
 .dsk-task-app {
