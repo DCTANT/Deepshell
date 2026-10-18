@@ -189,7 +189,7 @@
                             <el-button size="mini" icon="el-icon-monitor" class="dsk-open-btn"
                                        title="以 Windows 资源管理器方式浏览当前 AI 工作目录"
                                        :disabled="!activeTab.sessionId"
-                                       @click="openAiDesktop">AI 可视化桌面</el-button>
+                                       @click="openAiDesktop()">AI 可视化桌面</el-button>
                             <span class="aichat-step" v-if="activeTab.chatBusy">
                                 <i class="el-icon-loading"></i> {{ activeTab.chatPhase }}
                             </span>
@@ -1070,6 +1070,16 @@
                             <div class="dsk-set-card">
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
+                                        <b>打开连接后</b>
+                                        <span>连接建立后默认进入的界面；关闭桌面仍回到终端工作台</span>
+                                    </div>
+                                    <el-radio-group v-model="openAfterConnect" size="mini">
+                                        <el-radio-button label="desktop">AI 可视化桌面</el-radio-button>
+                                        <el-radio-button label="workbench">工作台</el-radio-button>
+                                    </el-radio-group>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
                                         <b>默认视图</b>
                                         <span>更改后立即应用，下次进入桌面时保持</span>
                                     </div>
@@ -1531,7 +1541,7 @@
                     <span class="conn-row-count">{{ row._count }} 项</span>
                 </div>
                 <div v-else :key="row.key" class="conn-row" :draggable="!row.noDrag"
-                     :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }" @click="openTab(row.id)"
+                     :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }" @click="openTab(row.id, null, true)"
                      @dragstart="onConnDragStart($event, row)" @dragend="onConnDragEnd">
                     <i class="el-icon-monitor conn-row-icon"></i>
                     <span class="conn-row-name">{{ row.name }}</span>
@@ -2384,6 +2394,9 @@
         </div>
         <div class="tab-menu-item" @click="menuAction('disconnect')">
             <i class="el-icon-switch-button"></i>断开
+        </div>
+        <div class="tab-menu-item" @click="menuAction('editConn')">
+            <i class="el-icon-edit"></i>编辑连接
         </div>
         <div class="tab-menu-item" @click="menuAction('copyIp')">
             <i class="el-icon-document-copy"></i>复制 IP

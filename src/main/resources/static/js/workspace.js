@@ -148,6 +148,16 @@ function loadDesktopIdleMinutes() {
     return 0;
 }
 
+function loadOpenAfterConnect() {
+    try {
+        var v = localStorage.getItem('deepshell.openAfterConnect');
+        if (v === 'workbench' || v === 'desktop') {
+            return v;
+        }
+    } catch (e) { /* ignore */ }
+    return 'desktop';
+}
+
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
 var AI_CHAT_MAX = 40;   // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
 
@@ -551,6 +561,7 @@ new Vue({
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
+        openAfterConnect: loadOpenAfterConnect(),
         chatExamples: ['看看哪个目录占用空间最大', '这台服务器上都装了什么服务，分别监听哪些端口',
             '最近的登录记录里有没有异常 IP'],
         fontCandidates: ['Consolas', 'JetBrains Mono', 'Courier New', 'monospace',
@@ -562,6 +573,9 @@ new Vue({
             handler: function (v) {
                 try { localStorage.setItem('deepshell.hotkey', JSON.stringify(v)); } catch (e) { /* ignore */ }
             }
+        },
+        openAfterConnect: function (v) {
+            try { localStorage.setItem('deepshell.openAfterConnect', v); } catch (e) { /* ignore */ }
         },
         cmdOpts: {
             deep: true,
@@ -990,13 +1004,14 @@ new Vue({
     },
     methods: {
         /* ---------- 标签与会话 ---------- */
-        openTab: function (connId, clientKey) {
+        openTab: function (connId, clientKey, autoAfterConnect) {
             var self = this;
             var conn = this.connections.find(function (c) { return c.id === connId; });
             var tab = {
                 key: 'tab' + Date.now() + Math.floor(Math.random() * 1000),
                 clientKey: clientKey || newSessionKey(),
                 connId: connId,
+                autoOpenDesktop: !!autoAfterConnect && this.openAfterConnect === 'desktop',
                 title: conn ? conn.name : ('连接 #' + connId),
                 host: conn ? conn.host : '',
                 status: 'connecting',
@@ -2203,8 +2218,17 @@ new Vue({
         },
 
         /* ---------- AI 可视化桌面（Windows 资源管理器式文件页） ---------- */
-        openAiDesktop: function () {
-            var t = this.activeTab;
+        openDesktopAfterConnect: function (tab, dirReady) {
+            var self = this;
+            Promise.resolve(dirReady).then(function () {
+                if (tab.status !== 'open' || self.activeKey !== tab.key) {
+                    return;
+                }
+                self.openAiDesktop(tab);
+            });
+        },
+        openAiDesktop: function (tab) {
+            var t = tab || this.activeTab;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
@@ -4874,16 +4898,19 @@ new Vue({
                         tab.explicitClose = false;
                         tab.reconnectAttempts = 0;
                         clearReconnectTimer(tab);
+                        var dirReady;
                         if (msg.reattached) {
                             // 服务端会紧接着发来最近输出快照，先清屏避免重复
                             try { term.reset(); } catch (e) { /* ignore */ }
-                            if (tab.sftpHome) {
-                                self.loadDir(tab.sftpPath || tab.sftpHome, tab);
-                            } else {
-                                self.loadHome(tab);
-                            }
+                            dirReady = tab.sftpHome
+                                ? self.loadDir(tab.sftpPath || tab.sftpHome, tab)
+                                : self.loadHome(tab);
                         } else {
-                            self.loadHome(tab);
+                            dirReady = self.loadHome(tab);
+                        }
+                        if (tab.autoOpenDesktop) {
+                            tab.autoOpenDesktop = false;
+                            self.openDesktopAfterConnect(tab, dirReady);
                         }
                     } else if (msg.type === 'error') {
                         tab.status = 'error';
@@ -5029,7 +5056,7 @@ new Vue({
             this.tabMenu = {
                 visible: true,
                 x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 150)),
-                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 310)),
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 360)),
                 tab: tab
             };
         },
@@ -5048,6 +5075,8 @@ new Vue({
                 this.reconnectTab(tab);
             } else if (mode === 'disconnect') {
                 this.disconnectTab(tab);
+            } else if (mode === 'editConn') {
+                this.editConnFromDialog(tab.connId);
             } else if (mode === 'copyIp') {
                 if (tab.host) {
                     this.copyText(tab.host);
@@ -5161,9 +5190,9 @@ new Vue({
         /* ---------- SFTP ---------- */
         loadHome: function (tab) {
             var self = this;
-            http.get('/api/sftp/home', { params: { sessionId: tab.sessionId } }).then(function (home) {
+            return http.get('/api/sftp/home', { params: { sessionId: tab.sessionId } }).then(function (home) {
                 tab.sftpHome = home;
-                self.loadDir(home, tab);
+                return self.loadDir(home, tab);
             }).catch(function () { /* 已由拦截器提示 */ });
         },
         loadDir: function (path, tab, nav) {
@@ -5174,7 +5203,7 @@ new Vue({
             var self = this;
             var prevPath = tab.sftpPath;
             tab.sftpLoading = true;
-            http.get('/api/sftp/list', { params: { sessionId: tab.sessionId, path: path } }).then(function (list) {
+            return http.get('/api/sftp/list', { params: { sessionId: tab.sessionId, path: path } }).then(function (list) {
                 // 路径确实变化且非「返回」时记录旧路径，供返回按钮回退
                 if (nav !== 'back' && prevPath && path !== prevPath
                         && tab.sftpHistory[tab.sftpHistory.length - 1] !== prevPath) {
@@ -7271,7 +7300,7 @@ new Vue({
                 var id = Number(cid);
                 var exists = self.connections.some(function (c) { return c.id === id; });
                 if (exists) {
-                    self.openTab(id);
+                    self.openTab(id, null, true);
                 } else {
                     ELEMENT.Message.warning('连接不存在或已被删除');
                 }
