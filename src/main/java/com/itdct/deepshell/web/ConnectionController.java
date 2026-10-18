@@ -6,6 +6,7 @@ import com.itdct.deepshell.entity.SshConnection;
 import com.itdct.deepshell.service.AuditService;
 import com.itdct.deepshell.service.ConnectionService;
 import com.itdct.deepshell.service.ConnectionTransferService;
+import com.itdct.deepshell.service.SshSessionManager;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,12 +25,14 @@ public class ConnectionController {
 
     private final ConnectionService service;
     private final ConnectionTransferService transferService;
+    private final SshSessionManager sessionManager;
     private final AuditService audit;
 
     public ConnectionController(ConnectionService service, ConnectionTransferService transferService,
-                                AuditService audit) {
+                                SshSessionManager sessionManager, AuditService audit) {
         this.service = service;
         this.transferService = transferService;
+        this.sessionManager = sessionManager;
         this.audit = audit;
     }
 
@@ -41,6 +44,12 @@ public class ConnectionController {
     @GetMapping("/{id}")
     public R<SshConnection> get(@PathVariable Long id) {
         return R.ok(service.get(id));
+    }
+
+    /** 测试连接参数是否可用（不保存）；编辑时留空的密码 / 私钥口令沿用已保存值 */
+    @PostMapping("/test")
+    public R<Map<String, Object>> test(@RequestBody ConnectionForm form) {
+        return R.ok(sessionManager.test(form));
     }
 
     @PostMapping

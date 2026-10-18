@@ -82,14 +82,18 @@
         </el-form-item>
     </el-form>
     <div slot="footer">
+        <el-button size="small" style="float: left" :loading="testing"
+                   :disabled="saving" @click="test">测试连接</el-button>
         <el-button size="small" @click="visible = false">取消</el-button>
-        <el-button size="small" type="primary" :loading="saving" @click="save">保存</el-button>
+        <el-button size="small" type="primary" :loading="saving"
+                   :disabled="testing" @click="save">保存</el-button>
     </div>
 </el-dialog>`,
         data: function () {
             return {
                 visible: false,
                 saving: false,
+                testing: false,
                 folders: [],
                 folderOptions: [],
                 form: emptyForm()
@@ -126,6 +130,30 @@
                             node.children = children;
                         }
                         return node;
+                    });
+            },
+            /** 按当前表单参数试连一次；编辑态留空的密码 / 口令由服务端沿用已保存值 */
+            test: function () {
+                var f = this.form;
+                if (!f.host || !f.host.trim()) {
+                    ELEMENT.Message.warning('请输入主机地址');
+                    return;
+                }
+                if (!f.username || !f.username.trim()) {
+                    ELEMENT.Message.warning('请输入用户名');
+                    return;
+                }
+                var self = this;
+                this.testing = true;
+                http.post('/api/connections/test', {
+                    id: f.id, host: f.host, port: f.port || 22, username: f.username,
+                    authType: f.authType, password: f.password, keyPath: f.keyPath,
+                    passphrase: f.passphrase
+                }).then(function (d) {
+                    ELEMENT.Message.success((d && d.message) || '连接成功');
+                }).catch(function () { /* 已由拦截器提示 */ })
+                    .then(function () {
+                        self.testing = false;
                     });
             },
             save: function () {

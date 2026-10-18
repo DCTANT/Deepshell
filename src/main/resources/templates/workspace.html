@@ -651,13 +651,13 @@
 
         <div class="dsk-body">
             <aside class="dsk-side">
-                <div class="dsk-side-sec"><i class="el-icon-cpu"></i>AI 工作目录</div>
+                <div class="dsk-side-sec"><i class="el-icon-cpu"></i>工作目录</div>
                 <div class="dsk-side-item" :class="{ active: desktopAiDir && w.path === desktopAiDir,
                                                      disabled: !desktopAiDir }"
                      :title="desktopAiDir || 'AI 尚未切换过目录'"
                      @click="desktopAiDir && desktopGo(desktopAiDir)">
                     <i class="el-icon-location-information"></i>
-                    <span class="dsk-side-name">AI 当前目录</span>
+                    <span class="dsk-side-name">当前目录</span>
                 </div>
                 <div class="dsk-side-sec"><i class="el-icon-star-off"></i>快速访问</div>
                 <div class="dsk-side-item" :class="{ active: w.path === desktopHomeDir }"
@@ -854,7 +854,7 @@
                         title="打开 AI 终端窗口" @click.stop="toggleDesktopAiApp">
                     <i class="el-icon-chat-dot-round"></i>
                     <span class="dsk-task-label">AI 终端</span>
-                    <i v-if="desktopTab && desktopTab.chatBusy" class="dsk-task-busy"
+                    <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
                 </button>
                 <button class="dsk-task-app dsk-return-term"
@@ -1607,7 +1607,7 @@
             </div>
             <div class="dsk-menu-sep"></div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('return')">
-                <i class="el-icon-back"></i>返回工作台
+                <i class="el-icon-monitor"></i>返回终端
             </div>
         </div>
 
@@ -2601,19 +2601,22 @@
                                        title="以 Windows 资源管理器方式浏览当前 AI 工作目录"
                                        :disabled="!tab.sessionId"
                                        @click="openDesktop()">AI 可视化桌面</el-button>
-                            <span class="aichat-step" v-if="tab.chatBusy">
-                                <i class="el-icon-loading"></i> {{ tab.chatPhase }}
+                            <span class="aichat-step" v-if="activeBusy">
+                                <i class="el-icon-loading"></i> {{ activeRun.phase }}
                             </span>
                             <span class="spacer"></span>
                             <el-button size="mini" icon="el-icon-plus" title="开始一个新对话"
-                                       :disabled="tab.chatBusy || tab.chatLoading"
+                                       :disabled="tab.chatLoading"
                                        @click="newConv">新对话</el-button>
                         </div>
                         <div class="aichat-body">
                             <div class="aichat-convs">
                                 <div v-for="c in convList" :key="c.id" class="aichat-conv"
-                                     :class="{ active: c.id === tab.chatConvId }"
-                                     :title="c.title" @click="switchConv(c)">
+                                     :class="{ active: c.id === tab.chatConvId,
+                                               running: c._run && c._run.busy }"
+                                     :title="(c._run && c._run.busy ? (c._run.phase || '生成中') + ' · ' : '') + c.title"
+                                     @click="switchConv(c)">
+                                    <i v-if="c._run && c._run.busy" class="el-icon-loading aichat-conv-busy"></i>
                                     <span class="aichat-conv-title">{{ c.title }}</span>
                                     <span class="aichat-conv-time">{{ fmtTime(c.updatedAt) }}</span>
                                     <i class="el-icon-close aichat-conv-del" title="删除对话"
@@ -2626,7 +2629,7 @@
                                         <i class="el-icon-loading"></i>
                                         <p>正在加载对话记录…</p>
                                     </div>
-                                    <div v-if="!tab.chatMsgs.length && !tab.chatBusy
+                                    <div v-if="!tab.chatMsgs.length && !activeBusy
                                                && !tab.chatLoading" class="aichat-empty">
                                         <i class="el-icon-chat-dot-round"></i>
                                         <p>用自然语言描述你想做的事，AI 会以当前登录用户（{{ tab.host }}）的身份
@@ -2673,20 +2676,19 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div v-if="tab.chatStreamText
-                                               && tab.chatStreamConvId === tab.chatConvId"
+                                    <div v-if="activeRun && activeRun.streamText"
                                          class="aichat-msg ai aichat-streaming">
-                                        <div class="aichat-bubble">{{ tab.chatStreamText }}<i
+                                        <div class="aichat-bubble">{{ activeRun.streamText }}<i
                                                 class="aichat-cursor"></i></div>
                                     </div>
                                 </div>
                                 <div class="aichat-input">
                                     <el-input type="textarea" size="mini" v-model="tab.chatInput" :rows="2"
-                                              :placeholder="tab.chatBusy
+                                              :placeholder="activeBusy
                                                   ? 'AI 正在处理…'
                                                   : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行）'"
                                               @keydown.native="keydown"></el-input>
-                                    <el-button v-if="!tab.chatBusy" size="mini" type="primary"
+                                    <el-button v-if="!activeBusy" size="mini" type="primary"
                                                class="aichat-send" @click="send">发送</el-button>
                                     <el-button v-else size="mini" type="danger" class="aichat-send"
                                                @click="stop">停止</el-button>

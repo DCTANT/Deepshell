@@ -19,6 +19,8 @@ public class ConnectionForm {
     private String passphrase;
     private String remark;
     private Integer sortOrder;
+    /** 仅「测试连接」使用：编辑态据此回退已保存的密码 / 私钥口令；保存接口忽略 */
+    private Long id;
     /** 所属文件夹（null 为根目录） */
     private Long folderId;
     private Boolean favorite;

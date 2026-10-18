@@ -2146,6 +2146,18 @@ body.resizing .term-host {
     margin-top: 2px;
 }
 
+.aichat-conv-busy {
+    position: absolute;
+    right: 5px;
+    top: 7px;
+    font-size: 11px;
+    color: #4c8dff;
+}
+
+.aichat-conv.running .aichat-conv-del {
+    display: none !important;
+}
+
 .aichat-conv-del {
     position: absolute;
     right: 4px;

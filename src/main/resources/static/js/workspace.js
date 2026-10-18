@@ -286,6 +286,21 @@ function newAiRunId() {
     return 'ai' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 }
 
+/* 每个对话独立的运行态：不同对话可同时生成/执行，互不阻塞 */
+function createAiConvRun() {
+    return {
+        busy: false,
+        stop: false,
+        step: 0,
+        seq: 0,
+        phase: '',
+        streamText: '',
+        requestId: '',
+        abortController: null,
+        execController: null
+    };
+}
+
 /* 自动重连延迟（毫秒），超过次数后停止并提示手动重连 */
 var RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 20000, 30000, 30000, 30000];
 var UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -442,6 +457,16 @@ Vue.component('ai-chat-panel', {
         },
         examples: function () {
             return this.$root.chatExamples || [];
+        },
+        activeConv: function () {
+            return this.$root.aiActiveConv(this.tab);
+        },
+        activeRun: function () {
+            var c = this.activeConv;
+            return c && c._run ? c._run : null;
+        },
+        activeBusy: function () {
+            return !!(this.activeRun && this.activeRun.busy);
         }
     },
     watch: {
@@ -451,13 +476,7 @@ Vue.component('ai-chat-panel', {
                 this.scrollToBottom();
             }
         },
-        'tab.chatStreamText': function () {
-            this.scrollToBottom();
-        },
         'tab.chatLoading': function () {
-            this.scrollToBottom();
-        },
-        'tab.chatBusy': function () {
             this.scrollToBottom();
         },
         'tab.chatConvId': function () {
@@ -816,6 +835,17 @@ new Vue({
                     self.$refs.desktopStartBody.scrollTop = 0;
                 }
             });
+        },
+        // 输入框内容跟随当前对话，切换后各自恢复草稿
+        'activeTab.chatInput': function (v) {
+            var t = this.activeTab;
+            if (!t) {
+                return;
+            }
+            var conv = this.aiActiveConv(t);
+            if (conv && conv.input !== v) {
+                this.$set(conv, 'input', v || '');
+            }
         },
         'desktop.thumbnailsEnabled': function (v) {
             try { localStorage.setItem('deepshell.desktopThumbs', v ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -1365,19 +1395,8 @@ new Vue({
                 chatConvId: null,
                 chatMsgs: [],
                 chatInput: '',
-                chatBusy: false,
-                chatBusyConvId: null,
-                chatStreamText: '',
-                chatStreamConvId: null,
-                chatPhase: '',
                 chatLoading: true,
-                chatMode: loadAiChatMode(),
-                chatStop: false,
-                chatStep: 0,
-                chatRun: 0,
-                chatAbortController: null,
-                chatExecController: null,
-                chatRequestId: ''
+                chatMode: loadAiChatMode()
             };
             tab.sendTargets = [tab.key];
             this.tabs.push(tab);
@@ -1924,6 +1943,37 @@ new Vue({
         aiActiveConv: function (t) {
             return this.aiConvById(t, t.chatConvId) || (t.chatConvs && t.chatConvs[0]) || null;
         },
+        /* 对话对象上补充响应式的运行态与输入草稿（服务端返回的对象没有这些字段） */
+        aiEnsureConvState: function (conv) {
+            if (!conv) {
+                return null;
+            }
+            if (!conv._run) {
+                this.$set(conv, '_run', createAiConvRun());
+            }
+            if (conv.input == null) {
+                this.$set(conv, 'input', '');
+            }
+            if (!conv.msgs) {
+                this.$set(conv, 'msgs', []);
+            }
+            return conv;
+        },
+        aiConvRun: function (conv) {
+            return conv && conv._run ? conv._run : null;
+        },
+        chatAnyBusy: function (t) {
+            return !!(t && (t.chatConvs || []).some(function (c) {
+                return c._run && c._run.busy;
+            }));
+        },
+        /* 切走前把输入框草稿写回当前对话，保证每个对话草稿独立 */
+        aiSaveDraft: function (t) {
+            var conv = this.aiActiveConv(t);
+            if (conv && conv.input !== t.chatInput) {
+                this.$set(conv, 'input', t.chatInput || '');
+            }
+        },
         /* 保存一条对话（服务端钳制消息数与长度）；失败时内存数据不丢，下次保存重试 */
         saveConv: function (t, conv) {
             if (!conv || conv.id == null) {
@@ -1955,10 +2005,15 @@ new Vue({
             });
         },
         applyAiConvs: function (t, list) {
+            var self = this;
             t.chatConvs = list || [];
+            t.chatConvs.forEach(function (c) {
+                self.aiEnsureConvState(c);
+            });
             var act = t.chatConvs.find(function (c) { return c.active; }) || t.chatConvs[0] || null;
             t.chatConvId = act ? act.id : null;
             t.chatMsgs = act && act.msgs ? act.msgs : [];
+            t.chatInput = act ? (act.input || '') : '';
             this.scrollAiChat();
         },
         /* 浏览器里的旧对话一次性上传到服务端，成功后清理本地存储 */
@@ -1998,21 +2053,24 @@ new Vue({
         },
         aiConvCreateRemote: function (t) {
             var self = this;
+            this.aiSaveDraft(t);
             return http.post('/api/ai/convs', { connId: t.connId }).then(function (c) {
                 if (!c) {
                     return null;
                 }
+                self.aiEnsureConvState(c);
                 t.chatConvs.forEach(function (x) { x.active = false; });
                 t.chatConvs.push(c);
                 t.chatConvId = c.id;
                 t.chatMsgs = c.msgs || [];
+                t.chatInput = '';
                 self.scrollAiChat();
                 return c;
             });
         },
         aiConvNew: function () {
             var t = this.activeTab;
-            if (!t || t.chatBusy || t.chatLoading) {
+            if (!t || t.chatLoading) {
                 return;
             }
             this.aiConvCreateRemote(t).catch(function () { /* 拦截器已提示 */ });
@@ -2022,8 +2080,10 @@ new Vue({
             if (!t || !c || c.id === t.chatConvId) {
                 return;
             }
+            this.aiSaveDraft(t);
             t.chatConvId = c.id;
             t.chatMsgs = c.msgs || [];
+            t.chatInput = c.input || '';
             // 服务端记住当前对话（纯切换不刷新时间，失败不影响使用）
             http.put('/api/ai/convs/' + c.id, { active: true }).catch(function () { /* ignore */ });
             this.scrollAiChat();
@@ -2033,7 +2093,7 @@ new Vue({
             if (!t || !c) {
                 return;
             }
-            if (t.chatBusy && t.chatBusyConvId === c.id) {
+            if (c._run && c._run.busy) {
                 ELEMENT.Message.warning('该对话正在执行中，请先停止再删除');
                 return;
             }
@@ -2055,6 +2115,7 @@ new Vue({
                         var nc = self.chatConvList[0];
                         t.chatConvId = nc.id;
                         t.chatMsgs = nc.msgs || [];
+                        t.chatInput = nc.input || '';
                         http.put('/api/ai/convs/' + nc.id, { active: true }).catch(function () { /* ignore */ });
                     }
                     self.scrollAiChat();
@@ -2063,7 +2124,7 @@ new Vue({
         },
         aiChatSend: function () {
             var t = this.activeTab;
-            if (!t || t.chatBusy) {
+            if (!t) {
                 return;
             }
             if (t.chatLoading) {
@@ -2074,13 +2135,18 @@ new Vue({
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
             }
-            var text = (t.chatInput || '').trim();
-            if (!text) {
-                return;
-            }
             var conv = this.aiActiveConv(t);
             if (!conv) {
                 ELEMENT.Message.warning('对话未加载成功，请刷新页面或重开标签');
+                return;
+            }
+            this.aiEnsureConvState(conv);
+            var run = conv._run;
+            if (run.busy) {
+                return;
+            }
+            var text = (t.chatInput || '').trim();
+            if (!text) {
                 return;
             }
             conv.msgs.push({ role: 'user', text: text });
@@ -2088,43 +2154,48 @@ new Vue({
                 conv.title = text.slice(0, 20);
             }
             conv.updatedAt = Date.now();
+            conv.input = '';
             t.chatInput = '';
-            t.chatStop = false;
-            t.chatStep = 0;
-            t.chatRequestId = '';
-            t.chatAbortController = null;
-            t.chatExecController = null;
-            t.chatBusy = true;
-            t.chatBusyConvId = conv.id;
-            t.chatRun = (t.chatRun || 0) + 1;
+            run.stop = false;
+            run.step = 0;
+            run.phase = '';
+            run.streamText = '';
+            run.requestId = '';
+            run.abortController = null;
+            run.execController = null;
+            run.seq = (run.seq || 0) + 1;
+            run.busy = true;
             this.saveConv(t, conv);
-            this.aiChatLoop(t, conv, t.chatRun);
+            this.aiChatLoop(t, conv, run, run.seq);
         },
         aiChatStop: function () {
             var t = this.activeTab;
-            if (!t || !t.chatBusy) {
+            if (!t) {
                 return;
             }
-            t.chatStop = true;
+            var conv = this.aiActiveConv(t);
+            var run = this.aiConvRun(conv);
+            if (!conv || !run || !run.busy) {
+                return;
+            }
+            run.stop = true;
             // 先通知服务端取消：断模型连接 / 断 exec 通道，再 abort 浏览器请求
-            if (t.chatRequestId) {
-                var runId = t.chatRequestId;
-                t.chatRequestId = '';
+            if (run.requestId) {
+                var runId = run.requestId;
+                run.requestId = '';
                 http.post('/api/ai/agent/cancel', { runId: runId }).catch(function () { /* ignore */ });
             }
-            var abortStream = t.chatAbortController;
-            t.chatAbortController = null;
+            var abortStream = run.abortController;
+            run.abortController = null;
             if (abortStream) {
                 try { abortStream.abort(); } catch (e) { /* ignore */ }
             }
-            var abortExec = t.chatExecController;
-            t.chatExecController = null;
+            var abortExec = run.execController;
+            run.execController = null;
             if (abortExec) {
                 try { abortExec.abort(); } catch (e) { /* ignore */ }
             }
-            t.chatStreamText = '';
-            t.chatStreamConvId = null;
-            var conv = this.aiConvById(t, t.chatBusyConvId) || this.aiActiveConv(t);
+            run.streamText = '';
             var waitingConfirm = false;
             (conv.msgs || []).forEach(function (m) {
                 if (m.state === 'confirm') {
@@ -2137,43 +2208,43 @@ new Vue({
                 this.aiChatFinish(t, conv, '已停止');
             } else {
                 // 请求在途（命令可能已执行），等结果返回后收尾
-                t.chatPhase = '正在停止…';
+                run.phase = '正在停止…';
                 this.saveConv(t, conv);
             }
         },
-        aiChatLoop: function (t, conv, run) {
+        aiChatLoop: function (t, conv, run, seq) {
             var self = this;
-            if (run !== t.chatRun) {
+            if (seq !== run.seq) {
                 return;
             }
-            if (t.chatStop) {
+            if (run.stop) {
                 this.aiChatFinish(t, conv, '已停止');
                 return;
             }
-            if (t.chatStep >= 15) {
+            if (run.step >= 15) {
                 this.aiChatFinish(t, conv, '已达单轮 15 步上限，如任务未完成请继续发消息说明');
                 return;
             }
-            t.chatStep++;
-            t.chatPhase = 'AI 正在生成…';
-            t.chatStreamText = '';
-            t.chatStreamConvId = conv.id;
+            run.step++;
+            run.phase = 'AI 正在生成…';
+            run.streamText = '';
             var requestId = newAiRunId();
-            t.chatRequestId = requestId;
-            this.scrollAiChat();
-            this.aiAgentStream(t, conv, run, {
+            run.requestId = requestId;
+            if (t.chatConvId === conv.id) {
+                this.scrollAiChat();
+            }
+            this.aiAgentStream(t, conv, run, seq, {
                 sessionId: t.sessionId,
                 cwd: conv.cwd || '',
                 auto: t.chatMode !== 'manual',
                 runId: requestId,
                 messages: this.aiBuildHistory(conv)
             }).then(function (r) {
-                if (t.chatRequestId === requestId) {
-                    t.chatRequestId = '';
+                if (run.requestId === requestId) {
+                    run.requestId = '';
                 }
-                t.chatStreamText = '';
-                t.chatStreamConvId = null;
-                if (run !== t.chatRun) {
+                run.streamText = '';
+                if (seq !== run.seq) {
                     return;
                 }
                 if (!r || !r.kind) {
@@ -2194,14 +2265,16 @@ new Vue({
                     m.state = 'confirm';
                     conv.msgs.push(m);
                     conv.updatedAt = Date.now();
-                    if (t.chatStop) {
+                    if (run.stop) {
                         m.state = 'skipped';
                         self.aiChatFinish(t, conv, '已停止');
                         return;
                     }
-                    t.chatPhase = '等待你确认命令…';
+                    run.phase = '等待你确认命令…';
                     self.saveConv(t, conv);
-                    self.scrollAiChat();
+                    if (t.chatConvId === conv.id) {
+                        self.scrollAiChat();
+                    }
                     return;
                 }
                 self.aiFillCard(conv, m, r);
@@ -2209,21 +2282,20 @@ new Vue({
                 conv.msgs.push(m);
                 conv.updatedAt = Date.now();
                 self.saveConv(t, conv);
-                if (t.chatStop) {
+                if (run.stop) {
                     self.aiChatFinish(t, conv, '已停止（本轮命令已执行完）');
                     return;
                 }
-                self.aiChatLoop(t, conv, run);
+                self.aiChatLoop(t, conv, run, seq);
             }).catch(function (e) {
-                if (t.chatRequestId === requestId) {
-                    t.chatRequestId = '';
+                if (run.requestId === requestId) {
+                    run.requestId = '';
                 }
-                t.chatStreamText = '';
-                t.chatStreamConvId = null;
-                if (run !== t.chatRun) {
+                run.streamText = '';
+                if (seq !== run.seq) {
                     return;
                 }
-                if (t.chatStop || (e && (e.name === 'AbortError' || e.code === 'ERR_CANCELED'))) {
+                if (run.stop || (e && (e.name === 'AbortError' || e.code === 'ERR_CANCELED'))) {
                     self.aiChatFinish(t, conv, '已停止');
                     return;
                 }
@@ -2231,14 +2303,14 @@ new Vue({
                 self.aiChatFinish(t, conv, '');
             });
         },
-        /* 流式请求一轮 AI 对话：边读 SSE 边更新预览文本，返回最终结果 */
-        aiAgentStream: function (t, conv, run, payload) {
+        /* 流式请求一轮 AI 对话：边读 SSE 边更新该对话的预览文本，返回最终结果 */
+        aiAgentStream: function (t, conv, run, seq, payload) {
             var self = this;
             if (typeof fetch !== 'function' || typeof TextDecoder === 'undefined') {
                 return Promise.reject(new Error('当前浏览器不支持流式输出，请升级浏览器'));
             }
             var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-            t.chatAbortController = controller;
+            run.abortController = controller;
             var promise = fetch('/api/ai/agent/step/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
@@ -2287,16 +2359,12 @@ new Vue({
                     } else if (ev.type === 'error') {
                         failure = ev.message || 'AI 请求失败';
                     } else if (ev.type === 'delta' && typeof ev.text === 'string') {
-                        if (run !== t.chatRun || t.chatStop) {
+                        if (seq !== run.seq || run.stop) {
                             return;
                         }
-                        if (t.chatStreamConvId !== conv.id) {
-                            t.chatStreamConvId = conv.id;
-                            t.chatStreamText = '';
-                        }
-                        t.chatStreamText += ev.text;
+                        run.streamText += ev.text;
                         var now = Date.now();
-                        if (now - lastScroll > 60) {
+                        if (t.chatConvId === conv.id && now - lastScroll > 60) {
                             lastScroll = now;
                             self.scrollAiChat();
                         }
@@ -2332,13 +2400,13 @@ new Vue({
                 return pump();
             });
             return promise.then(function (r) {
-                if (t.chatAbortController === controller) {
-                    t.chatAbortController = null;
+                if (run.abortController === controller) {
+                    run.abortController = null;
                 }
                 return r;
             }, function (e) {
-                if (t.chatAbortController === controller) {
-                    t.chatAbortController = null;
+                if (run.abortController === controller) {
+                    run.abortController = null;
                 }
                 throw e;
             });
@@ -2356,7 +2424,7 @@ new Vue({
         },
         aiChatConfirm: function (m, allow) {
             var t = this.activeTab;
-            if (!t || !t.chatBusy || !m || m.state !== 'confirm') {
+            if (!t || !m || m.state !== 'confirm') {
                 return;
             }
             var conv = null;
@@ -2370,57 +2438,63 @@ new Vue({
             if (!conv) {
                 return;
             }
+            var run = this.aiConvRun(conv);
+            if (!run || !run.busy) {
+                return;
+            }
             if (!allow) {
                 m.state = 'skipped';
                 this.saveConv(t, conv);
-                this.aiChatLoop(t, conv, t.chatRun);
+                this.aiChatLoop(t, conv, run, run.seq);
                 return;
             }
             var self = this;
-            var run = t.chatRun;
+            var seq = run.seq;
             m.state = 'running';
-            t.chatPhase = '正在执行命令…';
+            run.phase = '正在执行命令…';
             var requestId = newAiRunId();
-            t.chatRequestId = requestId;
+            run.requestId = requestId;
             var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-            t.chatExecController = controller;
+            run.execController = controller;
             this.saveConv(t, conv);
-            this.scrollAiChat();
+            if (t.chatConvId === conv.id) {
+                this.scrollAiChat();
+            }
             http.post('/api/ai/agent/exec', {
                 sessionId: t.sessionId,
                 cwd: conv.cwd || '',
                 command: m.cmd,
                 runId: requestId
             }, controller ? { signal: controller.signal } : undefined).then(function (r) {
-                if (t.chatExecController === controller) {
-                    t.chatExecController = null;
+                if (run.execController === controller) {
+                    run.execController = null;
                 }
-                if (t.chatRequestId === requestId) {
-                    t.chatRequestId = '';
+                if (run.requestId === requestId) {
+                    run.requestId = '';
                 }
-                if (run !== t.chatRun) {
+                if (seq !== run.seq) {
                     return;
                 }
                 self.aiFillCard(conv, m, r || {});
                 self.onAiDesktopMaybeRefresh(t, conv);
                 conv.updatedAt = Date.now();
                 self.saveConv(t, conv);
-                if (t.chatStop) {
+                if (run.stop) {
                     self.aiChatFinish(t, conv, '已停止');
                     return;
                 }
-                self.aiChatLoop(t, conv, run);
+                self.aiChatLoop(t, conv, run, seq);
             }).catch(function (e) {
-                if (t.chatExecController === controller) {
-                    t.chatExecController = null;
+                if (run.execController === controller) {
+                    run.execController = null;
                 }
-                if (t.chatRequestId === requestId) {
-                    t.chatRequestId = '';
+                if (run.requestId === requestId) {
+                    run.requestId = '';
                 }
-                if (run !== t.chatRun) {
+                if (seq !== run.seq) {
                     return;
                 }
-                if (t.chatStop || (e && (e.name === 'CanceledError' || e.code === 'ERR_CANCELED' || e.name === 'AbortError'))) {
+                if (run.stop || (e && (e.name === 'CanceledError' || e.code === 'ERR_CANCELED' || e.name === 'AbortError'))) {
                     m.state = 'done';
                     m.error = '已停止';
                     self.saveConv(t, conv);
@@ -2446,18 +2520,22 @@ new Vue({
             if (r.cwd) {
                 conv.cwd = r.cwd;
             }
-            this.scrollAiChat();
+            var t = this.activeTab;
+            if (t && t.chatConvId === conv.id) {
+                this.scrollAiChat();
+            }
         },
         aiChatFinish: function (t, conv, note) {
-            t.chatBusy = false;
-            t.chatStop = false;
-            t.chatPhase = '';
-            t.chatBusyConvId = '';
-            t.chatStreamText = '';
-            t.chatStreamConvId = null;
-            t.chatRequestId = '';
-            t.chatAbortController = null;
-            t.chatExecController = null;
+            var run = this.aiConvRun(conv);
+            if (run) {
+                run.busy = false;
+                run.stop = false;
+                run.phase = '';
+                run.streamText = '';
+                run.requestId = '';
+                run.abortController = null;
+                run.execController = null;
+            }
             if (conv) {
                 if (note) {
                     conv.msgs.push({ role: 'note', text: note });
@@ -2465,7 +2543,9 @@ new Vue({
                 conv.updatedAt = Date.now();
             }
             this.saveConv(t, conv);
-            this.scrollAiChat();
+            if (t && conv && t.chatConvId === conv.id) {
+                this.scrollAiChat();
+            }
         },
         /* 把某个对话拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
         aiBuildHistory: function (conv) {
@@ -3296,7 +3376,7 @@ new Vue({
             } else if (action === 'personalize') {
                 this.openDesktopSettings();
             } else if (action === 'return') {
-                this.closeAiDesktop();
+                this.openTerminalInNewTab();
             }
         },
         isDeskFavorite: function (w) {
@@ -4543,7 +4623,7 @@ new Vue({
             });
             if (this.desktop.settingsVisible || this.desktop.startOpen
                     || this.desktop.menu.visible || busy || this._deskDragDepth
-                    || (this.desktopTab && this.desktopTab.chatBusy)) {
+                    || this.chatAnyBusy(this.desktopTab)) {
                 this._deskLastActivity = Date.now();
                 return;
             }

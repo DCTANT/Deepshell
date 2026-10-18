@@ -1,11 +1,13 @@
 package com.itdct.deepshell.service;
 
+import com.itdct.deepshell.dto.ConnectionForm;
 import com.itdct.deepshell.dto.StatsSnapshot;
 import com.itdct.deepshell.entity.SshConnection;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
+import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.Session;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +22,9 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
@@ -302,6 +306,119 @@ public class SshSessionManager {
             bindings.put(key, s.getId());
         }
         return new OpenResult(s, false);
+    }
+
+    /**
+     * 测试连接参数：只建立一次 SSH 会话随即断开，不进入会话管理。
+     * 编辑态留空的密码 / 私钥口令沿用已保存连接中的值。
+     */
+    public Map<String, Object> test(ConnectionForm f) {
+        String host = trimToNull(f.getHost());
+        if (host == null) {
+            throw new IllegalArgumentException("请输入主机地址");
+        }
+        String username = trimToNull(f.getUsername());
+        if (username == null) {
+            throw new IllegalArgumentException("请输入用户名");
+        }
+        int port = f.getPort() == null ? 22 : f.getPort();
+        if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("端口范围不正确");
+        }
+        String authType = trimToNull(f.getAuthType());
+        authType = authType == null ? "PASSWORD" : authType.toUpperCase(Locale.ROOT);
+
+        SshConnection saved = f.getId() == null ? null : connectionService.get(f.getId());
+
+        String password = f.getPassword();
+        if (password == null || password.isEmpty()) {
+            password = saved == null ? null : cryptoService.decrypt(saved.getPasswordEnc());
+        }
+        String keyPath = trimToNull(f.getKeyPath());
+        if (keyPath == null && saved != null) {
+            keyPath = saved.getKeyPath();
+        }
+        String passphrase = f.getPassphrase();
+        if (passphrase == null || passphrase.isEmpty()) {
+            passphrase = saved == null ? null : cryptoService.decrypt(saved.getPassphraseEnc());
+        }
+
+        Session session = null;
+        long start = System.currentTimeMillis();
+        try {
+            JSch jsch = new JSch();
+            if ("KEY".equals(authType)) {
+                if (keyPath == null) {
+                    throw new IllegalArgumentException("未配置私钥文件路径");
+                }
+                jsch.addIdentity(keyPath, passphrase == null || passphrase.isEmpty()
+                        ? null : passphrase.getBytes(StandardCharsets.UTF_8));
+            }
+            session = jsch.getSession(username, host, port);
+            if (!"KEY".equals(authType)) {
+                if (password == null || password.isEmpty()) {
+                    throw new IllegalArgumentException("未配置密码");
+                }
+                session.setPassword(password);
+            }
+            Properties config = new Properties();
+            config.put("StrictHostKeyChecking", "no");
+            config.put("PreferredAuthentications",
+                    "KEY".equals(authType) ? "publickey" : "password,keyboard-interactive");
+            session.setConfig(config);
+            session.connect(10000);
+
+            long elapsed = System.currentTimeMillis() - start;
+            String version = session.getServerVersion();
+            if (version != null && version.startsWith("SSH-2.0-")) {
+                version = version.substring("SSH-2.0-".length());
+            }
+            StringBuilder msg = new StringBuilder("连接成功，耗时 ")
+                    .append(String.format(Locale.ROOT, "%.1f", elapsed / 1000.0)).append(" 秒");
+            if (version != null && !version.isEmpty()) {
+                msg.append("，服务端 ").append(version);
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("message", msg.toString());
+            result.put("elapsedMs", elapsed);
+            result.put("serverVersion", version);
+            return result;
+        } catch (JSchException e) {
+            throw new IllegalArgumentException(friendlyError(e));
+        } finally {
+            if (session != null) {
+                session.disconnect();
+            }
+        }
+    }
+
+    private static String friendlyError(JSchException e) {
+        String msg = e.getMessage() == null ? "" : e.getMessage();
+        String lower = msg.toLowerCase(Locale.ROOT);
+        if (lower.contains("auth fail") || lower.contains("auth cancel")) {
+            return "认证失败：用户名、密码或私钥不正确";
+        }
+        if (lower.contains("unknownhost") || lower.contains("name or service not known")) {
+            return "无法解析主机地址: " + msg;
+        }
+        if (lower.contains("connection refused")) {
+            return "连接被拒绝：请检查端口与 SSH 服务是否开启";
+        }
+        if (lower.contains("timeout") || lower.contains("timed out")) {
+            return "连接超时：请检查主机地址、端口与网络";
+        }
+        if (lower.contains("invalid privatekey") || lower.contains("no such file")) {
+            return "私钥文件无法读取或格式不正确: " + msg;
+        }
+        return "连接失败: " + msg;
+    }
+
+    private static String trimToNull(String s) {
+        if (s == null) {
+            return null;
+        }
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
     }
 
     private SshSession createSession(Long connectionId, int cols, int rows, String clientKey) throws Exception {
