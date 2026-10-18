@@ -203,6 +203,19 @@ function loadOpenAfterConnect() {
     return 'desktop';
 }
 
+/* 本次启动（同一标签页会话）只有首个连接自动进桌面，之后新开连接一律保持终端标签 */
+function consumeFirstConnect() {
+    try {
+        if (sessionStorage.getItem('deepshell.firstConnectDone') === '1') {
+            return false;
+        }
+        sessionStorage.setItem('deepshell.firstConnectDone', '1');
+        return true;
+    } catch (e) {
+        return true;
+    }
+}
+
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
 var AI_CHAT_MAX = 40;   // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
 
@@ -495,7 +508,7 @@ Vue.component('ai-chat-panel', {
             return this.$root.fmtChatTime(ms);
         },
         openDesktop: function () {
-            this.$root.openAiDesktop();
+            this.$root.openDesktopInNewTab(this.tab);
         }
     }
 });
@@ -563,6 +576,7 @@ new Vue({
             iconOrder: [],
             iconHidden: [],
             iconSelected: '',
+            focusSurface: false,
             iconDragKey: '',
             iconDropKey: '',
             iconMenu: { visible: false, x: 0, y: 0, key: '' },
@@ -1295,14 +1309,18 @@ new Vue({
     },
     methods: {
         /* ---------- 标签与会话 ---------- */
-        openTab: function (connId, clientKey, autoAfterConnect) {
+        openTab: function (connId, clientKey, autoAfterConnect, forceDesktop) {
             var self = this;
+            // 只有本次启动的首个连接才按设置自动进入桌面；强制桌面（新标签打开）不受此限制
+            var firstConnect = consumeFirstConnect();
             var conn = this.connections.find(function (c) { return c.id === connId; });
             var tab = {
                 key: 'tab' + Date.now() + Math.floor(Math.random() * 1000),
                 clientKey: clientKey || newSessionKey(),
                 connId: connId,
-                autoOpenDesktop: !!autoAfterConnect && this.openAfterConnect === 'desktop',
+                autoOpenDesktop: !!autoAfterConnect
+                    && (!!forceDesktop || (firstConnect && this.openAfterConnect === 'desktop')),
+                desktopOpenPath: '',
                 title: conn ? conn.name : ('连接 #' + connId),
                 host: conn ? conn.host : '',
                 status: 'connecting',
@@ -1373,6 +1391,7 @@ new Vue({
                 self.initTerminal(tab);
                 self.loadAiConvs(tab);
             });
+            return tab;
         },
         loadConnections: function () {
             var self = this;
@@ -2539,7 +2558,8 @@ new Vue({
             // 同一连接可能在多个标签打开，进入桌面时以存储中的最新背景为准
             t.desktopBg = loadDesktopBgSettings(t.connId);
             var conv = this.aiActiveConv(t);
-            var p = (conv && conv.cwd) || t.termCwd || t.sftpPath || t.sftpHome || '/';
+            var p = t.desktopOpenPath || (conv && conv.cwd) || t.termCwd || t.sftpPath || t.sftpHome || '/';
+            t.desktopOpenPath = '';
             var self = this;
             if (!this.desktop.visible || this.desktop.tabKey !== t.key) {
                 this.resetDesktopShell(t);
@@ -2582,6 +2602,7 @@ new Vue({
             this.desktop.iconOrder = [];
             this.desktop.iconHidden = [];
             this.desktop.iconSelected = '';
+            this.desktop.focusSurface = false;
             this.desktop.iconDragKey = '';
             this.desktop.iconDropKey = '';
             this.desktop.iconMenu.visible = false;
@@ -2902,6 +2923,7 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.focusSurface = false;
             this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
@@ -3241,6 +3263,7 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.focusSurface = true;
             this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.wallMenu = {
@@ -3750,6 +3773,7 @@ new Vue({
             if (!item) {
                 return;
             }
+            this.desktop.focusSurface = true;
             this.desktop.iconSelected = item.key;
             this.desktop.iconMenu.visible = false;
             if (this.desktop.menu.visible) {
@@ -4840,8 +4864,9 @@ new Vue({
             this.desk.lastSelected = row.name;
             this.desktop.menu.visible = false;
         },
-        desktopSelectAll: function () {
-            this.desk.selected = this.desktopShownEntries.map(function (r) { return r.name; });
+        desktopSelectAll: function (win) {
+            var d = win || this.desk;
+            d.selected = this.deskShownEntries(d).map(function (r) { return r.name; });
         },
         desktopSelectedRows: function (win) {
             var d = win || this.desk;
@@ -4849,6 +4874,23 @@ new Vue({
             return (d.entries || []).filter(function (r) {
                 return names.indexOf(r.name) >= 0;
             });
+        },
+        /* 桌面背景上的图标与资源管理器窗口共用同一套文件操作 */
+        desktopSurfaceSelection: function () {
+            var key = this.desktop.iconSelected;
+            return key ? (this.desktopIconItemMap[key] || null) : null;
+        },
+        desktopSurfaceContextWin: function () {
+            return {
+                id: '__surface__',
+                type: 'surface',
+                path: this.desktop.surface.dir,
+                entries: this.desktop.surface.entries || [],
+                selected: [],
+                lastSelected: '',
+                sortBy: 'name',
+                sortDir: 'asc'
+            };
         },
         desktopTargetRows: function () {
             var d = this.desktopMenuContextWin();
@@ -5129,6 +5171,7 @@ new Vue({
                 this.desktop.iconMenu.visible = false;
             }
             this.desktop.iconSelected = '';
+            this.desktop.focusSurface = true;
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
@@ -6195,56 +6238,80 @@ new Vue({
             if (typing) {
                 return;
             }
+            // 桌面背景图标与资源管理器窗口各自维护选中项，按键跟随最近一次点击的上下文
+            var surfaceFocused = !!this.desktop.focusSurface;
+            var surfaceItem = surfaceFocused ? this.desktopSurfaceSelection() : null;
+            var surfaceRow = surfaceItem && surfaceItem.entry ? surfaceItem.entry : null;
+            var surfaceWin = surfaceFocused ? this.desktopSurfaceContextWin() : null;
             var active = this.desktopWindowById(this.desktop.activeWinId);
-            if (!active || active.type === 'ai') {
-                return;
-            }
-            var selected = this.desktopSelectedRows();
-            if (e.altKey && e.key === 'ArrowLeft') {
-                this.desktopGoBack();
-                e.preventDefault();
-            } else if (e.altKey && e.key === 'ArrowRight') {
-                this.desktopGoForward();
+            var win = active && active.type !== 'ai' ? active : null;
+            var selected = win && !surfaceFocused ? this.desktopSelectedRows(win) : [];
+            if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+                if (win && !surfaceFocused) {
+                    if (e.key === 'ArrowLeft') {
+                        this.desktopGoBack();
+                    } else {
+                        this.desktopGoForward();
+                    }
+                }
                 e.preventDefault();
             } else if (e.key === 'F2') {
-                if (selected.length === 1) {
-                    this.desktopRename(selected[0]);
-                    e.preventDefault();
+                e.preventDefault();
+                if (surfaceRow) {
+                    this.desktopRename(surfaceRow, surfaceWin);
+                } else if (selected.length === 1) {
+                    this.desktopRename(selected[0], win);
                 }
-            } else if (e.key === 'Delete') {
-                if (selected.length) {
-                    this.desktopDeleteRows(selected);
+            } else if (e.key === 'Delete' || e.key === 'Del') {
+                if (surfaceRow) {
                     e.preventDefault();
+                    this.desktopDeleteRows([surfaceRow], surfaceWin);
+                } else if (selected.length) {
+                    e.preventDefault();
+                    this.desktopDeleteRows(selected, win);
                 }
             } else if (e.key === 'Enter') {
-                if (selected.length === 1) {
-                    this.desktopOpenEntry(selected[0]);
+                if (surfaceItem) {
                     e.preventDefault();
+                    this.openDesktopIcon(surfaceItem);
+                } else if (selected.length === 1) {
+                    e.preventDefault();
+                    this.desktopOpenEntry(selected[0], win);
                 }
             } else if (e.key === 'Backspace') {
-                this.desktopUp();
                 e.preventDefault();
+                if (win && !surfaceFocused) {
+                    this.desktopUp();
+                }
             } else if (e.key === 'F5') {
-                this.desktopRefresh();
                 e.preventDefault();
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
-                if (selected.length) {
-                    this.cutDesktopRows(selected, this.desk);
-                    e.preventDefault();
+                if (surfaceFocused) {
+                    this.desktopRefresh(surfaceWin);
+                } else if (win) {
+                    this.desktopRefresh(win);
                 }
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
-                if (selected.length) {
-                    this.copyDesktopRows(selected, this.desk);
+            } else if (e.ctrlKey || e.metaKey) {
+                var key = String(e.key || '').toLowerCase();
+                var rows = surfaceRow ? [surfaceRow] : selected;
+                var targetWin = surfaceRow ? surfaceWin : win;
+                if ((key === 'x' || key === 'c') && rows.length) {
                     e.preventDefault();
-                }
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
-                if (this.canPasteDesktop) {
-                    this.pasteDesktop(this.desk);
+                    if (key === 'x') {
+                        this.cutDesktopRows(rows, targetWin);
+                    } else {
+                        this.copyDesktopRows(rows, targetWin);
+                    }
+                } else if (key === 'v' && (surfaceFocused || win) && this.canPasteDesktop) {
                     e.preventDefault();
+                    this.pasteDesktop(surfaceFocused ? surfaceWin : win);
+                } else if (key === 'a') {
+                    if (surfaceFocused) {
+                        e.preventDefault();
+                    } else if (win) {
+                        e.preventDefault();
+                        this.desktopSelectAll(win);
+                    }
                 }
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
-                this.desktopSelectAll();
-                e.preventDefault();
             }
         },
         onAiDesktopMaybeRefresh: function (t, conv) {
@@ -6360,6 +6427,28 @@ new Vue({
                 return;
             }
             this.desktopGo(path);
+        },
+        /* 新浏览器标签打开桌面：同一连接复用同一个标签，避免重复堆叠 */
+        openDesktopInNewTab: function (tab) {
+            var t = tab || this.activeTab;
+            if (!t || t.connId == null) {
+                ELEMENT.Message.warning('当前会话没有可用的连接记录');
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('该标签尚未连接，无法打开桌面');
+                return;
+            }
+            var conv = this.aiActiveConv(t);
+            var path = (conv && conv.cwd) || t.termCwd || '';
+            var url = '/workspace?connId=' + encodeURIComponent(t.connId) + '&view=desktop';
+            if (path) {
+                url += '&path=' + encodeURIComponent(path);
+            }
+            var win = window.open(url, 'deepshell-desktop-' + t.connId);
+            if (!win) {
+                ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
+            }
         },
         openTerminalInNewTab: function () {
             var t = this.desktopTab;
@@ -7356,8 +7445,7 @@ new Vue({
             } else if (mode === 'duplicateTab') {
                 this.openTab(tab.connId);
             } else if (mode === 'aiDesktop') {
-                this.activate(tab.key);
-                this.openAiDesktop(tab);
+                this.openDesktopInNewTab(tab);
             } else if (mode === 'copyIp') {
                 if (tab.host) {
                     this.copyText(tab.host);
@@ -9587,14 +9675,20 @@ new Vue({
             var params = new URLSearchParams(location.search);
             var cid = params.get('connId');
             if (cid) {
-                // 带参打开（连接管理页「连接」/ 桌面「返回终端」）：仅本次生效，校验存在后立即清理地址栏参数，
-                // 避免参数陈旧后被反复重开成「连接 #id」并触发后端「连接不存在」
-                var forceWorkbench = params.get('view') === 'workbench';
+                // 带参打开（连接管理页「连接」/「返回终端」/ 新标签打开桌面）：仅本次生效，
+                // 校验存在后立即清理地址栏参数，避免参数陈旧后被反复重开成「连接 #id」
+                var view = params.get('view');
+                var forceWorkbench = view === 'workbench';
+                var forceDesktop = view === 'desktop';
+                var desktopPath = params.get('path') || '';
                 history.replaceState(null, '', '/workspace');
                 var id = Number(cid);
                 var exists = self.connections.some(function (c) { return c.id === id; });
                 if (exists) {
-                    self.openTab(id, null, !forceWorkbench);
+                    var tab = self.openTab(id, null, !forceWorkbench, forceDesktop);
+                    if (tab) {
+                        tab.desktopOpenPath = desktopPath;
+                    }
                 } else {
                     ELEMENT.Message.warning('连接不存在或已被删除');
                 }
@@ -9730,9 +9824,10 @@ new Vue({
             }
         });
         // 可视化桌面快捷键：F2 重命名 / Delete 删除 / Enter 打开 / Backspace 上级 / F5 刷新 / Ctrl+A 全选
+        // 捕获阶段注册，避免内层元素拦截或被浏览器默认行为（F2、F5、Alt+←→）抢走
         document.addEventListener('keydown', function (e) {
             self.onDesktopKeydown(e);
-        });
+        }, true);
         window.addEventListener('blur', function () {
             self.cancelDesktopMarquee();
             if (self.tabMenu.visible) {
