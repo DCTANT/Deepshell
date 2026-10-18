@@ -3,6 +3,7 @@ package com.itdct.deepshell.web;
 import com.itdct.deepshell.common.ImageThumbnails;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.dto.ArchiveReq;
+import com.itdct.deepshell.dto.CopyReq;
 import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
 import com.itdct.deepshell.service.ArchiveService;
@@ -83,6 +84,18 @@ public class SftpController {
     public R<Void> move(@RequestBody SftpReq req) throws Exception {
         sftp.move(req.getSessionId(), req.getPath(), req.getDestDir());
         audit.record("FILE_MOVE", req.getPath(), "OK", "目标目录：" + req.getDestDir());
+        return R.ok();
+    }
+
+    /** 复制/粘贴：把多个文件或文件夹复制到 destDir 目录下 */
+    @PostMapping("/copy")
+    public R<Void> copy(@RequestBody CopyReq req) throws Exception {
+        if (req == null) {
+            throw new IllegalArgumentException("请求参数缺失");
+        }
+        sftp.copy(req.getSessionId(), req.getPaths(), req.getDestDir());
+        int count = req.getPaths() == null ? 0 : req.getPaths().size();
+        audit.record("FILE_COPY", req.getDestDir(), "OK", "复制 " + count + " 项");
         return R.ok();
     }
 

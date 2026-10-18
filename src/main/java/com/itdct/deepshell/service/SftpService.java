@@ -222,6 +222,82 @@ public class SftpService {
         return s;
     }
 
+    /** 复制文件或文件夹到目标目录（同名目标存在时直接报错，避免静默覆盖） */
+    public void copy(String sessionId, List<String> paths, String destDir) throws Exception {
+        if (paths == null || paths.isEmpty()) {
+            throw new IllegalArgumentException("没有要复制的文件");
+        }
+        if (destDir == null || destDir.trim().isEmpty()) {
+            throw new IllegalArgumentException("目标目录为空");
+        }
+        final String dest = trimTrailingSlash(destDir.trim());
+        withSftp(sessionId, c -> {
+            SftpATTRS destAttrs = c.stat(dest);
+            if (!destAttrs.isDir()) {
+                throw new IllegalArgumentException("目标不是目录");
+            }
+            for (String raw : paths) {
+                if (raw == null || raw.trim().isEmpty()) {
+                    continue;
+                }
+                String src = trimTrailingSlash(raw.trim());
+                String name = src.substring(src.lastIndexOf('/') + 1);
+                if (name.isEmpty()) {
+                    throw new IllegalArgumentException("源路径不合法");
+                }
+                SftpATTRS srcAttrs = c.stat(src);
+                if (srcAttrs.isDir() && (dest.equals(src) || dest.startsWith(src + "/"))) {
+                    throw new IllegalArgumentException("不能把文件夹复制到自身或其子目录");
+                }
+                String target = join(dest, name);
+                try {
+                    c.stat(target);
+                    throw new IllegalArgumentException("目标已存在：" + name);
+                } catch (SftpException e) {
+                    if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+                        throw e;
+                    }
+                }
+                copyRecursive(c, src, target, 0);
+            }
+            return null;
+        });
+    }
+
+    private void copyRecursive(ChannelSftp c, String src, String target, int depth) throws Exception {
+        if (depth > MAX_RECURSION) {
+            throw new IllegalArgumentException("目录层级过深");
+        }
+        SftpATTRS attrs = c.stat(src);
+        if (attrs.isDir()) {
+            c.mkdir(target);
+            @SuppressWarnings("unchecked")
+            Vector<ChannelSftp.LsEntry> entries = c.ls(src);
+            for (ChannelSftp.LsEntry entry : entries) {
+                String name = entry.getFilename();
+                if (".".equals(name) || "..".equals(name)) {
+                    continue;
+                }
+                copyRecursive(c, join(src, name), join(target, name), depth + 1);
+            }
+            return;
+        }
+        // JSch 的同一个 SFTP 通道不支持同时打开 get 读流和 put 写流
+        // （并发流常见报错 java.io.IOException: 1: End of file）。
+        // 先完整下载到本机临时文件，再顺序上传到目标，避免两个流同时占用通道。
+        Path tmp = Files.createTempFile("deepshell-copy-", ".tmp");
+        try {
+            c.get(src, tmp.toString());
+            c.put(tmp.toString(), target);
+        } finally {
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (Exception ignore) {
+                // 临时文件清理失败不影响复制结果
+            }
+        }
+    }
+
     public void delete(String sessionId, String path) throws Exception {
         withSftp(sessionId, c -> {
             deleteRecursive(c, path, 0);

@@ -614,7 +614,6 @@
                           @keyup.esc.native="w.pathEditing = false"
                           @blur="commitDesktopPathEdit(w)"></el-input>
             </div>
-            <span class="dsk-ai-chip" v-if="desktopAiDir" title="AI 当前工作目录，点击定位" @click="desktopGo(desktopAiDir)"><i class="el-icon-cpu"></i>AI 目录：{{ desktopAiDir }}</span>
             <el-input size="mini" v-model="w.keyword" clearable prefix-icon="el-icon-search"
                       class="dsk-search" placeholder="筛选当前目录"
                       @input="desktopClearSelection"></el-input>
@@ -716,6 +715,7 @@
                              :data-name="row.name"
                              :class="{ selected: isDeskSelected(w, row),
                                        dragging: isDeskDragging(w, row),
+                                       cut: isDeskCut(w, row),
                                        'drop-target': w.dropTarget === row.name && row.dir }"
                              :title="row.name" draggable="true"
                              @click.stop="desktopSelect(row, $event)"
@@ -761,6 +761,7 @@
                                  :data-name="row.name"
                                  :class="{ selected: isDeskSelected(w, row),
                                            dragging: isDeskDragging(w, row),
+                                           cut: isDeskCut(w, row),
                                            'drop-target': w.dropTarget === row.name && row.dir }"
                                  draggable="true"
                                  @click.stop="desktopSelect(row, $event)"
@@ -1397,6 +1398,10 @@
                      @click="desktopMenuAction('openNewWindow')">
                     <i class="el-icon-folder-add"></i>在新窗口打开
                 </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && !isLnkFile(desktop.menu.target)"
+                     @click="desktopMenuAction('shortcut')">
+                    <i class="el-icon-monitor"></i>发送到桌面快捷方式
+                </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
                      @click="desktopMenuAction('terminal')">
                     <i class="el-icon-position"></i>在终端中打开
@@ -1424,6 +1429,18 @@
                     <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
                 </div>
                 <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('cut')">
+                    <i class="el-icon-scissors"></i>{{ desktopMenuMulti ? '剪切选中项' : '剪切' }}
+                    <span class="dsk-menu-key">Ctrl+X</span>
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('copy')">
+                    <i class="el-icon-copy-document"></i>{{ desktopMenuMulti ? '复制选中项' : '复制' }}
+                    <span class="dsk-menu-key">Ctrl+C</span>
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir && canPasteDesktop"
+                     @click="desktopMenuAction('pasteInto')">
+                    <i class="el-icon-document-copy"></i>粘贴到此文件夹
+                </div>
                 <div class="dsk-menu-item" @click="desktopMenuAction('copyPath')">
                     <i class="el-icon-document-copy"></i>{{ desktopMenuMulti ? '复制选中路径' : '复制路径' }}
                 </div>
@@ -1444,6 +1461,10 @@
             </template>
             <template v-else>
                 <div class="dsk-menu-title">当前目录</div>
+                <div class="dsk-menu-item" :class="{ disabled: !canPasteDesktop }"
+                     @click="canPasteDesktop && desktopMenuAction('paste')">
+                    <i class="el-icon-document-copy"></i>粘贴<span class="dsk-menu-key">Ctrl+V</span>
+                </div>
                 <div class="dsk-menu-item" @click="desktopMenuAction('newFolder')">
                     <i class="el-icon-folder-add"></i>新建文件夹
                 </div>
@@ -1521,6 +1542,10 @@
              :style="{ left: desktop.wallMenu.x + 'px', top: desktop.wallMenu.y + 'px' }"
              @click.stop @contextmenu.prevent>
             <div class="dsk-menu-title">桌面</div>
+            <div class="dsk-menu-item" :class="{ disabled: !canPasteDesktop }"
+                 @click="canPasteDesktop && desktopWallMenuAction('paste')">
+                <i class="el-icon-document-copy"></i>粘贴<span class="dsk-menu-key">Ctrl+V</span>
+            </div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('refresh')">
                 <i class="el-icon-refresh"></i>刷新
             </div>

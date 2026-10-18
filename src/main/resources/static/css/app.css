@@ -2825,15 +2825,6 @@ body.resizing .term-host {
     width: 170px;
 }
 
-.dsk-window .dsk-ai-chip {
-    flex: 0 1 auto;
-    max-width: 250px;
-    padding: 3px 9px;
-    border-color: #d3e2f8;
-    background: #eef5ff;
-    color: #2f6fd6;
-}
-
 .dsk-window .dsk-side {
     width: 196px;
 }
@@ -3025,28 +3016,6 @@ body.resizing .term-host {
     font-family: Consolas, Menlo, monospace;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-.dsk-ai-chip {
-    max-width: 430px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border: 1px solid #31486c;
-    border-radius: 14px;
-    background: #22314a;
-    color: #bcd2f2;
-    font-size: 12px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-}
-
-.dsk-ai-chip:hover {
-    border-color: #4c8dff;
-    color: #fff;
 }
 
 .dsk-topbar .dsk-close-btn {
@@ -3425,6 +3394,11 @@ body.resizing .term-host {
     opacity: .4;
 }
 
+.dsk-item.cut,
+.dsk-row.cut {
+    opacity: .5;
+}
+
 .dsk-item.drop-target {
     background: #e3f2ff;
     border-color: #3d7eff;
@@ -3760,6 +3734,15 @@ body.resizing .term-host {
     color: #2f6fd6;
 }
 
+.dsk-menu-item.disabled {
+    opacity: .42;
+    cursor: default;
+}
+
+.dsk-menu-item.disabled:hover {
+    background: transparent;
+}
+
 .dsk-menu-item.danger {
     color: #cf3f3f;
 }
@@ -3870,9 +3853,6 @@ body.resizing .term-host {
         display: none;
     }
 
-    .dsk-ai-chip {
-        max-width: 280px;
-    }
 }
 
 @media (max-width: 900px) {

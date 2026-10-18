@@ -491,6 +491,7 @@ new Vue({
         panelVisible: true,
         panelTab: 'file',
         panelWidth: 480,
+        desktopClipboard: { connId: null, paths: [], names: [], cut: false },
         /* AI 可视化桌面 */
         desktopViews: [
             { id: 'large', label: '大图标', icon: 'el-icon-menu' },
@@ -923,6 +924,12 @@ new Vue({
         desktopMenuSelectionCount: function () {
             var d = this.desktopMenuContextWin();
             return d && d.selected ? d.selected.length : 0;
+        },
+        canPasteDesktop: function () {
+            var t = this.desktopTab;
+            var c = this.desktopClipboard;
+            return !!(t && c && c.connId === t.connId
+                && c.paths && c.paths.length);
         },
         desktopIconMenuTitle: function () {
             var key = this.desktop.iconMenu.key;
@@ -3145,6 +3152,12 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             if (action === 'newWindow') {
                 this.openDesktopExplorerWindow();
+            } else if (action === 'paste') {
+                this.pasteDesktop({
+                    id: '__surface__',
+                    type: 'surface',
+                    path: this.desktop.surface.dir
+                }, this.desktop.surface.dir);
             } else if (action === 'refresh') {
                 this.refreshDesktopSurface();
             } else if (action === 'personalize') {
@@ -3492,9 +3505,245 @@ new Vue({
                 }
             }
         },
+        isLnkFile: function (row) {
+            return !!row && !row.dir && /\.lnk$/i.test(row.name || '');
+        },
         openDesktopShortcut: function (item) {
-            ELEMENT.Message.info('快捷方式「' + (item.label || item.entry.name)
-                + '」的 .lnk 解析将在格式确定后接入');
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !item) {
+                return;
+            }
+            var self = this;
+            http.get('/api/sftp/read', {
+                params: { sessionId: t.sessionId, path: item.path },
+                silent: true
+            }).then(function (text) {
+                var data = null;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) { /* ignore */ }
+                if (!data || data.type !== 'deepshell-shortcut' || !data.target) {
+                    ELEMENT.Message.warning('快捷方式格式无法识别');
+                    return;
+                }
+                if (data.targetType === 'folder') {
+                    self.openDesktopExplorerWindow(data.target);
+                    return;
+                }
+                var target = String(data.target);
+                var idx = target.lastIndexOf('/');
+                var parent = idx <= 0 ? '/' : target.substring(0, idx);
+                var name = idx >= 0 ? target.substring(idx + 1) : target;
+                var row = { name: name, dir: false, size: 0, mtime: 0 };
+                if (self.isDesktopImage(row)) {
+                    self.openDesktopImagePreview(row, {
+                        path: parent,
+                        sortBy: 'name',
+                        sortDir: 'asc'
+                    });
+                } else {
+                    self.openRemoteEdit(t, target);
+                }
+            }).catch(function (e) {
+                ELEMENT.Message.warning('无法打开快捷方式：'
+                    + ((e && e.message) || '格式错误'));
+            });
+        },
+        createDesktopShortcut: function (row, win) {
+            var t = this.desktopTab;
+            var d = win || this.desk;
+            if (!t || !t.sessionId || !row) {
+                return;
+            }
+            if (this.isLnkFile(row)) {
+                ELEMENT.Message.info('不能为快捷方式再创建快捷方式');
+                return;
+            }
+            var target = this.desktopEntryPath(row, d);
+            var self = this;
+            var ready = this.desktop.surface.loaded
+                ? Promise.resolve()
+                : this.loadDesktopSurface();
+            ready.then(function () {
+                var dir = self.desktop.surface.dir;
+                if (!dir) {
+                    ELEMENT.Message.warning('桌面目录未就绪');
+                    return;
+                }
+                var base = row.name;
+                var candidate = base + '.lnk';
+                var n = 2;
+                var names = (self.desktop.surface.entries || []).map(function (e) {
+                    return e.name;
+                });
+                while (names.indexOf(candidate) >= 0) {
+                    candidate = base + ' (' + n + ').lnk';
+                    n++;
+                }
+                var content = JSON.stringify({
+                    type: 'deepshell-shortcut',
+                    version: 1,
+                    target: target,
+                    targetType: row.dir ? 'folder' : 'file',
+                    label: base,
+                    createdAt: Date.now()
+                }, null, 2);
+                return http.post('/api/sftp/write', {
+                    sessionId: t.sessionId,
+                    path: self.pathJoin(dir, candidate),
+                    content: content
+                }).then(function () {
+                    ELEMENT.Message.success('已发送到桌面快捷方式：' + candidate);
+                    self.refreshDesktopSurface();
+                });
+            }).catch(function () { /* 已提示 */ });
+        },
+        copyDesktopRows: function (rows, win) {
+            var t = this.desktopTab;
+            var d = win || this.desk;
+            rows = rows || [];
+            if (!t || t.connId == null || !rows.length) {
+                return;
+            }
+            var self = this;
+            this.desktopClipboard = {
+                connId: t.connId,
+                paths: rows.map(function (r) {
+                    return self.desktopEntryPath(r, d);
+                }),
+                names: rows.map(function (r) {
+                    return r.name;
+                }),
+                cut: false
+            };
+            ELEMENT.Message.success(rows.length === 1
+                ? ('已复制：' + rows[0].name)
+                : ('已复制 ' + rows.length + ' 项'));
+        },
+        cutDesktopRows: function (rows, win) {
+            var t = this.desktopTab;
+            var d = win || this.desk;
+            rows = rows || [];
+            if (!t || t.connId == null || !rows.length) {
+                return;
+            }
+            var self = this;
+            this.desktopClipboard = {
+                connId: t.connId,
+                paths: rows.map(function (r) {
+                    return self.desktopEntryPath(r, d);
+                }),
+                names: rows.map(function (r) {
+                    return r.name;
+                }),
+                cut: true
+            };
+            ELEMENT.Message.success(rows.length === 1
+                ? ('已剪切：' + rows[0].name)
+                : ('已剪切 ' + rows.length + ' 项'));
+        },
+        isDeskCut: function (win, row) {
+            var c = this.desktopClipboard;
+            if (!c || !c.cut || !row) {
+                return false;
+            }
+            return c.paths.indexOf(this.deskEntryPath(win || this.desk, row)) >= 0;
+        },
+        pasteDesktop: function (win, destDir) {
+            var t = this.desktopTab;
+            var d = win || this.desk;
+            var c = this.desktopClipboard;
+            if (!t || !t.sessionId || !c || !c.paths || !c.paths.length) {
+                ELEMENT.Message.info('剪贴板为空');
+                return;
+            }
+            if (c.connId !== t.connId) {
+                ELEMENT.Message.warning('剪贴板来自其他连接，不能跨连接粘贴');
+                return;
+            }
+            var dest = destDir || (d.type === 'surface'
+                ? this.desktop.surface.dir : d.path);
+            if (!dest) {
+                ELEMENT.Message.warning('目标目录未知');
+                return;
+            }
+            var self = this;
+            var parentSame = c.paths.every(function (p) {
+                var parent = p.substring(0, p.lastIndexOf('/')) || '/';
+                return self.trimSlash(parent) === self.trimSlash(dest);
+            });
+            if (parentSame) {
+                ELEMENT.Message.info('文件已在该目录中');
+                return;
+            }
+            var loading = ELEMENT.Message({
+                message: (c.cut ? '正在移动 ' : '正在粘贴 ') + c.paths.length + ' 项…',
+                duration: 0,
+                iconClass: 'el-icon-loading'
+            });
+            var sources = c.paths.slice();
+            if (c.cut) {
+                var chain = Promise.resolve();
+                var ok = 0;
+                var fail = 0;
+                var failed = [];
+                sources.forEach(function (src) {
+                    chain = chain.then(function () {
+                        return http.post('/api/sftp/move', {
+                            sessionId: t.sessionId,
+                            path: src,
+                            destDir: dest
+                        }).then(function () {
+                            ok++;
+                        }).catch(function () {
+                            fail++;
+                            failed.push(src);
+                        });
+                    });
+                });
+                chain.then(function () {
+                    loading.close();
+                    if (fail === 0) {
+                        self.desktopClipboard = { connId: null, paths: [], names: [], cut: false };
+                        ELEMENT.Message.success('已移动 ' + ok + ' 项');
+                    } else {
+                        self.desktopClipboard = {
+                            connId: t.connId,
+                            paths: failed,
+                            names: failed.map(function (p) {
+                                return p.substring(p.lastIndexOf('/') + 1);
+                            }),
+                            cut: true
+                        };
+                        ELEMENT.Message.warning('移动完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
+                    }
+                    var dirs = {};
+                    sources.forEach(function (p) {
+                        dirs[p.substring(0, p.lastIndexOf('/')) || '/'] = true;
+                    });
+                    self.desktop.windows.forEach(function (w) {
+                        if (w.type !== 'ai' && dirs[w.path]) {
+                            self.desktopRefresh(w);
+                        }
+                    });
+                    self.desktopRefresh(d);
+                    if (dirs[self.desktop.surface.dir] || dest === self.desktop.surface.dir) {
+                        self.refreshDesktopSurface();
+                    }
+                });
+                return;
+            }
+            http.post('/api/sftp/copy', {
+                sessionId: t.sessionId,
+                destDir: dest,
+                paths: sources
+            }).then(function () {
+                loading.close();
+                ELEMENT.Message.success('已粘贴 ' + sources.length + ' 项');
+                self.desktopRefresh(d);
+            }).catch(function () {
+                loading.close();
+            });
         },
         onDesktopIconDragStart: function (ev, item) {
             if (!item) {
@@ -4615,6 +4864,20 @@ new Vue({
                 if (target && target.dir) {
                     this.openDesktopExplorerWindow(this.desktopEntryPath(target, ctxWin));
                 }
+            } else if (action === 'shortcut') {
+                if (target) {
+                    this.createDesktopShortcut(target, ctxWin);
+                }
+            } else if (action === 'cut') {
+                this.cutDesktopRows(rows, ctxWin);
+            } else if (action === 'copy') {
+                this.copyDesktopRows(rows, ctxWin);
+            } else if (action === 'paste') {
+                this.pasteDesktop(ctxWin);
+            } else if (action === 'pasteInto') {
+                if (target && target.dir) {
+                    this.pasteDesktop(ctxWin, this.desktopEntryPath(target, ctxWin));
+                }
             } else if (action === 'compressDialog') {
                 this.desktopOpenArchiveDialog('zip', ctxWin);
             } else if (action.indexOf('compress:') === 0) {
@@ -5671,6 +5934,21 @@ new Vue({
             } else if (e.key === 'F5') {
                 this.desktopRefresh();
                 e.preventDefault();
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+                if (selected.length) {
+                    this.cutDesktopRows(selected, this.desk);
+                    e.preventDefault();
+                }
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+                if (selected.length) {
+                    this.copyDesktopRows(selected, this.desk);
+                    e.preventDefault();
+                }
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+                if (this.canPasteDesktop) {
+                    this.pasteDesktop(this.desk);
+                    e.preventDefault();
+                }
             } else if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
                 this.desktopSelectAll();
                 e.preventDefault();
