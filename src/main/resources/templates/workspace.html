@@ -494,7 +494,53 @@
          @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
          @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
         <div class="dsk-wallpaper" @click="onDesktopSurfaceClick"
-             @contextmenu.prevent="onDesktopWallContextMenu"></div>
+             @contextmenu.prevent="onDesktopWallContextMenu">
+            <div class="dsk-wallpaper-img" v-if="desktopBgSettings.url"
+                 :style="{ backgroundImage: 'url(' + desktopBgSettings.url + ')',
+                           opacity: desktopBgSettings.opacity,
+                           filter: desktopBgSettings.blur
+                               ? ('blur(' + desktopBgSettings.blur + 'px)') : 'none' }"></div>
+        </div>
+
+        <div class="dsk-icons">
+            <div v-for="icon in desktopIconItems" :key="icon.key" class="dsk-icon"
+                 :class="{ selected: desktop.iconSelected === icon.key,
+                           dragging: desktop.iconDragKey === icon.key,
+                           'drop-target': desktop.iconDropKey === icon.key }"
+                 :data-icon-key="icon.key" :title="icon.label" draggable="true"
+                 @click.stop="selectDesktopIcon(icon)"
+                 @dblclick.stop="openDesktopIcon(icon)"
+                 @contextmenu.prevent.stop="openDesktopIconMenu($event, icon)"
+                 @dragstart.stop="onDesktopIconDragStart($event, icon)"
+                 @dragend.stop="onDesktopIconDragEnd"
+                 @dragover.prevent.stop="onDesktopIconDragOver($event, icon)"
+                 @dragleave.stop="onDesktopIconDragLeave(icon)"
+                 @drop.prevent.stop="onDesktopIconDrop($event, icon)">
+                <span v-if="icon.type === 'app'" class="dsk-icon-app"
+                      :style="{ background: icon.color }">
+                    <i :class="icon.icon"></i>
+                </span>
+                <svg v-else-if="icon.type === 'folder'" class="dsk-folder-svg dsk-icon-folder"
+                     viewBox="0 0 64 52" aria-hidden="true">
+                    <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
+                    <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
+                    <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
+                </svg>
+                <span v-else class="dsk-icon-file-wrap">
+                    <span class="dsk-file-ico" :class="'fi-' + icon.kind">
+                        <span class="dsk-ext" :class="{ long: icon.ext.length > 3 }">{{ icon.ext }}</span>
+                    </span>
+                    <i v-if="icon.type === 'shortcut'" class="el-icon-link dsk-icon-shortcut-mark"></i>
+                </span>
+                <span class="dsk-icon-name">{{ icon.label }}</span>
+            </div>
+            <div class="dsk-icons-msg" v-if="desktop.surface.loading">
+                <i class="el-icon-loading"></i> 正在读取桌面…
+            </div>
+            <div class="dsk-icons-msg error" v-else-if="desktop.surface.error">
+                <i class="el-icon-warning-outline"></i> {{ desktop.surface.error }}
+            </div>
+        </div>
 
         <div class="dsk-window-layer">
             <div v-for="w in desktop.windows" :key="w.id" class="dsk-window"
@@ -1072,11 +1118,27 @@
                                 </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
-                                        <b>背景图片</b>
+                                        <b>终端背景图片</b>
                                         <span>{{ bgSettings.url ? '已设置背景' : '未设置背景' }} · 不透明度
                                             {{ Math.round(bgSettings.opacity * 100) }}%</span>
                                     </div>
-                                    <el-button size="mini" @click="bgVisible = true">背景设置</el-button>
+                                    <el-button size="mini" @click="openBgSettings('terminal')">背景设置</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>AI 桌面背景图片</b>
+                                        <span>{{ desktopBgSettings.url ? '已设置背景' : '未设置背景' }} · 不透明度
+                                            {{ Math.round(desktopBgSettings.opacity * 100) }}%</span>
+                                    </div>
+                                    <el-button size="mini" @click="openBgSettings('desktop')">背景设置</el-button>
+                                </div>
+                                <div class="dsk-set-row" v-for="a in desktopAppIcons" :key="'setic' + a.key">
+                                    <div class="dsk-set-info">
+                                        <b>{{ a.label }}</b>
+                                        <span>在桌面上显示该图标；隐藏后可在这里恢复</span>
+                                    </div>
+                                    <el-switch :value="!isDesktopAppHidden(a.key)" size="mini"
+                                               @change="setDesktopAppHidden(a.key, !$event)"></el-switch>
                                 </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
@@ -1373,7 +1435,7 @@
                     <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
                 </div>
                 <div class="dsk-menu-item danger" @click="desktopMenuAction('delete')">
-                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('删除 ' + desk.selected.length + ' 项') : '删除' }}
+                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('删除 ' + desktopMenuSelectionCount + ' 项') : '删除' }}
                     <span class="dsk-menu-key">Del</span>
                 </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('props')">
@@ -1437,7 +1499,7 @@
         <div class="dsk-menu dsk-menu-sub" ref="deskDownloadSub" v-if="desktop.downloadSub.visible"
              :style="{ left: desktop.downloadSub.x + 'px', top: desktop.downloadSub.y + 'px' }"
              @click.stop @contextmenu.prevent>
-            <div class="dsk-menu-title">下载 {{ desk.selected.length }} 项</div>
+            <div class="dsk-menu-title">下载 {{ desktopMenuSelectionCount }} 项</div>
             <div class="dsk-menu-item" @click="desktopMenuAction('downloadBundle')">
                 <i class="el-icon-box"></i>
                 <span class="dsk-menu-sub-name">打包下载</span>
@@ -1459,12 +1521,32 @@
              :style="{ left: desktop.wallMenu.x + 'px', top: desktop.wallMenu.y + 'px' }"
              @click.stop @contextmenu.prevent>
             <div class="dsk-menu-title">桌面</div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('refresh')">
+                <i class="el-icon-refresh"></i>刷新
+            </div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('newWindow')">
                 <i class="el-icon-folder-add"></i>新建资源管理器窗口
             </div>
             <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('personalize')">
+                <i class="el-icon-setting"></i>个性化
+            </div>
+            <div class="dsk-menu-sep"></div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('return')">
                 <i class="el-icon-back"></i>返回工作台
+            </div>
+        </div>
+
+        <!-- 桌面应用图标右键菜单 -->
+        <div class="dsk-menu dsk-icon-menu" v-if="desktop.iconMenu.visible"
+             :style="{ left: desktop.iconMenu.x + 'px', top: desktop.iconMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">{{ desktopIconMenuTitle }}</div>
+            <div class="dsk-menu-item" @click="desktopIconMenuAction('open')">
+                <i class="el-icon-folder-opened"></i>打开
+            </div>
+            <div class="dsk-menu-item" @click="desktopIconMenuAction('hide')">
+                <i class="el-icon-remove-outline"></i>隐藏
             </div>
         </div>
 
@@ -1673,12 +1755,13 @@
         <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
     </el-dialog>
 
-    <!-- 背景图片设置 -->
-    <el-dialog title="背景图片设置" :visible.sync="bgVisible" width="520px" append-to-body>
+    <!-- 背景图片设置（终端 / AI 桌面共用弹窗） -->
+    <el-dialog :title="bgTarget === 'desktop' ? 'AI 桌面背景设置' : '终端背景设置'"
+               :visible.sync="bgVisible" width="520px" append-to-body>
         <div class="set-row">
             <span class="set-label">图片</span>
-            <el-input size="small" v-model="bgSettings.url" placeholder="图片 URL，或点击右侧上传本地图片"
-                      style="flex:1" @change="applyBg"></el-input>
+            <el-input size="small" v-model="bgDraft.url" placeholder="图片 URL，或点击右侧上传本地图片"
+                      style="flex:1" @change="applyBgDraft"></el-input>
             <el-upload :show-file-list="false" :http-request="uploadBg" action="#" accept="image/*"
                        style="display:inline-block;margin-left:8px">
                 <el-button size="small" icon="el-icon-upload2">上传</el-button>
@@ -1686,15 +1769,15 @@
         </div>
         <div class="set-row">
             <span class="set-label">不透明度</span>
-            <el-slider v-model="bgSettings.opacity" :min="0.1" :max="1" :step="0.05"
-                       style="flex:1" @change="applyBg"></el-slider>
-            <span class="set-hint" style="width:44px;text-align:right">{{ Math.round(bgSettings.opacity * 100) }}%</span>
+            <el-slider v-model="bgDraft.opacity" :min="0.1" :max="1" :step="0.05"
+                       style="flex:1" @change="applyBgDraft"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ Math.round(bgDraft.opacity * 100) }}%</span>
         </div>
         <div class="set-row">
             <span class="set-label">模糊度</span>
-            <el-slider v-model="bgSettings.blur" :min="0" :max="12" :step="1"
-                       style="flex:1" @change="applyBg"></el-slider>
-            <span class="set-hint" style="width:44px;text-align:right">{{ bgSettings.blur }}px</span>
+            <el-slider v-model="bgDraft.blur" :min="0" :max="12" :step="1"
+                       style="flex:1" @change="applyBgDraft"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ bgDraft.blur }}px</span>
         </div>
         <div slot="footer">
             <el-button size="small" @click="clearBg">清除背景</el-button>
@@ -1819,7 +1902,7 @@
                 <div class="arc-sources-title">
                     <i class="el-icon-folder-opened"></i>
                     压缩 {{ archiveSources.length }} 项
-                    <span class="dim">到 {{ desk.path }}</span>
+                    <span class="dim">到 {{ desktop.archiveWin ? desktop.archiveWin.path : desk.path }}</span>
                 </div>
                 <div class="arc-chips">
                     <span v-for="r in archiveSources" :key="'arcsrc' + r.name" class="arc-chip">
@@ -1854,7 +1937,7 @@
                     </el-select>
                 </el-form-item>
                 <el-form-item label="输出目录">
-                    <span class="arc-path">{{ desk.path }}</span>
+                    <span class="arc-path">{{ desktop.archiveWin ? desktop.archiveWin.path : desk.path }}</span>
                 </el-form-item>
                 <el-form-item label="覆盖同名">
                     <el-switch v-model="archiveForm.overwrite" size="mini"></el-switch>
