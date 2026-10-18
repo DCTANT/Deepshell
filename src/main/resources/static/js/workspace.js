@@ -1567,7 +1567,7 @@ new Vue({
             } else if (cmd === 'hotkey') {
                 this.hotkeyVisible = true;
             } else if (cmd === 'bg') {
-                this.bgVisible = true;
+                this.openBgSettings('terminal');
             } else if (cmd === 'help') {
                 this.helpVisible = true;
             } else if (cmd === 'about') {
