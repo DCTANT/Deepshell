@@ -2398,11 +2398,17 @@
         <div class="tab-menu-item" @click="menuAction('editConn')">
             <i class="el-icon-edit"></i>编辑连接
         </div>
+        <div class="tab-menu-item" @click="menuAction('duplicateTab')">
+            <i class="el-icon-copy-document"></i>复制标签
+        </div>
         <div class="tab-menu-item" @click="menuAction('copyIp')">
             <i class="el-icon-document-copy"></i>复制 IP
         </div>
         <div class="tab-menu-item" @click="menuAction('sysinfo')">
             <i class="el-icon-cpu"></i>系统信息
+        </div>
+        <div class="tab-menu-item" @click="menuAction('aiDesktop')">
+            <i class="el-icon-monitor"></i>进入 AI 可视化桌面
         </div>
         <div class="tab-menu-sep"></div>
         <div class="tab-menu-item" @click="menuAction('close')">

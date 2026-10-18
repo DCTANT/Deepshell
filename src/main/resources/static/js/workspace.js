@@ -5056,7 +5056,7 @@ new Vue({
             this.tabMenu = {
                 visible: true,
                 x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 150)),
-                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 360)),
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 420)),
                 tab: tab
             };
         },
@@ -5077,6 +5077,11 @@ new Vue({
                 this.disconnectTab(tab);
             } else if (mode === 'editConn') {
                 this.editConnFromDialog(tab.connId);
+            } else if (mode === 'duplicateTab') {
+                this.openTab(tab.connId);
+            } else if (mode === 'aiDesktop') {
+                this.activate(tab.key);
+                this.openAiDesktop(tab);
             } else if (mode === 'copyIp') {
                 if (tab.host) {
                     this.copyText(tab.host);
