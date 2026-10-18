@@ -2588,6 +2588,27 @@ body.resizing .term-host {
     row-gap: 6px;
 }
 
+.dsk-ai-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px 12px;
+    background: #171c26;
+    color: #d7dde8;
+}
+
+.dsk-ai-body > .aichat {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+}
+
+.dsk-ai-body .aichat-convs {
+    flex-basis: 170px;
+    width: 170px;
+}
+
 .dsk-window .dsk-ai-chip {
     flex: 0 1 auto;
     max-width: 250px;
@@ -2599,6 +2620,65 @@ body.resizing .term-host {
 
 .dsk-window .dsk-side {
     width: 196px;
+}
+
+.dsk-fav-btn {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #909cab;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.dsk-fav-btn:hover {
+    background: #eaf0fa;
+    color: #e0a020;
+}
+
+.dsk-fav-btn.on,
+.dsk-fav-btn.on:hover {
+    color: #f0b429;
+}
+
+.dsk-fav-btn:disabled {
+    opacity: .4;
+    cursor: default;
+}
+
+.dsk-task-menu-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #5b6b82;
+    font-size: 12px;
+}
+
+.dsk-task-menu-host {
+    margin-left: auto;
+    color: #a0aaba;
+    font-size: 11px;
+}
+
+.dsk-task-menu-path {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dsk-menu-empty {
+    padding: 7px 10px 9px;
+    color: #9aa5b5;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: normal;
 }
 
 .dsk-resize {
@@ -3706,6 +3786,28 @@ body.resizing .term-host {
     height: 24px;
     margin: 0 4px;
     background: #2c3648;
+}
+
+.dsk-ai-app,
+.dsk-return-term {
+    max-width: 140px;
+    border-color: #2c3d58;
+    background: #1d2738;
+}
+
+.dsk-ai-app > i,
+.dsk-return-term > i {
+    color: #7fb0ff;
+}
+
+.dsk-ai-app:hover,
+.dsk-return-term:hover {
+    border-color: #4c8dff;
+    background: #273246;
+}
+
+.dsk-ai-app.is-min {
+    opacity: .62;
 }
 
 .dsk-task-win {

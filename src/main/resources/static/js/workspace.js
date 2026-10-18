@@ -152,6 +152,7 @@ function loadDesktopIdleMinutes() {
 function createDesktopWindow(id) {
     return {
         id: id || '',
+        type: 'explorer',
         path: '',
         pathInput: '',
         pathEditing: false,
@@ -381,6 +382,96 @@ var sortConns = function (a, b) {
         || a.id - b.id;
 };
 
+/* AI 终端对话面板：右侧面板与桌面 AI 窗口共用同一份模板 */
+Vue.component('ai-chat-panel', {
+    props: {
+        tab: { type: Object, required: true },
+        context: { type: String, default: 'panel' }
+    },
+    template: '#ai-chat-panel-tpl',
+    computed: {
+        convList: function () {
+            var t = this.tab;
+            if (!t || !t.chatConvs) {
+                return [];
+            }
+            return t.chatConvs.slice().sort(function (a, b) {
+                return (b.updatedAt || 0) - (a.updatedAt || 0);
+            });
+        },
+        examples: function () {
+            return this.$root.chatExamples || [];
+        }
+    },
+    watch: {
+        'tab.chatMsgs': {
+            deep: true,
+            handler: function () {
+                this.scrollToBottom();
+            }
+        },
+        'tab.chatStreamText': function () {
+            this.scrollToBottom();
+        },
+        'tab.chatLoading': function () {
+            this.scrollToBottom();
+        },
+        'tab.chatBusy': function () {
+            this.scrollToBottom();
+        },
+        'tab.chatConvId': function () {
+            this.scrollToBottom();
+        }
+    },
+    mounted: function () {
+        this.scrollToBottom();
+    },
+    methods: {
+        scrollToBottom: function () {
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.list;
+                if (el) {
+                    el.scrollTop = el.scrollHeight;
+                }
+            });
+        },
+        newConv: function () {
+            this.$root.aiConvNew();
+        },
+        switchConv: function (c) {
+            this.$root.aiConvSwitch(c);
+        },
+        delConv: function (c) {
+            this.$root.aiConvDelete(c);
+        },
+        send: function () {
+            this.$root.aiChatSend();
+        },
+        stop: function () {
+            this.$root.aiChatStop();
+        },
+        confirm: function (m, allow) {
+            this.$root.aiChatConfirm(m, allow);
+        },
+        modeChange: function (v) {
+            this.$root.onChatModeChange(v);
+        },
+        keydown: function (e) {
+            this.$root.onChatKeydown(e);
+        },
+        copy: function (text) {
+            this.$root.copyText(text);
+        },
+        fmtTime: function (ms) {
+            return this.$root.fmtChatTime(ms);
+        },
+        openDesktop: function () {
+            this.$root.openAiDesktop();
+        }
+    }
+});
+
 new Vue({
     el: '#app',
     data: {
@@ -398,12 +489,6 @@ new Vue({
             { id: 'medium', label: '中图标', icon: 'el-icon-s-grid' },
             { id: 'small', label: '小图标', icon: 'dsk-vsmall' },
             { id: 'list', label: '详细列表', icon: 'el-icon-tickets' }
-        ],
-        desktopTaskApps: [
-            { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round' },
-            { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder' },
-            { id: 'process', label: '进程', icon: 'el-icon-cpu' },
-            { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart' }
         ],
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
@@ -430,9 +515,11 @@ new Vue({
             tabKey: '',
             windows: [],
             activeWinId: '',
+            explorerId: '',
             zSeq: 0,
             ghost: createDesktopWindow(''),
             wallMenu: { visible: false, x: 0, y: 0 },
+            taskMenu: { visible: false, x: 0, y: 0, winId: '' },
             showDesktopIds: [],
             menu: { visible: false, x: 0, y: 0, target: null },
             propsVisible: false,
@@ -733,9 +820,15 @@ new Vue({
             return this.commonDirsByConn[t.connId] || [];
         },
         /* ---------- AI 可视化桌面 ---------- */
-        /* 当前聚焦的资源管理器窗口；没有窗口时返回占位对象，避免空引用 */
+        /* 当前聚焦的资源管理器窗口；AI 窗口激活时仍保留最近使用的资源管理器 */
         desk: function () {
-            var id = this.desktop.activeWinId;
+            var id = this.desktop.explorerId;
+            if (!id) {
+                var active = this.desktopWindowById(this.desktop.activeWinId);
+                if (active && active.type !== 'ai') {
+                    id = active.id;
+                }
+            }
             if (id) {
                 for (var i = 0; i < this.desktop.windows.length; i++) {
                     if (this.desktop.windows[i].id === id) {
@@ -744,6 +837,22 @@ new Vue({
                 }
             }
             return this.desktop.ghost;
+        },
+        desktopAiWin: function () {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === 'ai') {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
+        desktopExplorerWindows: function () {
+            return this.desktop.windows.filter(function (w) {
+                return w.type !== 'ai';
+            });
+        },
+        desktopTaskMenuWin: function () {
+            return this.desktopWindowById(this.desktop.taskMenu.winId);
         },
         desktopTab: function () {
             var self = this;
@@ -2211,10 +2320,21 @@ new Vue({
         scrollAiChat: function () {
             var self = this;
             this.$nextTick(function () {
-                var el = self.$refs.aiChatList;
-                if (el) {
-                    el.scrollTop = el.scrollHeight;
+                var panels = [];
+                if (self.$refs.aiChatPanel) {
+                    panels.push(self.$refs.aiChatPanel);
                 }
+                var winPanel = self.$refs.aiChatWinPanel;
+                if (Array.isArray(winPanel)) {
+                    panels = panels.concat(winPanel);
+                } else if (winPanel) {
+                    panels.push(winPanel);
+                }
+                panels.forEach(function (p) {
+                    if (p && p.scrollToBottom) {
+                        p.scrollToBottom();
+                    }
+                });
             });
         },
 
@@ -2267,11 +2387,13 @@ new Vue({
             });
             this.desktop.windows = [];
             this.desktop.activeWinId = '';
+            this.desktop.explorerId = '';
             this.desktop.zSeq = 0;
             this.desktop.showDesktopIds = [];
             this.desktop.tabKey = t ? t.key : '';
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
             this.desktop.propsVisible = false;
             this.desktop.props = null;
             this.desktop.settingsVisible = false;
@@ -2284,6 +2406,10 @@ new Vue({
             this.desktop.startSearching = false;
             this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
             this._deskLastActivity = Date.now();
+            if (t && t.connId != null
+                    && !Object.prototype.hasOwnProperty.call(this.commonDirsByConn, t.connId)) {
+                this.loadCommonDirs(t.connId);
+            }
         },
         closeAiDesktop: function (skipSftpRefresh) {
             this.saveDesktopWinLayouts();
@@ -2301,9 +2427,11 @@ new Vue({
             this.desktop.visible = false;
             this.desktop.windows = [];
             this.desktop.activeWinId = '';
+            this.desktop.explorerId = '';
             this.desktop.showDesktopIds = [];
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
             this.desktop.startOpen = false;
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
@@ -2338,6 +2466,9 @@ new Vue({
             return null;
         },
         desktopWindowTitle: function (w) {
+            if (w && w.type === 'ai') {
+                return 'AI 终端';
+            }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
                 return '/';
@@ -2347,6 +2478,12 @@ new Vue({
         },
         desktopWindowSubtitle: function (w) {
             var host = this.desktopTab ? this.desktopTab.host : '';
+            if (w && w.type === 'ai') {
+                var t = this.desktopTab;
+                var conv = t ? this.aiActiveConv(t) : null;
+                var title = conv && conv.title ? conv.title : '';
+                return host ? (title ? host + ' · ' + title : host) : title;
+            }
             var path = (w && w.path) || '';
             return host ? (path ? host + ' · ' + path : host) : path;
         },
@@ -2392,7 +2529,9 @@ new Vue({
             if (!key) {
                 return;
             }
-            var list = this.desktop.windows.map(function (w) {
+            var list = this.desktop.windows.filter(function (w) {
+                return w.type !== 'ai';
+            }).map(function (w) {
                 var g = w.max && w.normal ? w.normal : { x: w.x, y: w.y, w: w.w, h: w.h };
                 return {
                     x: Math.round(g.x || 0),
@@ -2456,27 +2595,47 @@ new Vue({
             w.normal = { x: w.x, y: w.y, w: w.w, h: w.h };
             w.max = !!g.max || area.width < 760;
         },
-        openDesktopWindow: function (path, first) {
-            var t = this.desktopTab;
-            if (!t || !t.sessionId || !this.desktop.visible) {
-                return null;
-            }
+        addDesktopWindow: function (type, first) {
             var seq = (this._deskWinSeq || 0) + 1;
             this._deskWinSeq = seq;
             var w = createDesktopWindow('dw' + seq);
+            w.type = type || 'explorer';
             w.viewMode = loadDesktopView();
-            var layouts = this.loadDesktopWinLayouts();
+            var layouts = null;
+            if (w.type === 'explorer') {
+                layouts = this.loadDesktopWinLayouts();
+            }
             this.desktop.windows.push(w);
-            var idx = this.desktop.windows.length - 1;
-            var layout = first ? (layouts[0] || null) : (layouts[idx] || null);
+            var layout = null;
+            if (w.type === 'explorer') {
+                var explorerIndex = 0;
+                for (var i = 0; i < this.desktop.windows.length; i++) {
+                    if (this.desktop.windows[i].type === 'explorer') {
+                        explorerIndex++;
+                    }
+                }
+                explorerIndex -= 1;
+                layout = first ? (layouts[0] || null) : (layouts[explorerIndex] || null);
+            }
             this.applyDesktopWindowGeometry(w, layout);
             w.z = ++this.desktop.zSeq;
             this.desktop.activeWinId = w.id;
+            if (w.type === 'explorer') {
+                this.desktop.explorerId = w.id;
+            }
             this.desktop.showDesktopIds = [];
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.startOpen = false;
             this.closeDesktopSubMenus();
+            return w;
+        },
+        openDesktopWindow: function (path, first) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !this.desktop.visible) {
+                return null;
+            }
+            var w = this.addDesktopWindow('explorer', first);
             this.loadDesktopDir(path || this.desktopHomeDir || '/', null, w);
             var self = this;
             this.$nextTick(function () {
@@ -2486,6 +2645,37 @@ new Vue({
                 }
             });
             return w;
+        },
+        openAiDesktopWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var existing = this.desktopAiWin;
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return null;
+            }
+            var w = this.addDesktopWindow('ai');
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        toggleDesktopAiApp: function () {
+            var w = this.desktopAiWin;
+            if (!w) {
+                this.openAiDesktopWindow();
+                return;
+            }
+            this.toggleDesktopTaskbarWindow(w);
         },
         openDesktopExplorerWindow: function (path) {
             if (!this.desktop.visible) {
@@ -2504,9 +2694,13 @@ new Vue({
                 changed = true;
             }
             this.desktop.activeWinId = id;
+            if (w.type !== 'ai') {
+                this.desktop.explorerId = id;
+            }
             w.z = ++this.desktop.zSeq;
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
@@ -2519,9 +2713,15 @@ new Vue({
                     }
                 });
                 var self = this;
-                this.$nextTick(function () {
-                    self.setupDesktopThumbs(w);
-                });
+                if (w.type !== 'ai') {
+                    this.$nextTick(function () {
+                        self.setupDesktopThumbs(w);
+                    });
+                } else {
+                    this.$nextTick(function () {
+                        self.scrollAiChat();
+                    });
+                }
             }
         },
         pickDesktopActive: function (excludeId) {
@@ -2532,10 +2732,22 @@ new Vue({
                 }
             });
             this.desktop.activeWinId = best ? best.id : '';
-            if (best) {
+            var current = this.desktopWindowById(this.desktop.explorerId);
+            var explorer = null;
+            if (current && current.type !== 'ai' && !current.min) {
+                explorer = current;
+            } else {
+                this.desktop.windows.forEach(function (w) {
+                    if (w.type !== 'ai' && !w.min && (!explorer || w.z > explorer.z)) {
+                        explorer = w;
+                    }
+                });
+                this.desktop.explorerId = explorer ? explorer.id : '';
+            }
+            if (explorer) {
                 var self = this;
                 this.$nextTick(function () {
-                    self.setupDesktopThumbs(best);
+                    self.setupDesktopThumbs(explorer);
                 });
             }
         },
@@ -2583,6 +2795,9 @@ new Vue({
             if (!w) {
                 return;
             }
+            if (this.desktop.taskMenu.visible && this.desktop.taskMenu.winId === w.id) {
+                this.desktop.taskMenu.visible = false;
+            }
             this.releaseDesktopWindowThumbs(w);
             var idx = this.desktop.windows.indexOf(w);
             if (idx >= 0) {
@@ -2594,11 +2809,12 @@ new Vue({
                     return id !== w.id;
                 });
             }
-            if (wasActive) {
+            if (wasActive || this.desktop.explorerId === w.id) {
                 this.pickDesktopActive(w.id);
             }
             if (!this.desktop.windows.length) {
                 this.desktop.activeWinId = '';
+                this.desktop.explorerId = '';
                 this.desktop.showDesktopIds = [];
             }
             this.saveDesktopWinLayouts();
@@ -2628,6 +2844,7 @@ new Vue({
                     w.min = true;
                 });
                 this.desktop.activeWinId = '';
+                this.desktop.explorerId = '';
                 this.desktop.menu.visible = false;
                 this.desktop.wallMenu.visible = false;
                 this.desktop.startOpen = false;
@@ -2653,11 +2870,27 @@ new Vue({
                 });
             }
             this.desktop.showDesktopIds = [];
+            var explorer = target && target.type !== 'ai' ? target : null;
+            if (!explorer) {
+                this.desktop.windows.forEach(function (w) {
+                    if (w.type !== 'ai' && (!explorer || w.z > explorer.z)) {
+                        explorer = w;
+                    }
+                });
+            }
+            this.desktop.explorerId = explorer ? explorer.id : '';
             if (target) {
                 this.desktop.activeWinId = target.id;
                 target.z = ++this.desktop.zSeq;
+            }
+            if (explorer) {
                 this.$nextTick(function () {
-                    self.setupDesktopThumbs(target);
+                    self.setupDesktopThumbs(explorer);
+                });
+            }
+            if (target && target.type === 'ai') {
+                this.$nextTick(function () {
+                    self.scrollAiChat();
                 });
             }
         },
@@ -2803,6 +3036,7 @@ new Vue({
         onDesktopWallContextMenu: function (ev) {
             this.desktop.startOpen = false;
             this.desktop.menu.visible = false;
+            this.desktop.taskMenu.visible = false;
             this.closeDesktopSubMenus();
             this.desktop.wallMenu = {
                 visible: true,
@@ -2816,6 +3050,102 @@ new Vue({
                 this.openDesktopExplorerWindow();
             } else if (action === 'return') {
                 this.closeAiDesktop();
+            }
+        },
+        isDeskFavorite: function (w) {
+            var p = (w && w.path) || '';
+            if (!p) {
+                return false;
+            }
+            return (this.desktopCommonDirs || []).some(function (d) {
+                return d.path === p;
+            });
+        },
+        toggleDeskFavorite: function (w) {
+            var t = this.desktopTab;
+            if (!t || t.connId == null || !w || !w.path || w.pathEditing) {
+                return;
+            }
+            var self = this;
+            var path = w.path;
+            var cid = t.connId;
+            var ready = Object.prototype.hasOwnProperty.call(this.commonDirsByConn, cid)
+                ? Promise.resolve()
+                : this.loadCommonDirs(cid);
+            ready.then(function () {
+                var existing = (self.commonDirsByConn[cid] || []).find(function (d) {
+                    return d.path === path;
+                });
+                if (existing) {
+                    self.$confirm('从常用目录中移除「' + path + '」？', '提示', { type: 'warning' })
+                        .then(function () {
+                            return http.delete('/api/common-dirs/' + existing.id,
+                                { params: { connId: cid } });
+                        })
+                        .then(function () {
+                            ELEMENT.Message.success('已从常用目录移除');
+                            return self.loadCommonDirs(cid);
+                        })
+                        .catch(function () { /* 取消或已提示 */ });
+                    return;
+                }
+                http.post('/api/common-dirs', { connId: cid, path: path }).then(function () {
+                    ELEMENT.Message.success('已收藏到常用目录');
+                    return self.loadCommonDirs(cid);
+                }).catch(function () {
+                    // 可能已被其他窗口添加，刷新一次同步星标
+                    self.loadCommonDirs(cid);
+                });
+            });
+        },
+        onDesktopTaskContextMenu: function (ev, w) {
+            if (!w) {
+                return;
+            }
+            this.desktop.startOpen = false;
+            this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.closeDesktopSubMenus();
+            this.desktop.taskMenu = {
+                visible: true,
+                x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 260)),
+                y: Math.max(8, ev.clientY - 340),
+                winId: w.id
+            };
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.deskTaskMenu;
+                if (!el || !self.desktop.taskMenu.visible) {
+                    return;
+                }
+                var h = el.offsetHeight || 300;
+                var width = el.offsetWidth || 240;
+                self.desktop.taskMenu.x = Math.max(8,
+                    Math.min(ev.clientX, window.innerWidth - width - 8));
+                self.desktop.taskMenu.y = Math.max(8, ev.clientY - h - 8);
+            });
+        },
+        closeDesktopTaskMenu: function () {
+            if (this.desktop.taskMenu.visible) {
+                this.desktop.taskMenu.visible = false;
+            }
+        },
+        desktopTaskOpenCommon: function (path) {
+            this.desktop.taskMenu.visible = false;
+            if (path) {
+                this.openDesktopWindow(path);
+            }
+        },
+        desktopTaskNewWindow: function () {
+            var w = this.desktopTaskMenuWin;
+            this.desktop.taskMenu.visible = false;
+            this.openDesktopWindow((w && w.path) || this.desk.path || this.desktopHomeDir || '/');
+        },
+        desktopTaskCloseWindow: function () {
+            var w = this.desktopTaskMenuWin;
+            this.desktop.taskMenu.visible = false;
+            if (w) {
+                this.closeDesktopWindow(w);
             }
         },
 
@@ -2973,7 +3303,8 @@ new Vue({
                 return w.loading || w.dragNames.length || w.fileDragOver;
             });
             if (this.desktop.settingsVisible || this.desktop.startOpen
-                    || this.desktop.menu.visible || busy || this._deskDragDepth) {
+                    || this.desktop.menu.visible || busy || this._deskDragDepth
+                    || (this.desktopTab && this.desktopTab.chatBusy)) {
                 this._deskLastActivity = Date.now();
                 return;
             }
@@ -3753,6 +4084,7 @@ new Vue({
             var self = this;
             var x = ev.clientX;
             var y = ev.clientY;
+            this.desktop.taskMenu.visible = false;
             this.closeDesktopSubMenus();
             this.desktop.menu = {
                 visible: true,
@@ -3777,6 +4109,9 @@ new Vue({
             }
             if (this.desktop.wallMenu.visible) {
                 this.desktop.wallMenu.visible = false;
+            }
+            if (this.desktop.taskMenu.visible) {
+                this.desktop.taskMenu.visible = false;
             }
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
@@ -4721,7 +5056,9 @@ new Vue({
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
         onDesktopSideButton: function (e) {
-            if (!this.desktop.visible || !this.desk.id || (e.button !== 3 && e.button !== 4)) {
+            var active = this.desktopWindowById(this.desktop.activeWinId);
+            if (!this.desktop.visible || !active || active.type === 'ai'
+                    || (e.button !== 3 && e.button !== 4)) {
                 return;
             }
             // 侧键在桌面内接管为目录前进/后退，阻止浏览器自身的页面历史导航
@@ -4778,6 +5115,9 @@ new Vue({
                 if (this.desktop.compressSub.visible || this.desktop.downloadSub.visible) {
                     this.closeDesktopSubMenus();
                     e.preventDefault();
+                } else if (this.desktop.taskMenu.visible) {
+                    this.desktop.taskMenu.visible = false;
+                    e.preventDefault();
                 } else if (this.desktop.menu.visible) {
                     this.desktop.menu.visible = false;
                     e.preventDefault();
@@ -4791,6 +5131,10 @@ new Vue({
                 return;
             }
             if (typing) {
+                return;
+            }
+            var active = this.desktopWindowById(this.desktop.activeWinId);
+            if (!active || active.type === 'ai') {
                 return;
             }
             var selected = this.desktopSelectedRows();
@@ -4851,6 +5195,7 @@ new Vue({
             this.desktop.startOpen = true;
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
             this.closeDesktopSubMenus();
             var self = this;
             this.$nextTick(function () {
@@ -4874,12 +5219,27 @@ new Vue({
             }
             this.desktopGo(path);
         },
+        openTerminalInNewTab: function () {
+            var t = this.desktopTab;
+            if (!t || t.connId == null) {
+                ELEMENT.Message.warning('当前会话没有可用的连接记录');
+                return;
+            }
+            var url = '/workspace?connId=' + encodeURIComponent(t.connId) + '&view=workbench';
+            if (!window.open(url, '_blank')) {
+                ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
+            }
+        },
         desktopLaunchApp: function (id) {
             if (!id || id === 'desktop') {
                 return;
             }
             this.desktop.startOpen = false;
             var self = this;
+            if (id === 'ai') {
+                this.openAiDesktopWindow();
+                return;
+            }
             if (id === 'file') {
                 this.openDesktopExplorerWindow();
                 return;
@@ -8033,15 +8393,17 @@ new Vue({
             }
         } catch (e) { /* ignore */ }
         self.loadConnections().then(function () {
-            var cid = new URLSearchParams(location.search).get('connId');
+            var params = new URLSearchParams(location.search);
+            var cid = params.get('connId');
             if (cid) {
-                // 带参打开（连接管理页「连接」按钮）：仅本次生效，校验存在后立即清理地址栏参数，
+                // 带参打开（连接管理页「连接」/ 桌面「返回终端」）：仅本次生效，校验存在后立即清理地址栏参数，
                 // 避免参数陈旧后被反复重开成「连接 #id」并触发后端「连接不存在」
+                var forceWorkbench = params.get('view') === 'workbench';
                 history.replaceState(null, '', '/workspace');
                 var id = Number(cid);
                 var exists = self.connections.some(function (c) { return c.id === id; });
                 if (exists) {
-                    self.openTab(id, null, true);
+                    self.openTab(id, null, !forceWorkbench);
                 } else {
                     ELEMENT.Message.warning('连接不存在或已被删除');
                 }
@@ -8133,6 +8495,9 @@ new Vue({
             if (self.folderMenu.visible) {
                 self.folderMenu.visible = false;
             }
+            if (self.desktop.taskMenu.visible) {
+                self.desktop.taskMenu.visible = false;
+            }
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
             }
@@ -8181,6 +8546,9 @@ new Vue({
             }
             if (self.folderMenu.visible) {
                 self.folderMenu.visible = false;
+            }
+            if (self.desktop.taskMenu.visible) {
+                self.desktop.taskMenu.visible = false;
             }
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
