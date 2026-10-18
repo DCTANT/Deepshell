@@ -132,9 +132,10 @@ function loadDesktopClock24h() {
 
 function loadDesktopClockSeconds() {
     try {
-        return localStorage.getItem('deepshell.clockSeconds') === '1';
+        var v = localStorage.getItem('deepshell.clockSeconds');
+        return v == null ? true : v === '1';
     } catch (e) { /* ignore */ }
-    return false;
+    return true;
 }
 
 function loadDesktopClockShowDate() {
@@ -560,6 +561,10 @@ new Vue({
             startRootPath: '',
             startWinId: '',
             clockNow: Date.now(),
+            calendarOpen: false,
+            calendarYear: 0,
+            calendarMonth: 0,
+            calendarSelected: '',
             settingsVisible: false,
             settingsSection: 'appearance',
             compressSub: { visible: false, x: 0, y: 0 },
@@ -781,6 +786,13 @@ new Vue({
         'desktop.thumbnailsEnabled': function (v) {
             try { localStorage.setItem('deepshell.desktopThumbs', v ? '1' : '0'); } catch (e) { /* ignore */ }
             var self = this;
+            if (!v) {
+                this.resetSurfaceThumbs();
+            } else {
+                this.$nextTick(function () {
+                    self.loadSurfaceThumbs();
+                });
+            }
             this.$nextTick(function () {
                 self.setupDesktopThumbs(self.desk);
             });
@@ -801,6 +813,7 @@ new Vue({
         'desktop.showHidden': function (v) {
             try { localStorage.setItem('deepshell.desktopShowHidden', v ? '1' : '0'); } catch (e) { /* ignore */ }
             this.rebuildDesktopIconOrder();
+            this.loadSurfaceThumbs();
         },
         'desktop.clock24h': function (v) {
             try { localStorage.setItem('deepshell.clock24h', v ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -897,15 +910,34 @@ new Vue({
                 }
                 var path = self.pathJoin(dir, e.name);
                 var isShortcut = !e.dir && /\.lnk$/i.test(e.name);
+                var sc = isShortcut ? e._shortcut : null;
+                var targetName = isShortcut
+                    ? ((sc && sc.label) ? sc.label : e.name.slice(0, -4))
+                    : e.name;
+                var targetType = isShortcut
+                    ? ((sc && sc.targetType) === 'folder' ? 'folder' : 'file')
+                    : (e.dir ? 'folder' : 'file');
+                var isFolderVisual = targetType === 'folder';
+                var targetRow = { name: targetName, dir: isFolderVisual };
+                var kind = isFolderVisual ? 'folder' : self.desktopFileKind(targetRow);
+                var ext = isFolderVisual ? '' : self.desktopExtLabel(targetRow);
+                var thumbPath = '';
+                if (!isFolderVisual && self.isDesktopImage(targetRow)) {
+                    thumbPath = isShortcut && sc ? sc.target : path;
+                }
                 map['file:' + path] = {
                     key: 'file:' + path,
-                    type: e.dir ? 'folder' : (isShortcut ? 'shortcut' : 'file'),
-                    label: isShortcut ? e.name.slice(0, -4) : e.name,
+                    type: isShortcut ? 'shortcut' : (isFolderVisual ? 'folder' : 'file'),
+                    label: targetName,
                     entry: e,
                     path: path,
-                    dir: !!e.dir,
-                    kind: self.desktopFileKind(e),
-                    ext: self.desktopExtLabel(e)
+                    dir: isFolderVisual,
+                    targetType: targetType,
+                    isFolderVisual: isFolderVisual,
+                    kind: kind,
+                    ext: ext,
+                    thumbPath: thumbPath,
+                    thumb: e._thumb || ''
                 };
             });
             return map;
@@ -1080,6 +1112,43 @@ new Vue({
             var abs = Math.abs(off);
             var p = function (x) { return (x < 10 ? '0' : '') + x; };
             return 'UTC' + sign + Math.floor(abs / 60) + ':' + p(abs % 60);
+        },
+        desktopCalendarTitle: function () {
+            return this.desktop.calendarYear + '年' + (this.desktop.calendarMonth + 1) + '月';
+        },
+        desktopCalendarWeekdays: function () {
+            return ['日', '一', '二', '三', '四', '五', '六'];
+        },
+        desktopCalendarSelectedDate: function () {
+            var key = this.desktop.calendarSelected || this.desktopDateKey(new Date(this.desktop.clockNow));
+            return this.parseDesktopDateKey(key);
+        },
+        desktopCalendarHeading: function () {
+            var d = this.desktopCalendarSelectedDate;
+            var wd = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + wd[d.getDay()];
+        },
+        desktopCalendarCells: function () {
+            var y = this.desktop.calendarYear;
+            var m = this.desktop.calendarMonth;
+            var now = new Date(this.desktop.clockNow);
+            var todayKey = this.desktopDateKey(now);
+            var selectedKey = this.desktop.calendarSelected || todayKey;
+            var first = new Date(y, m, 1);
+            var start = new Date(y, m, 1 - first.getDay());
+            var cells = [];
+            for (var i = 0; i < 42; i++) {
+                var d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+                var key = this.desktopDateKey(d);
+                cells.push({
+                    key: key,
+                    day: d.getDate(),
+                    inMonth: d.getFullYear() === y && d.getMonth() === m,
+                    isToday: key === todayKey,
+                    isSelected: key === selectedKey
+                });
+            }
+            return cells;
         },
         filteredProcRows: function () {
             var t = this.activeTab;
@@ -2473,6 +2542,7 @@ new Vue({
             this.closeDesktopSubMenus();
             this.cancelDesktopThumbQueue();
             this.disconnectDesktopThumbObserver();
+            this.resetSurfaceThumbs();
             this.desktop.windows.forEach(function (w) {
                 self.releaseDesktopWindowThumbs(w);
             });
@@ -2499,6 +2569,8 @@ new Vue({
             this.desktop.settingsVisible = false;
             this.desktop.startOpen = false;
             this.desktop.powerOpen = false;
+            this.desktop.calendarOpen = false;
+            this.desktop.calendarSelected = '';
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
             this.desktop.startSearched = false;
@@ -2519,6 +2591,7 @@ new Vue({
             this.cancelDesktopMarquee();
             this.cancelDesktopThumbQueue();
             this.disconnectDesktopThumbObserver();
+            this.resetSurfaceThumbs();
             var self = this;
             this.desktop.windows.forEach(function (w) {
                 self.releaseDesktopWindowThumbs(w);
@@ -2540,6 +2613,7 @@ new Vue({
             this.desktop.startSearching = false;
             this.desktop.settingsVisible = false;
             this.desktop.powerOpen = false;
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.$nextTick(function () {
                 var t = self.activeTab;
@@ -2803,6 +2877,7 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             if (this.desktop.startOpen) {
                 this.desktop.startOpen = false;
@@ -3141,6 +3216,7 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.wallMenu = {
                 visible: true,
@@ -3219,6 +3295,7 @@ new Vue({
             this.desktop.startOpen = false;
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.taskMenu = {
                 visible: true,
@@ -3274,6 +3351,7 @@ new Vue({
             }
             var self = this;
             var surf = this.desktop.surface;
+            this.resetSurfaceThumbs();
             if (!t.sftpHome) {
                 surf.loading = true;
                 surf.error = '';
@@ -3322,6 +3400,8 @@ new Vue({
                 surf.entries = res.rows;
                 surf.loaded = true;
                 surf.loading = false;
+                self.loadSurfaceThumbs();
+                self.parseSurfaceShortcuts();
                 return self.loadDesktopIconLayout();
             }).catch(function (e) {
                 surf.loading = false;
@@ -3337,6 +3417,186 @@ new Vue({
             this.desktop.iconMenu.visible = false;
             this.desktop.iconSelected = '';
             return this.loadDesktopSurface();
+        },
+        resetSurfaceThumbs: function () {
+            this._surfaceThumbGen = (this._surfaceThumbGen || 0) + 1;
+            this._surfaceThumbQueued = {};
+            this._surfaceThumbActive = 0;
+            if (this._surfaceThumbCtrls) {
+                this._surfaceThumbCtrls.forEach(function (c) {
+                    try { c.abort(); } catch (e) { /* ignore */ }
+                });
+                this._surfaceThumbCtrls = [];
+            }
+            var self = this;
+            (this.desktop.surface.entries || []).forEach(function (e) {
+                if (e._thumb) {
+                    try { URL.revokeObjectURL(e._thumb); } catch (err) { /* ignore */ }
+                    self.$delete(e, '_thumb');
+                }
+                if (e._thumbFailed) {
+                    self.$delete(e, '_thumbFailed');
+                }
+            });
+        },
+        parseSurfaceShortcuts: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var self = this;
+            var entries = (this.desktop.surface.entries || []).filter(function (e) {
+                return !e.dir && /\.lnk$/i.test(e.name);
+            });
+            if (!entries.length) {
+                return;
+            }
+            var limit = Math.min(entries.length, 50);
+            var i = 0;
+            var step = function () {
+                if (i >= limit) {
+                    self.loadSurfaceThumbs();
+                    return;
+                }
+                var e = entries[i++];
+                var path = self.pathJoin(self.desktop.surface.dir, e.name);
+                http.get('/api/sftp/read', {
+                    params: { sessionId: t.sessionId, path: path },
+                    silent: true
+                }).then(function (text) {
+                    var data = null;
+                    try {
+                        data = JSON.parse(text);
+                    } catch (err) { /* ignore */ }
+                    if (data && data.type === 'deepshell-shortcut' && data.target) {
+                        self.$set(e, '_shortcut', data);
+                    }
+                }).catch(function () {
+                    // 无法解析时保留通用快捷方式图标
+                }).then(function () {
+                    step();
+                });
+            };
+            step();
+        },
+        loadSurfaceThumbs: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !this.desktop.thumbnailsEnabled) {
+                return;
+            }
+            var self = this;
+            var gen = this._surfaceThumbGen || 0;
+            var tasks = [];
+            (this.desktop.surface.entries || []).forEach(function (e) {
+                if (!self.desktop.showHidden && String(e.name).charAt(0) === '.') {
+                    return;
+                }
+                var isShortcut = !e.dir && /\.lnk$/i.test(e.name);
+                var sc = isShortcut ? e._shortcut : null;
+                if (isShortcut && !sc) {
+                    return;
+                }
+                var targetName = isShortcut
+                    ? ((sc && sc.label) ? sc.label : e.name.slice(0, -4))
+                    : e.name;
+                var targetType = isShortcut
+                    ? ((sc && sc.targetType) === 'folder' ? 'folder' : 'file')
+                    : (e.dir ? 'folder' : 'file');
+                if (targetType !== 'file' || !self.isDesktopImage({ name: targetName, dir: false })) {
+                    return;
+                }
+                if (e._thumb || e._thumbFailed) {
+                    return;
+                }
+                if (self._surfaceThumbQueued && self._surfaceThumbQueued[e.name]) {
+                    return;
+                }
+                tasks.push({
+                    e: e,
+                    path: isShortcut && sc
+                        ? sc.target
+                        : self.pathJoin(self.desktop.surface.dir, e.name),
+                    mtime: isShortcut ? 0 : (e.mtime || 0)
+                });
+            });
+            if (!tasks.length) {
+                return;
+            }
+            if (!this._surfaceThumbQueued) {
+                this._surfaceThumbQueued = {};
+            }
+            if (!this._surfaceThumbActive) {
+                this._surfaceThumbActive = 0;
+            }
+            var pump = function () {
+                while (self._surfaceThumbActive < 4 && tasks.length) {
+                    var task = tasks.shift();
+                    if (self._surfaceThumbQueued[task.e.name]) {
+                        continue;
+                    }
+                    self._surfaceThumbQueued[task.e.name] = true;
+                    self._surfaceThumbActive++;
+                    var ctrl = (typeof AbortController !== 'undefined')
+                        ? new AbortController() : null;
+                    if (ctrl) {
+                        if (!self._surfaceThumbCtrls) {
+                            self._surfaceThumbCtrls = [];
+                        }
+                        self._surfaceThumbCtrls.push(ctrl);
+                    }
+                    var url = '/api/sftp/thumbnail?sessionId=' + encodeURIComponent(t.sessionId)
+                        + '&path=' + encodeURIComponent(task.path)
+                        + '&v=' + (task.mtime || 0);
+                    fetch(url, {
+                        credentials: 'same-origin',
+                        signal: ctrl ? ctrl.signal : undefined
+                    }).then(function (resp) {
+                        if (!resp.ok) {
+                            throw new Error('HTTP ' + resp.status);
+                        }
+                        var type = resp.headers.get('Content-Type') || '';
+                        if (type.indexOf('image/') !== 0) {
+                            throw new Error('not an image');
+                        }
+                        return resp.blob();
+                    }).then(function (blob) {
+                        if (gen !== (self._surfaceThumbGen || 0)) {
+                            return;
+                        }
+                        self.$set(task.e, '_thumb', URL.createObjectURL(blob));
+                    }).catch(function (err) {
+                        if (gen !== (self._surfaceThumbGen || 0)
+                                || (err && err.name === 'AbortError')) {
+                            return;
+                        }
+                        self.$set(task.e, '_thumbFailed', true);
+                    }).then(function () {
+                        if (ctrl && self._surfaceThumbCtrls) {
+                            var idx = self._surfaceThumbCtrls.indexOf(ctrl);
+                            if (idx >= 0) {
+                                self._surfaceThumbCtrls.splice(idx, 1);
+                            }
+                        }
+                        self._surfaceThumbActive = Math.max(0,
+                            (self._surfaceThumbActive || 0) - 1);
+                        if (gen === (self._surfaceThumbGen || 0)) {
+                            pump();
+                        }
+                    });
+                }
+            };
+            pump();
+        },
+        onDeskSurfaceThumbError: function (icon) {
+            var e = icon && icon.entry;
+            if (!e) {
+                return;
+            }
+            if (e._thumb) {
+                try { URL.revokeObjectURL(e._thumb); } catch (err) { /* ignore */ }
+                this.$delete(e, '_thumb');
+            }
+            this.$set(e, '_thumbFailed', true);
         },
         loadDesktopIconLayout: function () {
             var t = this.desktopTab;
@@ -3804,6 +4064,7 @@ new Vue({
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.iconMenu = {
                 visible: true,
@@ -4808,6 +5069,7 @@ new Vue({
             var y = ev.clientY;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.menu = {
                 visible: true,
@@ -4828,6 +5090,7 @@ new Vue({
             });
         },
         onDesktopSurfaceClick: function () {
+            this.desktop.calendarOpen = false;
             if (this.desktop.menu.visible) {
                 this.desktop.menu.visible = false;
             }
@@ -5860,6 +6123,11 @@ new Vue({
                 e.preventDefault();
                 return;
             }
+            if (e.key === 'Escape' && this.desktop.calendarOpen) {
+                this.desktop.calendarOpen = false;
+                e.preventDefault();
+                return;
+            }
             if (this.desktop.settingsVisible) {
                 if (e.key === 'Escape') {
                     // 有子弹窗时交给 Element 自己关闭，避免连同设置面板一起关掉
@@ -5967,6 +6235,69 @@ new Vue({
             });
         },
 
+        /* ---------- 任务栏时钟与日历 ---------- */
+        desktopDateKey: function (d) {
+            var p = function (x) { return (x < 10 ? '0' : '') + x; };
+            return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+        },
+        parseDesktopDateKey: function (key) {
+            var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
+            if (!m) {
+                return new Date();
+            }
+            return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+        },
+        toggleDesktopCalendar: function () {
+            if (this.desktop.calendarOpen) {
+                this.desktop.calendarOpen = false;
+                return;
+            }
+            var now = new Date();
+            if (!this.desktop.calendarSelected) {
+                this.desktop.calendarSelected = this.desktopDateKey(now);
+            }
+            var base = this.parseDesktopDateKey(this.desktop.calendarSelected);
+            this.desktop.calendarYear = base.getFullYear();
+            this.desktop.calendarMonth = base.getMonth();
+            this.desktop.calendarOpen = true;
+            this.desktop.startOpen = false;
+            this.desktop.powerOpen = false;
+            this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
+            this.desktop.iconMenu.visible = false;
+            this.closeDesktopSubMenus();
+        },
+        closeDesktopCalendar: function () {
+            this.desktop.calendarOpen = false;
+        },
+        desktopCalendarShift: function (delta) {
+            var d = new Date(this.desktop.calendarYear, this.desktop.calendarMonth + delta, 1);
+            this.desktop.calendarYear = d.getFullYear();
+            this.desktop.calendarMonth = d.getMonth();
+        },
+        desktopCalendarPrev: function () {
+            this.desktopCalendarShift(-1);
+        },
+        desktopCalendarNext: function () {
+            this.desktopCalendarShift(1);
+        },
+        desktopCalendarToday: function () {
+            var now = new Date();
+            this.desktop.calendarSelected = this.desktopDateKey(now);
+            this.desktop.calendarYear = now.getFullYear();
+            this.desktop.calendarMonth = now.getMonth();
+        },
+        desktopCalendarSelect: function (cell) {
+            if (!cell) {
+                return;
+            }
+            this.desktop.calendarSelected = cell.key;
+            var d = this.parseDesktopDateKey(cell.key);
+            this.desktop.calendarYear = d.getFullYear();
+            this.desktop.calendarMonth = d.getMonth();
+        },
+
         /* ---------- 桌面任务栏 / 开始菜单 ---------- */
         toggleDesktopStart: function () {
             if (this.desktop.startOpen) {
@@ -5981,6 +6312,7 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             var self = this;
             this.$nextTick(function () {
@@ -6067,6 +6399,7 @@ new Vue({
         openDesktopSettings: function () {
             this.desktop.startOpen = false;
             this.desktop.menu.visible = false;
+            this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.settingsVisible = true;
             this.desktop.settingsSection = 'appearance';
@@ -9322,6 +9655,9 @@ new Vue({
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
             }
+            if (self.desktop.calendarOpen) {
+                self.desktop.calendarOpen = false;
+            }
             self.closeDesktopSubMenus();
         });
         document.addEventListener('contextmenu', function (e) {
@@ -9376,6 +9712,9 @@ new Vue({
             }
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
+            }
+            if (self.desktop.calendarOpen) {
+                self.desktop.calendarOpen = false;
             }
             self.closeDesktopSubMenus();
         });

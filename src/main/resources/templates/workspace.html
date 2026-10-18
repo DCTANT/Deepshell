@@ -520,14 +520,17 @@
                       :style="{ background: icon.color }">
                     <i :class="icon.icon"></i>
                 </span>
-                <svg v-else-if="icon.type === 'folder'" class="dsk-folder-svg dsk-icon-folder"
-                     viewBox="0 0 64 52" aria-hidden="true">
-                    <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
-                    <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
-                    <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
-                </svg>
                 <span v-else class="dsk-icon-file-wrap">
-                    <span class="dsk-file-ico" :class="'fi-' + icon.kind">
+                    <svg v-if="icon.isFolderVisual" class="dsk-folder-svg dsk-icon-folder"
+                         viewBox="0 0 64 52" aria-hidden="true">
+                        <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
+                        <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
+                        <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
+                    </svg>
+                    <img v-else-if="icon.thumb" class="dsk-icon-thumb" :src="icon.thumb"
+                         :alt="icon.label" decoding="async" draggable="false"
+                         @error="onDeskSurfaceThumbError(icon)">
+                    <span v-else class="dsk-file-ico" :class="'fi-' + icon.kind">
                         <span class="dsk-ext" :class="{ long: icon.ext.length > 3 }">{{ icon.ext }}</span>
                     </span>
                     <i v-if="icon.type === 'shortcut'" class="el-icon-link dsk-icon-shortcut-mark"></i>
@@ -887,13 +890,48 @@
                     <span class="dot" :class="'dot-' + desktopTab.status"></span>{{ statusText(desktopTab) }}
                 </span>
             </div>
-            <div class="dsk-tray-clock" :title="desktopClockFull + ' · ' + desktopClockTimezone">
+            <div class="dsk-tray-clock" :class="{ active: desktop.calendarOpen }"
+                 :title="desktopClockFull + ' · ' + desktopClockTimezone"
+                 @click.stop="toggleDesktopCalendar">
                 <span class="dsk-clock-time">{{ desktopClockTime }}</span>
                 <span class="dsk-clock-date" v-if="desktop.clockShowDate">{{ desktopClockDate }}</span>
             </div>
             <button class="dsk-show-desktop" title="显示桌面 / 还原所有窗口" @click.stop="toggleShowDesktop">
                 <i class="el-icon-s-fold"></i>
             </button>
+        </div>
+
+        <!-- 任务栏日历 -->
+        <div class="dsk-calendar" v-if="desktop.calendarOpen" @click.stop @contextmenu.prevent>
+            <div class="dsk-cal-head">
+                <div class="dsk-cal-heading">{{ desktopCalendarHeading }}</div>
+                <div class="dsk-cal-sub">{{ desktopClockTimezone }} · {{ desktopClockOffset }}</div>
+            </div>
+            <div class="dsk-cal-nav">
+                <button class="dsk-cal-nav-btn" title="上个月" @click="desktopCalendarPrev">
+                    <i class="el-icon-arrow-left"></i>
+                </button>
+                <span class="dsk-cal-title">{{ desktopCalendarTitle }}</span>
+                <button class="dsk-cal-nav-btn" title="下个月" @click="desktopCalendarNext">
+                    <i class="el-icon-arrow-right"></i>
+                </button>
+            </div>
+            <div class="dsk-cal-week">
+                <span v-for="(w, wi) in desktopCalendarWeekdays" :key="'cw' + wi">{{ w }}</span>
+            </div>
+            <div class="dsk-cal-grid">
+                <button v-for="c in desktopCalendarCells" :key="'cd' + c.key"
+                        class="dsk-cal-day"
+                        :class="{ dim: !c.inMonth, today: c.isToday, selected: c.isSelected }"
+                        :title="c.key"
+                        @click="desktopCalendarSelect(c)">
+                    {{ c.day }}
+                </button>
+            </div>
+            <div class="dsk-cal-foot">
+                <span class="dsk-cal-hint">本地时间</span>
+                <button class="dsk-cal-today" @click="desktopCalendarToday">今天</button>
+            </div>
         </div>
 
         <!-- 开始菜单 -->
