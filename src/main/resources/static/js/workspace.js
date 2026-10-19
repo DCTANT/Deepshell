@@ -191,6 +191,13 @@ function createDesktopWindow(id) {
         pendingOpen: false,
         thumbSrc: {},
         thumbFailed: {},
+        /* 磁盘窗口状态（与工作台标签页的磁盘字段一致） */
+        diskPath: '',
+        diskEntries: [],
+        diskTotalKb: null,
+        diskLoading: false,
+        diskError: '',
+        diskTruncated: false,
         x: 0,
         y: 0,
         w: 0,
@@ -722,6 +729,87 @@ Vue.component('xfer-list', {
     }
 });
 
+/* 磁盘占用分析：工作台右侧面板与桌面磁盘窗口共用同一份模板 */
+Vue.component('disk-analyzer', {
+    props: {
+        tab: { type: Object, required: true },
+        sessionId: { type: String, default: '' },
+        homeDir: { type: String, default: '' },
+        context: { type: String, default: 'panel' }
+    },
+    template: '#disk-analyzer-tpl',
+    data: function () {
+        return {
+            elapsed: 0
+        };
+    },
+    watch: {
+        'tab.diskLoading': function (loading) {
+            if (loading) {
+                this.startTimer();
+            } else {
+                this.stopTimer();
+            }
+        }
+    },
+    mounted: function () {
+        if (this.tab.diskLoading) {
+            this.startTimer();
+        }
+    },
+    beforeDestroy: function () {
+        this.stopTimer();
+    },
+    methods: {
+        analyze: function (path) {
+            path = String(path == null ? '' : path).trim();
+            if (!this.sessionId) {
+                ELEMENT.Message.warning('连接未就绪，请稍后再试');
+                return;
+            }
+            if (!path) {
+                ELEMENT.Message.warning('请输入要分析的目录');
+                return;
+            }
+            if (this.tab.diskLoading) {
+                return;
+            }
+            this.$root.startDiskAnalyze(this.tab, this.sessionId, path);
+        },
+        up: function () {
+            var p = String(this.tab.diskPath || '').replace(/\/+$/, '');
+            if (!p) {
+                return;
+            }
+            var idx = p.lastIndexOf('/');
+            this.analyze(idx <= 0 ? '/' : p.substring(0, idx));
+        },
+        startTimer: function () {
+            var self = this;
+            this.stopTimer();
+            this.elapsed = 0;
+            this._diskTimer = setInterval(function () {
+                self.elapsed++;
+            }, 1000);
+        },
+        stopTimer: function () {
+            if (this._diskTimer) {
+                clearInterval(this._diskTimer);
+                this._diskTimer = null;
+            }
+        },
+        sortName: function (a, b) {
+            return this.$root.sortDiskName(a, b);
+        },
+        sortSize: function (a, b) {
+            return this.$root.sortDiskSize(a, b);
+        },
+        fmtDisk: function (kb) {
+            return this.$root.fmtDisk(kb);
+        }
+    }
+});
+
 /* 终端命令底栏：工作台与桌面终端窗口共用 */
 Vue.component('term-cmd-bar', {
     props: {
@@ -1004,6 +1092,8 @@ new Vue({
               impact: '高', impactLevel: 'high', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', desc: '进入桌面时自动打开传输中心',
               impact: '低', impactLevel: 'low', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+            { id: 'disk', label: '磁盘', desc: '进入桌面时自动打开磁盘占用分析',
+              impact: '低', impactLevel: 'low', icon: 'el-icon-pie-chart', color: '#f59e0b' },
             { id: 'taskmgr', label: '任务管理器', desc: '进入桌面时自动打开任务管理器',
               impact: '低', impactLevel: 'low', icon: 'el-icon-cpu', color: '#0f6cbd' }
         ],
@@ -1220,7 +1310,6 @@ new Vue({
         procDetail: null,
         procDetailVisible: false,
         procDetailCmd: null,
-        diskElapsed: 0,
         lanSettings: { lanEnabled: false, effectiveLan: false, restartRequired: false, port: 0, urls: [] },
         appInfo: { version: '1.0.0', java: '', os: '', dataDir: '' },
         fontSettings: loadFontSettings(),
@@ -1420,6 +1509,14 @@ new Vue({
             }
             return null;
         },
+        desktopDiskWin: function () {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === 'disk') {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
         taskmgrWin: function () {
             for (var i = 0; i < this.desktop.windows.length; i++) {
                 if (this.desktop.windows[i].type === 'taskmgr') {
@@ -1527,6 +1624,7 @@ new Vue({
                 terminal: { label: '终端', icon: 'el-icon-monitor', color: '#22a06b' },
                 ai: { label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
                 transfer: { label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+                disk: { label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
                 taskmgr: { label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' }
             };
             var out = [];
@@ -3681,6 +3779,9 @@ new Vue({
             if (type === 'transfer') {
                 return 'el-icon-s-promotion';
             }
+            if (type === 'disk') {
+                return 'el-icon-pie-chart';
+            }
             if (type === 'terminal') {
                 return 'el-icon-monitor';
             }
@@ -3698,6 +3799,9 @@ new Vue({
             }
             if (w && w.type === 'transfer') {
                 return '传输中心';
+            }
+            if (w && w.type === 'disk') {
+                return '磁盘';
             }
             if (w && w.type === 'taskmgr') {
                 return '任务管理器';
@@ -3723,6 +3827,14 @@ new Vue({
                 var busy = this.transferActiveCount;
                 var text = busy ? '全部会话 · 进行中 ' + busy : '全部会话';
                 return host ? host + ' · ' + text : text;
+            }
+            if (w && w.type === 'disk') {
+                var diskText = '磁盘占用分析';
+                var diskPath = w.diskPath || '';
+                if (diskPath) {
+                    diskText += ' · ' + diskPath;
+                }
+                return host ? host + ' · ' + diskText : diskText;
             }
             if (w && w.type === 'taskmgr') {
                 return host ? host + ' · 进程与性能' : '进程与性能';
@@ -3950,6 +4062,51 @@ new Vue({
             var w = this.desktopTransferWin;
             if (!w) {
                 this.openTransferDesktopWindow();
+                return;
+            }
+            this.toggleDesktopTaskbarWindow(w);
+        },
+        openDiskDesktopWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var existing = this.desktopDiskWin;
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return null;
+            }
+            var w = this.addDesktopWindow('disk');
+            var area = this.desktopWindowWorkArea();
+            var width = Math.min(area.width - 20, Math.max(560, Math.round(area.width * 0.7)));
+            var height = Math.min(area.height - 20, Math.max(420, Math.round(area.height * 0.8)));
+            this.applyDesktopWindowGeometry(w, {
+                x: Math.round((area.width - width) / 2),
+                y: Math.round((area.height - height) / 2),
+                w: width,
+                h: height
+            });
+            var startPath = t.sftpPath || t.sftpHome || '';
+            w.diskPath = startPath;
+            var self = this;
+            this.$nextTick(function () {
+                if (startPath) {
+                    self.startDiskAnalyze(w, t.sessionId, startPath);
+                }
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        toggleDesktopDiskApp: function () {
+            var w = this.desktopDiskWin;
+            if (!w) {
+                this.openDiskDesktopWindow();
                 return;
             }
             this.toggleDesktopTaskbarWindow(w);
@@ -4698,12 +4855,13 @@ new Vue({
                 '终端': 'terminal', 'terminal': 'terminal', 'ssh': 'terminal',
                 'ai': 'ai', 'ai 终端': 'ai', 'ai终端': 'ai',
                 '传输中心': 'transfers', '传输': 'transfers', 'transfers': 'transfers',
+                '磁盘': 'disk', '磁盘分析': 'disk', '磁盘占用': 'disk', 'disk': 'disk',
                 '设置': 'control', '控制面板': 'control', 'settings': 'control'
             };
             var id = map[text];
             if (!id) {
                 ELEMENT.Message.warning('找不到应用：' + text
-                    + '。可输入：资源管理器、终端、AI 终端、传输中心、任务管理器、设置');
+                    + '。可输入：资源管理器、终端、AI 终端、传输中心、磁盘、任务管理器、设置');
                 return;
             }
             this.taskmgr.runVisible = false;
@@ -4790,6 +4948,9 @@ new Vue({
                 } else if (w.type === 'transfer') {
                     baseCpu = transferBusy ? 2.6 : 0.25;
                     baseMem = 62;
+                } else if (w.type === 'disk') {
+                    baseCpu = w.diskLoading ? 4.2 : 0.35;
+                    baseMem = 78;
                 } else if (w.type === 'taskmgr') {
                     baseCpu = 1.1;
                     baseMem = 42;
@@ -4850,7 +5011,7 @@ new Vue({
             });
         },
         trackTaskmgrAppLaunch: function (type) {
-            if (['explorer', 'terminal', 'ai', 'transfer', 'taskmgr'].indexOf(type) < 0) {
+            if (['explorer', 'terminal', 'ai', 'transfer', 'disk', 'taskmgr'].indexOf(type) < 0) {
                 return;
             }
             if (!this.taskmgr.appHistory[type]) {
@@ -4962,6 +5123,7 @@ new Vue({
                 terminal: '#22a06b',
                 ai: '#3d7eff',
                 transfer: '#0ea5a4',
+                disk: '#f59e0b',
                 taskmgr: '#0f6cbd'
             };
             return map[(w && w.type) || 'explorer'] || '#64748b';
@@ -5397,6 +5559,9 @@ new Vue({
             }
             if (cfg.transfers) {
                 this.openTransferDesktopWindow();
+            }
+            if (cfg.disk) {
+                this.openDiskDesktopWindow();
             }
             if (cfg.terminal) {
                 this.openDesktopTerminalWindow();
@@ -8766,6 +8931,10 @@ new Vue({
                 this.openTransferDesktopWindow();
                 return;
             }
+            if (id === 'disk') {
+                this.openDiskDesktopWindow();
+                return;
+            }
             if (id === 'terminal') {
                 this.openDesktopTerminalWindow();
                 return;
@@ -9105,11 +9274,11 @@ new Vue({
             this.ensurePanelWide();
             var p = t.sftpPath || t.sftpHome || '/';
             t.diskPath = p;
-            this.analyzeDisk(p);
+            this.startDiskAnalyze(t, t.sessionId, p);
         },
-        analyzeDisk: function (path) {
-            var t = this.activeTab;
-            if (!t || !t.sessionId || t.diskLoading) {
+        /* 工作台磁盘面板与桌面磁盘窗口共用的分析入口 */
+        startDiskAnalyze: function (target, sessionId, path) {
+            if (!target || !sessionId || target.diskLoading) {
                 return;
             }
             path = (path || '').trim();
@@ -9117,39 +9286,24 @@ new Vue({
                 ELEMENT.Message.warning('请输入要分析的目录');
                 return;
             }
-            var self = this;
-            t.diskPath = path;
-            t.diskLoading = true;
-            t.diskError = '';
-            t.diskEntries = [];
-            t.diskTotalKb = null;
-            this.diskElapsed = 0;
-            clearInterval(this._diskTimer);
-            this._diskTimer = setInterval(function () {
-                self.diskElapsed++;
-            }, 1000);
-            http.get('/api/disk/analyze', { params: { sessionId: t.sessionId, path: path } }).then(function (d) {
-                t.diskEntries = (d && d.entries) || [];
-                t.diskTotalKb = d ? d.totalKb : null;
-                t.diskTruncated = !!(d && d.truncated);
+            target.diskPath = path;
+            target.diskLoading = true;
+            target.diskError = '';
+            target.diskEntries = [];
+            target.diskTotalKb = null;
+            target.diskTruncated = false;
+            http.get('/api/disk/analyze', { params: { sessionId: sessionId, path: path } }).then(function (d) {
+                target.diskEntries = (d && d.entries) || [];
+                target.diskTotalKb = d ? d.totalKb : null;
+                target.diskTruncated = !!(d && d.truncated);
                 if (d && d.path) {
-                    t.diskPath = d.path;
+                    target.diskPath = d.path;
                 }
             }).catch(function (e) {
-                t.diskError = (e && e.message) ? e.message : '目录分析失败';
+                target.diskError = (e && e.message) ? e.message : '目录分析失败';
             }).then(function () {
-                t.diskLoading = false;
-                clearInterval(self._diskTimer);
+                target.diskLoading = false;
             });
-        },
-        diskUp: function () {
-            var t = this.activeTab;
-            if (!t || !t.diskPath) {
-                return;
-            }
-            var p = t.diskPath.replace(/\/+$/, '');
-            var idx = p.lastIndexOf('/');
-            this.analyzeDisk(idx <= 0 ? '/' : p.substring(0, idx));
         },
         sortDiskSize: function (a, b) {
             return (a.sizeKb || 0) - (b.sizeKb || 0);
