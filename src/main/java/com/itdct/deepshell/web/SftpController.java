@@ -8,6 +8,7 @@ import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
 import com.itdct.deepshell.service.ArchiveService;
 import com.itdct.deepshell.service.AuditService;
+import com.itdct.deepshell.service.DownloadTaskService;
 import com.itdct.deepshell.service.SftpService;
 import com.itdct.deepshell.service.TransferService;
 import com.itdct.deepshell.service.VscodeEditService;
@@ -15,13 +16,16 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.http.HttpServletResponse;
+import java.io.FilterOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.LongConsumer;
 
 @RestController
 @RequestMapping("/api/sftp")
@@ -35,15 +39,17 @@ public class SftpController {
     private final ArchiveService archiveService;
     private final TransferService transferService;
     private final AuditService audit;
+    private final DownloadTaskService downloadTasks;
 
     public SftpController(SftpService sftp, VscodeEditService vscodeEditService,
                           ArchiveService archiveService, TransferService transferService,
-                          AuditService audit) {
+                          AuditService audit, DownloadTaskService downloadTasks) {
         this.sftp = sftp;
         this.vscodeEditService = vscodeEditService;
         this.archiveService = archiveService;
         this.transferService = transferService;
         this.audit = audit;
+        this.downloadTasks = downloadTasks;
     }
 
     @GetMapping("/list")
@@ -120,13 +126,29 @@ public class SftpController {
 
     @GetMapping("/download")
     public void download(@RequestParam String sessionId, @RequestParam String path,
+                         @RequestParam(required = false) String taskId,
                          HttpServletResponse resp) throws Exception {
         String name = path.substring(path.lastIndexOf('/') + 1);
         resp.setContentType("application/octet-stream");
-        resp.setHeader("Content-Disposition", "attachment; filename=\"" + name
-                + "\"; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8").replace("+", "%20"));
+        resp.setHeader("Content-Disposition", contentDisposition("attachment", name));
         audit.record("FILE_DOWNLOAD", path, "OK", null);
-        sftp.download(sessionId, path, resp.getOutputStream());
+        if (isBlank(taskId)) {
+            sftp.download(sessionId, path, resp.getOutputStream());
+            return;
+        }
+        try {
+            downloadTasks.attach(taskId, sftp.fileSize(sessionId, path));
+        } catch (Exception ignore) {
+            // 取不到大小时仍继续下载，前端显示已传字节
+        }
+        try (CountingOutputStream out = new CountingOutputStream(
+                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n))) {
+            sftp.download(sessionId, path, out);
+        } catch (Exception e) {
+            downloadTasks.fail(taskId, e.getMessage());
+            throw e;
+        }
+        downloadTasks.finish(taskId);
     }
 
     /** 多选打包下载预检：校验会话、目录与选中项，返回实际下载文件名 */
@@ -152,22 +174,85 @@ public class SftpController {
                                @RequestParam String destDir,
                                @RequestParam("paths") List<String> paths,
                                @RequestParam(required = false) String name,
+                               @RequestParam(required = false) String taskId,
                                HttpServletResponse resp) throws Exception {
         requireSession(sessionId);
         // 先校验顶层路径，避免把错误响应当成 zip 下载
         sftp.checkBundle(sessionId, destDir, paths);
         String downloadName = sanitizeBundleName(name, destDir);
         resp.setContentType("application/zip");
-        resp.setHeader("Content-Disposition", "attachment; filename=\"download.zip\"; filename*=UTF-8''"
-                + URLEncoder.encode(downloadName, "UTF-8").replace("+", "%20"));
+        resp.setHeader("Content-Disposition", contentDisposition("attachment", downloadName));
         resp.setHeader("Cache-Control", "no-store");
         audit.record("FILE_DOWNLOAD", destDir, "OK", "打包下载 " + paths.size() + " 项：" + downloadName);
-        sftp.writeZip(sessionId, destDir, paths, resp.getOutputStream());
+        if (isBlank(taskId)) {
+            sftp.writeZip(sessionId, destDir, paths, resp.getOutputStream());
+            return;
+        }
+        // 流式 ZIP 无法预知最终大小，只按已发送字节提供进度
+        try (CountingOutputStream out = new CountingOutputStream(
+                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n))) {
+            sftp.writeZip(sessionId, destDir, paths, out);
+        } catch (Exception e) {
+            downloadTasks.fail(taskId, e.getMessage());
+            throw e;
+        }
+        downloadTasks.finish(taskId);
     }
 
     private static void requireSession(String sessionId) {
         if (sessionId == null || sessionId.trim().isEmpty()) {
             throw new IllegalArgumentException("会话未就绪");
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    /**
+     * 下载 / 预览的 Content-Disposition：filename= 只放 ASCII 回退名，
+     * 真实文件名（可能含中文）放到 RFC 5987 的 filename* 中。
+     * Tomcat 收到非 ASCII 头值时会丢弃该头，导致浏览器把图片当页面内联打开。
+     */
+    private static String contentDisposition(String disposition, String name) {
+        String raw = (name == null || name.trim().isEmpty()) ? "download" : name;
+        String safe = raw.replace('\\', '_').replace('"', '_')
+                .replace("\r", "_").replace("\n", "_");
+        String ascii = safe.replaceAll("[^\\x20-\\x7E]", "_");
+        if (ascii.trim().isEmpty()) {
+            ascii = "download";
+        }
+        String encoded;
+        try {
+            encoded = URLEncoder.encode(raw, "UTF-8").replace("+", "%20");
+        } catch (java.io.UnsupportedEncodingException e) {
+            encoded = ascii;
+        }
+        return disposition + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded;
+    }
+
+    /** 统计已写入响应流的字节数，供下载进度轮询读取 */
+    private static final class CountingOutputStream extends FilterOutputStream {
+        private final LongConsumer onProgress;
+        private long count;
+
+        CountingOutputStream(OutputStream out, LongConsumer onProgress) {
+            super(out);
+            this.onProgress = onProgress;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            out.write(b);
+            count++;
+            onProgress.accept(count);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            out.write(b, off, len);
+            count += len;
+            onProgress.accept(count);
         }
     }
 
@@ -214,11 +299,8 @@ public class SftpController {
         if (contentType == null) {
             throw new IllegalArgumentException("该文件类型不支持图片预览");
         }
-        String safeName = name.replace("\\", "_").replace("\"", "_")
-                .replace("\r", "_").replace("\n", "_");
         resp.setContentType(contentType);
-        resp.setHeader("Content-Disposition", "inline; filename=\"" + safeName
-                + "\"; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8").replace("+", "%20"));
+        resp.setHeader("Content-Disposition", contentDisposition("inline", name));
         resp.setHeader("Cache-Control", "private, max-age=300");
         resp.setHeader("X-Content-Type-Options", "nosniff");
         sftp.download(sessionId, path, resp.getOutputStream());

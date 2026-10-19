@@ -68,6 +68,31 @@ public class ConnectionController {
         return R.ok(saved);
     }
 
+    /** 同级连接重新排序：ids 为拖拽后该分组的完整顺序 */
+    @PostMapping("/reorder")
+    public R<Void> reorder(@RequestBody Map<String, Object> body) {
+        Object raw = body.get("ids");
+        if (!(raw instanceof List) || ((List<?>) raw).isEmpty()) {
+            throw new IllegalArgumentException("排序列表不能为空");
+        }
+        List<Long> ids = new java.util.ArrayList<>();
+        for (Object o : (List<?>) raw) {
+            if (o instanceof Number) {
+                ids.add(((Number) o).longValue());
+            }
+        }
+        service.reorder(ids);
+        return R.ok();
+    }
+
+    /** 复制连接（含已保存的密码 / 私钥口令），名称追加「-4位uuid」 */
+    @PostMapping("/{id}/duplicate")
+    public R<SshConnection> duplicate(@PathVariable Long id) {
+        SshConnection saved = service.duplicate(id);
+        audit.record("CONNECTION_CREATE", saved.getName(), "OK", "复制自 id=" + id);
+        return R.ok(saved);
+    }
+
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
         String name = "";

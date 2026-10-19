@@ -434,7 +434,7 @@ var sortFolders = function (a, b) {
 
 var sortConns = function (a, b) {
     return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)
-        || (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0)
+        || (a.sortOrder || 0) - (b.sortOrder || 0)
         || a.id - b.id;
 };
 
@@ -532,6 +532,101 @@ Vue.component('ai-chat-panel', {
     }
 });
 
+/* 传输中心列表：终端页气泡与桌面传输窗口共用同一份模板 */
+Vue.component('xfer-list', {
+    props: {
+        items: { type: Array, default: function () { return []; } }
+    },
+    template: '#xfer-list-tpl',
+    methods: {
+        fmtSize: function (n) {
+            return this.$root.fmtSize(n);
+        },
+        fmtSpeed: function (bps) {
+            return this.$root.fmtRate(bps);
+        },
+        kindClass: function (t) {
+            return t.kind === 'upload' ? 'up' : 'down';
+        },
+        kindLabel: function (t) {
+            return t.kind === 'upload' ? '上传' : '下载';
+        },
+        nameTitle: function (t) {
+            if (t.kind === 'localDownload') {
+                return (t.targetPath || '') + (t.currentFile ? ' · ' + t.currentFile : '');
+            }
+            return t.rel || t.name;
+        },
+        pct: function (t) {
+            if (t.kind === 'localDownload') {
+                if (t.status === 'done' || t.status === 'partial') {
+                    return 100;
+                }
+                if (t.totalBytes > 0) {
+                    return Math.max(0, Math.min(99,
+                        Math.round((t.doneBytes || 0) * 100 / t.totalBytes)));
+                }
+                if (t.totalFiles > 0) {
+                    return Math.max(0, Math.min(99,
+                        Math.round((t.doneFiles || 0) * 100 / t.totalFiles)));
+                }
+                return 0;
+            }
+            if (!t.size) {
+                // 流式打包 ZIP 无法预知总大小，显示不确定进度
+                return (t.kind === 'download' && t.status === 'downloading') ? -1 : (t.status === 'done' ? 100 : 0);
+            }
+            return Math.max(0, Math.min(100, Math.round((t.offset || 0) * 100 / t.size)));
+        },
+        pctText: function (t) {
+            var p = this.pct(t);
+            return p < 0 ? this.fmtSize(t.offset || 0) : p + '%';
+        },
+        statusText: function (t) {
+            if (t.kind === 'localDownload') {
+                if (t.status === 'queued') return '排队中';
+                if (t.status === 'scanning') return '正在统计文件…';
+                if (t.status === 'downloading') {
+                    return (t.doneFiles || 0) + '/' + (t.totalFiles || 0) + ' 个文件';
+                }
+                if (t.status === 'partial') {
+                    return '完成 ' + (t.doneFiles || 0) + ' 个，失败 ' + (t.errorCount || 0) + ' 个';
+                }
+                if (t.status === 'done') {
+                    return t.totalFiles > 0 ? '已完成 ' + (t.doneFiles || 0) + ' 个文件' : '已完成';
+                }
+                return t.error || '失败';
+            }
+            if (t.kind === 'download') {
+                if (t.status === 'downloading') {
+                    if (t.size > 0) {
+                        return this.fmtSize(t.offset || 0) + ' / ' + this.fmtSize(t.size);
+                    }
+                    return t.offset ? '已下载 ' + this.fmtSize(t.offset) : '下载中…';
+                }
+                if (t.status === 'done') return '已完成';
+                if (t.status === 'cancelled') return '已取消';
+                return t.error || '失败';
+            }
+            if (t.status === 'pending') return '等待中';
+            if (t.status === 'uploading') {
+                return this.fmtSize(t.offset || 0) + ' / ' + this.fmtSize(t.size);
+            }
+            if (t.status === 'processing') return '正在写入服务器…';
+            if (t.status === 'done') return '已完成';
+            if (t.status === 'cancelled') return '已取消';
+            return t.error || '失败';
+        },
+        canCancel: function (t) {
+            return t.kind === 'upload'
+                && (t.status === 'pending' || t.status === 'uploading' || t.status === 'processing');
+        },
+        canRetry: function (t) {
+            return t.kind === 'upload' && (t.status === 'error' || t.status === 'cancelled');
+        }
+    }
+});
+
 new Vue({
     el: '#app',
     data: {
@@ -554,6 +649,8 @@ new Vue({
         desktopAppIcons: [
             { key: 'app:explorer', type: 'app', action: 'explorer', label: '资源管理器',
               icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
+              icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
               icon: 'el-icon-setting', color: '#54657e' },
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
@@ -561,6 +658,7 @@ new Vue({
         ],
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+            { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
@@ -636,6 +734,11 @@ new Vue({
         connExpanded: {},
         connDragId: null,
         connDragOverId: null,
+        /* 拖动连接时落点行（按 row.key）与插入位置 before / after */
+        connDropKey: null,
+        connDropPos: '',
+        /* 打开连接弹窗中当前展开设置菜单的行（按 row.key 区分，最近/置顶/列表可能重复出现同一连接） */
+        connMenuKey: null,
         editVisible: false,
         editForm: { path: '', content: '', loading: false, saving: false },
         renameVisible: false,
@@ -667,7 +770,7 @@ new Vue({
         cmdEditForm: { id: null, name: '', command: '' },
         sftpFollow: loadSftpFollow(),
         transfers: [],
-        transferPanelOpen: true,
+        transferCenterOpen: false,
         localDownloadStatus: { checked: false, local: false, available: false },
         localDlSummary: { visible: false, item: null },
         permVisible: false,
@@ -932,7 +1035,7 @@ new Vue({
             var id = this.desktop.explorerId;
             if (!id) {
                 var active = this.desktopWindowById(this.desktop.activeWinId);
-                if (active && active.type !== 'ai') {
+                if (active && active.type === 'explorer') {
                     id = active.id;
                 }
             }
@@ -953,10 +1056,24 @@ new Vue({
             }
             return null;
         },
+        desktopTransferWin: function () {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === 'transfer') {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
         desktopExplorerWindows: function () {
             return this.desktop.windows.filter(function (w) {
-                return w.type !== 'ai';
+                return w.type === 'explorer';
             });
+        },
+        transferActiveCount: function () {
+            return this.transfers.filter(function (t) {
+                return ['pending', 'uploading', 'processing', 'queued', 'scanning', 'downloading']
+                    .indexOf(t.status) >= 0;
+            }).length;
         },
         desktopTaskMenuWin: function () {
             return this.desktopWindowById(this.desktop.taskMenu.winId);
@@ -1435,7 +1552,7 @@ new Vue({
         connRow: function (c, depth, prefix, noDrag) {
             return {
                 _rowType: 'conn', key: (prefix || 'c') + '-' + c.id, id: c.id, name: c.name,
-                host: c.host, port: c.port, username: c.username,
+                host: c.host, port: c.port, username: c.username, folderId: c.folderId,
                 favorite: !!c.favorite, pinned: !!c.pinned, depth: depth, noDrag: !!noDrag
             };
         },
@@ -1495,6 +1612,25 @@ new Vue({
             if (this.$refs.connForm) {
                 this.$refs.connForm.open(c);
             }
+        },
+        /* 右键连接行 = 左键点击齿轮，展开同一设置菜单 */
+        openConnMenu: function (row) {
+            this.connMenuKey = this.connMenuKey === row.key ? null : row.key;
+        },
+        setConnMenuOpen: function (key, visible) {
+            if (visible) {
+                this.connMenuKey = key;
+            } else if (this.connMenuKey === key) {
+                this.connMenuKey = null;
+            }
+        },
+        copyConnFromDialog: function (id) {
+            var self = this;
+            this.connMenuKey = null;
+            http.post('/api/connections/' + id + '/duplicate').then(function (saved) {
+                ELEMENT.Message.success('已复制为「' + saved.name + '」');
+                self.loadConnections();
+            }).catch(function () { /* 已由拦截器提示 */ });
         },
         removeConnFromDialog: function (id) {
             var c = this.connections.find(function (x) { return x.id === id; });
@@ -1623,6 +1759,76 @@ new Vue({
         onConnDragEnd: function () {
             this.connDragId = null;
             this.connDragOverId = null;
+            this.connDropKey = null;
+            this.connDropPos = '';
+        },
+        /* ---------- 拖动连接调整同级顺序 ---------- */
+        onConnRowDragOver: function (e, row) {
+            var draggedId = this.connDragId;
+            if (draggedId == null || row.noDrag || row.id === draggedId) {
+                this.connDropKey = null;
+                this.connDropPos = '';
+                return;
+            }
+            var dragged = this.connections.find(function (c) { return c.id === draggedId; });
+            var sameFolder = dragged
+                && (dragged.folderId == null ? null : dragged.folderId)
+                    === (row.folderId == null ? null : row.folderId);
+            if (!sameFolder) {
+                // 不同层级仍需拖到文件夹行上完成移动
+                this.connDropKey = null;
+                this.connDropPos = '';
+                return;
+            }
+            this.connDragOverId = null;
+            var rect = e.currentTarget.getBoundingClientRect();
+            this.connDropKey = row.key;
+            this.connDropPos = (e.clientY - rect.top) > rect.height / 2 ? 'after' : 'before';
+        },
+        onConnRowDragLeave: function (row) {
+            if (this.connDropKey === row.key) {
+                this.connDropKey = null;
+                this.connDropPos = '';
+            }
+        },
+        onConnRowDrop: function (e, row) {
+            var draggedId = this.connDragId;
+            var pos = this.connDropPos === 'after' ? 'after' : 'before';
+            this.connDragId = null;
+            this.connDragOverId = null;
+            this.connDropKey = null;
+            this.connDropPos = '';
+            if (draggedId == null || row.noDrag || row.id === draggedId) {
+                return;
+            }
+            var self = this;
+            var dragged = this.connections.find(function (c) { return c.id === draggedId; });
+            var folderId = row.folderId == null ? null : row.folderId;
+            if (!dragged || (dragged.folderId == null ? null : dragged.folderId) !== folderId) {
+                return;
+            }
+            var ids = this.connections.filter(function (c) {
+                return !c.pinned && (c.folderId == null ? null : c.folderId) === folderId;
+            }).sort(sortConns).map(function (c) {
+                return c.id;
+            }).filter(function (id) {
+                return id !== draggedId;
+            });
+            var targetIndex = ids.indexOf(row.id);
+            if (targetIndex < 0) {
+                return;
+            }
+            ids.splice(pos === 'after' ? targetIndex + 1 : targetIndex, 0, draggedId);
+            ids.forEach(function (id, i) {
+                var c = self.connections.find(function (x) { return x.id === id; });
+                if (c) {
+                    self.$set(c, 'sortOrder', i);
+                }
+            });
+            http.post('/api/connections/reorder', { ids: ids }).catch(function () {
+                // 已由拦截器提示，回滚为服务端顺序
+                self.loadConnections();
+            });
         },
         onFolderDragOver: function (row) {
             if (this.connDragId != null) {
@@ -1638,6 +1844,8 @@ new Vue({
             var connId = this.connDragId;
             this.connDragId = null;
             this.connDragOverId = null;
+            this.connDropKey = null;
+            this.connDropPos = '';
             if (connId == null) {
                 return;
             }
@@ -2775,6 +2983,9 @@ new Vue({
             if (w && w.type === 'ai') {
                 return 'AI 终端';
             }
+            if (w && w.type === 'transfer') {
+                return '传输中心';
+            }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
                 return '/';
@@ -2784,6 +2995,11 @@ new Vue({
         },
         desktopWindowSubtitle: function (w) {
             var host = this.desktopTab ? this.desktopTab.host : '';
+            if (w && w.type === 'transfer') {
+                var busy = this.transferActiveCount;
+                var text = busy ? '全部会话 · 进行中 ' + busy : '全部会话';
+                return host ? host + ' · ' + text : text;
+            }
             if (w && w.type === 'ai') {
                 var t = this.desktopTab;
                 var conv = t ? this.aiActiveConv(t) : null;
@@ -2836,7 +3052,7 @@ new Vue({
                 return;
             }
             var list = this.desktop.windows.filter(function (w) {
-                return w.type !== 'ai';
+                return w.type === 'explorer';
             }).map(function (w) {
                 var g = w.max && w.normal ? w.normal : { x: w.x, y: w.y, w: w.w, h: w.h };
                 return {
@@ -2983,6 +3199,32 @@ new Vue({
             }
             this.toggleDesktopTaskbarWindow(w);
         },
+        openTransferDesktopWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var existing = this.desktopTransferWin;
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var w = this.addDesktopWindow('transfer');
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        toggleDesktopTransferApp: function () {
+            var w = this.desktopTransferWin;
+            if (!w) {
+                this.openTransferDesktopWindow();
+                return;
+            }
+            this.toggleDesktopTaskbarWindow(w);
+        },
         openDesktopExplorerWindow: function (path) {
             if (!this.desktop.visible) {
                 return null;
@@ -3000,7 +3242,7 @@ new Vue({
                 changed = true;
             }
             this.desktop.activeWinId = id;
-            if (w.type !== 'ai') {
+            if (w.type === 'explorer') {
                 this.desktop.explorerId = id;
             }
             w.z = ++this.desktop.zSeq;
@@ -3025,7 +3267,7 @@ new Vue({
                     }
                 });
                 var self = this;
-                if (w.type !== 'ai') {
+                if (w.type === 'explorer') {
                     this.$nextTick(function () {
                         self.setupDesktopThumbs(w);
                     });
@@ -3046,11 +3288,11 @@ new Vue({
             this.desktop.activeWinId = best ? best.id : '';
             var current = this.desktopWindowById(this.desktop.explorerId);
             var explorer = null;
-            if (current && current.type !== 'ai' && !current.min) {
+            if (current && current.type === 'explorer' && !current.min) {
                 explorer = current;
             } else {
                 this.desktop.windows.forEach(function (w) {
-                    if (w.type !== 'ai' && !w.min && (!explorer || w.z > explorer.z)) {
+                    if (w.type === 'explorer' && !w.min && (!explorer || w.z > explorer.z)) {
                         explorer = w;
                     }
                 });
@@ -3182,10 +3424,10 @@ new Vue({
                 });
             }
             this.desktop.showDesktopIds = [];
-            var explorer = target && target.type !== 'ai' ? target : null;
+            var explorer = target && target.type === 'explorer' ? target : null;
             if (!explorer) {
                 this.desktop.windows.forEach(function (w) {
-                    if (w.type !== 'ai' && (!explorer || w.z > explorer.z)) {
+                    if (w.type === 'explorer' && (!explorer || w.z > explorer.z)) {
                         explorer = w;
                     }
                 });
@@ -4066,6 +4308,8 @@ new Vue({
             if (item.type === 'app') {
                 if (item.action === 'explorer') {
                     this.openDesktopExplorerWindow('/');
+                } else if (item.action === 'transfers') {
+                    this.openTransferDesktopWindow();
                 } else if (item.action === 'settings') {
                     this.openDesktopSettings();
                 } else if (item.action === 'ai') {
@@ -4310,7 +4554,7 @@ new Vue({
                         dirs[p.substring(0, p.lastIndexOf('/')) || '/'] = true;
                     });
                     self.desktop.windows.forEach(function (w) {
-                        if (w.type !== 'ai' && dirs[w.path]) {
+                        if (w.type === 'explorer' && dirs[w.path]) {
                             self.desktopRefresh(w);
                         }
                     });
@@ -5807,7 +6051,7 @@ new Vue({
             var paths = rows.map(function (r) {
                 return self.desktopEntryPath(r, d);
             });
-            this.requestBundleDownload(t.sessionId, d.path, paths, rows.length);
+            this.requestBundleDownload(t.sessionId, d.path, paths, rows.length, t);
         },
         desktopDownloadToLocal: function (rows, win) {
             var t = this.desktopTab;
@@ -5823,7 +6067,7 @@ new Vue({
             this.startLocalDownload(t.sessionId, d.path, paths, t.key);
         },
         /* 桌面与 SFTP 面板共用的打包下载：预检 → 隐藏表单提交 */
-        requestBundleDownload: function (sessionId, dir, paths, count) {
+        requestBundleDownload: function (sessionId, dir, paths, count, tab) {
             if (!sessionId || !paths || !paths.length) {
                 return;
             }
@@ -5840,14 +6084,21 @@ new Vue({
             }).then(function (d) {
                 loading.close();
                 var name = (d && d.downloadName) || 'download.zip';
-                self.submitBundleDownload(sessionId, dir, paths, name);
+                self.createDownloadTask(name).then(function (task) {
+                    var item = self.addDownloadTransfer(task, name, tab);
+                    self.submitBundleDownload(sessionId, dir, paths, name, task.id);
+                    self.pollDownloadTask(item);
+                }).catch(function () {
+                    // 任务接口异常时退化为普通下载
+                    self.submitBundleDownload(sessionId, dir, paths, name);
+                });
                 ELEMENT.Message.success('已开始下载 ' + name);
             }).catch(function () {
                 loading.close();
             });
         },
         /* 表单提交到隐藏 iframe：避免 URI 过长，错误也不会把当前页面导航走 */
-        submitBundleDownload: function (sessionId, dir, paths, name) {
+        submitBundleDownload: function (sessionId, dir, paths, name, taskId) {
             var frameName = 'dsDownloadFrame';
             if (!document.getElementById(frameName)) {
                 var frame = document.createElement('iframe');
@@ -5871,6 +6122,9 @@ new Vue({
             addField('sessionId', sessionId);
             addField('destDir', dir);
             addField('name', name);
+            if (taskId) {
+                addField('taskId', taskId);
+            }
             paths.forEach(function (p) {
                 addField('paths', p);
             });
@@ -5886,13 +6140,7 @@ new Vue({
             if (!t || !t.sessionId) {
                 return;
             }
-            var url = '/api/sftp/download?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d));
-            var a = document.createElement('a');
-            a.href = url;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            this.downloadPath(t, this.desktopEntryPath(row, d));
         },
         desktopDeleteRows: function (rows, win) {
             var t = this.desktopTab;
@@ -6450,7 +6698,7 @@ new Vue({
         },
         onDesktopSideButton: function (e) {
             var active = this.desktopWindowById(this.desktop.activeWinId);
-            if (!this.desktop.visible || !active || active.type === 'ai'
+            if (!this.desktop.visible || !active || active.type !== 'explorer'
                     || (e.button !== 3 && e.button !== 4)) {
                 return;
             }
@@ -6545,7 +6793,7 @@ new Vue({
             });
             var surfaceWin = surfaceFocused ? this.desktopSurfaceContextWin() : null;
             var active = this.desktopWindowById(this.desktop.activeWinId);
-            var win = active && active.type !== 'ai' ? active : null;
+            var win = active && active.type === 'explorer' ? active : null;
             var selected = win && !surfaceFocused ? this.desktopSelectedRows(win) : [];
             if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
                 if (win && !surfaceFocused) {
@@ -6771,6 +7019,10 @@ new Vue({
             var self = this;
             if (id === 'ai') {
                 this.openAiDesktopWindow();
+                return;
+            }
+            if (id === 'transfers') {
+                this.openTransferDesktopWindow();
                 return;
             }
             if (id === 'file') {
@@ -8098,13 +8350,84 @@ new Vue({
             if (!tab || !tab.sessionId) {
                 return;
             }
+            var self = this;
+            var name = path.substring(path.lastIndexOf('/') + 1) || path;
             var url = '/api/sftp/download?sessionId=' + encodeURIComponent(tab.sessionId)
                 + '&path=' + encodeURIComponent(path);
+            this.createDownloadTask(name).then(function (task) {
+                var item = self.addDownloadTransfer(task, name, tab);
+                self.triggerDownload(url + '&taskId=' + encodeURIComponent(task.id), name);
+                self.pollDownloadTask(item);
+            }).catch(function () {
+                // 任务接口异常时退化为普通下载，至少不阻断下载本身
+                self.triggerDownload(url, name);
+            });
+        },
+        triggerDownload: function (url, name) {
             var a = document.createElement('a');
             a.href = url;
+            if (name) {
+                a.download = name;
+            }
             document.body.appendChild(a);
             a.click();
             a.remove();
+        },
+        createDownloadTask: function (name) {
+            return http.post('/api/downloads/tasks', { name: name });
+        },
+        addDownloadTransfer: function (task, name, tab) {
+            var item = {
+                id: 'rd' + (task && task.id ? task.id : (Date.now().toString(36) + Math.random().toString(36).slice(2, 6))),
+                kind: 'download',
+                taskId: task ? task.id : '',
+                name: name,
+                rel: name,
+                size: (task && task.totalBytes) || 0,
+                offset: (task && task.doneBytes) || 0,
+                status: (task && task.status) || 'downloading',
+                error: '',
+                tabKey: tab ? tab.key : '',
+                clientKey: tab ? tab.clientKey : '',
+                _timer: null
+            };
+            return this.pushTransfer(item);
+        },
+        pollDownloadTask: function (item) {
+            if (!item || !item.taskId || item._timer) {
+                return;
+            }
+            var self = this;
+            var tick = function () {
+                http.get('/api/downloads/tasks/' + encodeURIComponent(item.taskId)).then(function (t) {
+                    if (!t) {
+                        return;
+                    }
+                    if (t.totalBytes) {
+                        item.size = t.totalBytes;
+                    }
+                    item.offset = t.doneBytes || 0;
+                    item.status = t.status || item.status;
+                    item.error = t.error || '';
+                    if (item.status === 'done' || item.status === 'error') {
+                        clearInterval(item._timer);
+                        item._timer = null;
+                        if (item.status === 'done') {
+                            item.offset = item.size || item.offset;
+                        }
+                    }
+                }).catch(function () {
+                    if (!item._timer) {
+                        return;
+                    }
+                    clearInterval(item._timer);
+                    item._timer = null;
+                    item.status = 'error';
+                    item.error = '无法获取下载进度';
+                });
+            };
+            item._timer = setInterval(tick, 700);
+            tick();
         },
         /** 文件夹先打包成 zip 再下载（复用服务端压缩能力） */
         downloadDir: function (row) {
@@ -8144,7 +8467,7 @@ new Vue({
             var paths = rows.map(function (r) {
                 return self.pathJoin(t.sftpPath, r.name);
             });
-            this.requestBundleDownload(t.sessionId, t.sftpPath, paths, rows.length);
+            this.requestBundleDownload(t.sessionId, t.sftpPath, paths, rows.length, t);
         },
         /* SFTP 面板多选：逐个下载文件（文件夹跳过） */
         sftpDownloadEach: function () {
@@ -8262,8 +8585,7 @@ new Vue({
                 _timer: null,
                 _finished: false
             };
-            this.transfers.push(item);
-            this.transferPanelOpen = true;
+            this.pushTransfer(item);
             if (item.status === 'done' || item.status === 'error') {
                 this.finishLocalDownload(item);
             } else {
@@ -8383,12 +8705,87 @@ new Vue({
             }
         },
         uploadOne: function (tab, dir, file) {
-            // 兼容可视化桌面上传：仍走整文件接口
+            // 可视化桌面上传：整文件接口 + 上传进度，失败后可转入分片续传重试
+            if (!tab || !file) {
+                return Promise.reject(new Error('参数缺失'));
+            }
             var fd = new FormData();
             fd.append('sessionId', tab.sessionId);
             fd.append('path', dir);
             fd.append('file', file);
-            return http.post('/api/sftp/upload', fd);
+            var item = {
+                id: 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+                kind: 'upload',
+                name: file.name,
+                dir: dir,
+                rel: file.name,
+                size: file.size || 0,
+                offset: 0,
+                status: 'uploading',
+                error: '',
+                file: file,
+                tabKey: tab.key,
+                clientKey: tab.clientKey
+            };
+            this.pushTransfer(item);
+            return http.post('/api/sftp/upload', fd, {
+                onUploadProgress: function (e) {
+                    if (e && e.total) {
+                        item.offset = Math.min(e.loaded, e.total);
+                    }
+                }
+            }).then(function () {
+                item.status = 'done';
+                item.offset = item.size;
+            }).catch(function (err) {
+                item.status = 'error';
+                item.error = (err && err.message) ? err.message : '上传失败';
+                throw err;
+            });
+        },
+        /* ---------- 传输中心：统一登记、速度采样 ---------- */
+        pushTransfer: function (item) {
+            item.speed = 0;
+            this.transfers.push(item);
+            this.transferCenterOpen = true;
+            this.ensureTransferSpeedTimer();
+            return item;
+        },
+        transferBytes: function (t) {
+            if (t.kind === 'localDownload') {
+                return t.doneBytes || 0;
+            }
+            return t.offset || 0;
+        },
+        ensureTransferSpeedTimer: function () {
+            if (this._transferSpeedTimer) {
+                return;
+            }
+            var self = this;
+            this._transferSpeedTimer = setInterval(function () {
+                var now = Date.now();
+                self.transfers.forEach(function (t) {
+                    var bytes = self.transferBytes(t);
+                    var moving = t.status === 'uploading' || t.status === 'downloading';
+                    if (moving && t._speedAt) {
+                        var dt = (now - t._speedAt) / 1000;
+                        var inst = dt > 0 ? Math.max(0, (bytes - (t._speedBytes || 0)) / dt) : 0;
+                        if (inst <= 0) {
+                            // 长时间没有字节增长时快速归零，避免停在 “1 B/s”
+                            t.speed = Math.round((t.speed || 0) * 0.4);
+                            if (t.speed < 512) {
+                                t.speed = 0;
+                            }
+                        } else {
+                            t.speed = t.speed ? Math.round(t.speed * 0.55 + inst * 0.45) : Math.round(inst);
+                        }
+                    } else if (!moving) {
+                        t.speed = 0;
+                    }
+                    t._speedBytes = bytes;
+                    t._speedAt = now;
+                });
+            }, 1000);
         },
         /* ---------- 分片上传队列（支持失败重试/续传） ---------- */
         enqueueUpload: function (tab, dir, file, relativePath) {
@@ -8410,8 +8807,7 @@ new Vue({
                 tabKey: tab.key,
                 clientKey: tab.clientKey
             };
-            this.transfers.push(item);
-            this.transferPanelOpen = true;
+            this.pushTransfer(item);
             this.pumpTransfers();
             return item;
         },
@@ -8505,7 +8901,7 @@ new Vue({
             });
         },
         cancelTransfer: function (item) {
-            if (item.kind === 'localDownload') {
+            if (item.kind !== 'upload') {
                 return;
             }
             var wasRunning = item.status === 'uploading' || item.status === 'processing';
@@ -8517,7 +8913,7 @@ new Vue({
             this.pumpTransfers();
         },
         retryTransfer: function (item) {
-            if (item.kind === 'localDownload') {
+            if (item.kind !== 'upload') {
                 return;
             }
             if (item.status !== 'error' && item.status !== 'cancelled') {
@@ -8533,6 +8929,12 @@ new Vue({
         },
         clearFinishedTransfers: function () {
             var active = ['pending', 'uploading', 'processing', 'queued', 'scanning', 'downloading'];
+            this.transfers.forEach(function (t) {
+                if (active.indexOf(t.status) < 0 && t._timer) {
+                    clearInterval(t._timer);
+                    t._timer = null;
+                }
+            });
             this.transfers = this.transfers.filter(function (t) {
                 return active.indexOf(t.status) >= 0;
             });
@@ -8548,50 +8950,6 @@ new Vue({
                     self.cancelTransfer(t);
                 }
             });
-        },
-        transferPct: function (item) {
-            if (item.kind === 'localDownload') {
-                if (item.status === 'done' || item.status === 'partial') {
-                    return 100;
-                }
-                if (item.totalBytes > 0) {
-                    return Math.max(0, Math.min(99,
-                        Math.round((item.doneBytes || 0) * 100 / item.totalBytes)));
-                }
-                if (item.totalFiles > 0) {
-                    return Math.max(0, Math.min(99,
-                        Math.round((item.doneFiles || 0) * 100 / item.totalFiles)));
-                }
-                return 0;
-            }
-            if (!item.size) {
-                return item.status === 'done' ? 100 : 0;
-            }
-            return Math.max(0, Math.min(100, Math.round((item.offset || 0) * 100 / item.size)));
-        },
-        transferStatusText: function (item) {
-            if (item.kind === 'localDownload') {
-                if (item.status === 'queued') return '排队中';
-                if (item.status === 'scanning') return '正在统计文件…';
-                if (item.status === 'downloading') {
-                    return (item.doneFiles || 0) + '/' + (item.totalFiles || 0) + ' 个文件';
-                }
-                if (item.status === 'partial') {
-                    return '完成 ' + (item.doneFiles || 0) + ' 个，失败 ' + (item.errorCount || 0) + ' 个';
-                }
-                if (item.status === 'done') {
-                    return item.totalFiles > 0 ? '已完成 ' + (item.doneFiles || 0) + ' 个文件' : '已完成';
-                }
-                return item.error || '失败';
-            }
-            if (item.status === 'pending') return '等待中';
-            if (item.status === 'uploading') {
-                return this.fmtSize(item.offset || 0) + ' / ' + this.fmtSize(item.size);
-            }
-            if (item.status === 'processing') return '正在写入服务器…';
-            if (item.status === 'done') return '已完成';
-            if (item.status === 'cancelled') return '已取消';
-            return item.error || '失败';
         },
         triggerFolderUpload: function () {
             var el = this.$refs.folderInput;

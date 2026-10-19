@@ -377,6 +377,11 @@ public class SftpService {
         });
     }
 
+    /** 文件大小（下载进度跟踪用） */
+    public long fileSize(String sessionId, String path) throws Exception {
+        return withSftp(sessionId, c -> c.stat(path).getSize());
+    }
+
     /** 多选打包下载预检：校验目录 / 路径关系，并确认顶层文件或文件夹可访问 */
     public int checkBundle(String sessionId, String dir, List<String> paths) throws Exception {
         BundleSelection sel = validateBundle(dir, paths);

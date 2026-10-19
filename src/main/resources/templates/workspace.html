@@ -58,6 +58,25 @@
             <span class="stat-err" v-else-if="activeTab && activeTab.stats && activeTab.stats.error">
                 {{ activeTab.stats.error }}
             </span>
+            <el-popover placement="bottom-end" width="400" trigger="manual" v-model="transferCenterOpen"
+                        popper-class="xfer-pop">
+                <div class="xfer-pop-head">
+                    <i class="el-icon-s-promotion"></i>
+                    <span class="xfer-pop-title">传输中心</span>
+                    <span class="xfer-pop-sub" v-if="transferActiveCount">进行中 {{ transferActiveCount }}</span>
+                    <span class="spacer"></span>
+                    <el-button size="mini" type="text" @click="clearFinishedTransfers">清除已完成</el-button>
+                    <i class="el-icon-close xfer-pop-close" title="关闭"
+                       @click="transferCenterOpen = false"></i>
+                </div>
+                <div class="xfer-pop-body">
+                    <xfer-list :items="transfers" @cancel="cancelTransfer" @retry="retryTransfer"
+                               @summary="showLocalDownloadSummary"></xfer-list>
+                </div>
+                <i slot="reference" class="el-icon-s-promotion tbtn xfer-center-btn"
+                   :class="{ active: transferCenterOpen }" title="传输中心"
+                   @click.stop="transferCenterOpen = !transferCenterOpen"></i>
+            </el-popover>
             <i class="el-icon-full-screen tbtn" title="终端自适应" @click="fitActive"></i>
             <i class="tbtn" :class="panelVisible ? 'el-icon-s-fold' : 'el-icon-s-unfold'"
                :title="panelVisible ? '隐藏侧栏' : '显示侧栏'"
@@ -560,7 +579,8 @@
                 <div class="dsk-titlebar" @mousedown="startDesktopWindowDrag($event, w)"
                      @dblclick="toggleDesktopWindowMax(w)">
                     <span class="dsk-titlebar-icon">
-                        <i :class="w.type === 'ai' ? 'el-icon-chat-dot-round' : 'el-icon-folder-opened'"></i>
+                        <i :class="w.type === 'ai' ? 'el-icon-chat-dot-round'
+                                   : (w.type === 'transfer' ? 'el-icon-s-promotion' : 'el-icon-folder-opened')"></i>
                     </span>
                     <span class="dsk-titlebar-text">
                         <span class="dsk-titlebar-title">{{ desktopWindowTitle(w) }}</span>
@@ -581,7 +601,21 @@
                     </span>
                 </div>
 
-                <template v-if="w.type === 'ai'">
+                <template v-if="w.type === 'transfer'">
+                    <div class="dsk-transfer-body">
+                        <div class="xfer-win-head">
+                            <i class="el-icon-s-promotion"></i>
+                            <span class="xfer-win-title">全部会话</span>
+                            <span class="xfer-pop-sub" v-if="transferActiveCount">进行中 {{ transferActiveCount }}</span>
+                            <span class="spacer"></span>
+                            <el-button size="mini" type="text"
+                                       @click="clearFinishedTransfers">清除已完成</el-button>
+                        </div>
+                        <xfer-list :items="transfers" @cancel="cancelTransfer" @retry="retryTransfer"
+                                   @summary="showLocalDownloadSummary"></xfer-list>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'ai'">
                     <div class="dsk-ai-body">
                         <ai-chat-panel v-if="desktopTab" ref="aiChatWinPanel"
                                        :tab="desktopTab" context="window"></ai-chat-panel>
@@ -856,6 +890,15 @@
                     <span class="dsk-task-label">AI 终端</span>
                     <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
+                </button>
+                <button class="dsk-task-app dsk-transfer-app"
+                        :class="{ active: desktopTransferWin && desktop.activeWinId === desktopTransferWin.id && !desktopTransferWin.min,
+                                  'is-min': desktopTransferWin && desktopTransferWin.min }"
+                        title="打开传输中心" @click.stop="toggleDesktopTransferApp">
+                    <i class="el-icon-s-promotion"></i>
+                    <span class="dsk-task-label">传输中心</span>
+                    <i v-if="transferActiveCount" class="dsk-task-busy"
+                       title="有正在进行的传输"></i>
                 </button>
                 <button class="dsk-task-app dsk-return-term"
                         title="在浏览器新标签页打开终端，保留当前桌面窗口"
@@ -1699,14 +1742,20 @@
                     <span class="conn-row-count">{{ row._count }} 项</span>
                 </div>
                 <div v-else :key="row.key" class="conn-row" :draggable="!row.noDrag"
+                     :class="{ 'drop-before': connDropKey === row.key && connDropPos === 'before',
+                               'drop-after': connDropKey === row.key && connDropPos === 'after' }"
                      :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }" @click="openTab(row.id, null, true)"
+                     @contextmenu.prevent="openConnMenu(row)"
+                     @dragover.prevent="onConnRowDragOver($event, row)" @dragleave="onConnRowDragLeave(row)"
+                     @drop.prevent="onConnRowDrop($event, row)"
                      @dragstart="onConnDragStart($event, row)" @dragend="onConnDragEnd">
                     <i class="el-icon-monitor conn-row-icon"></i>
                     <span class="conn-row-name">{{ row.name }}</span>
                     <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
                     <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
                     <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
-                    <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop">
+                    <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
+                                :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">
                         <div class="conn-set">
                             <div class="conn-set-row">
                                 <span><i class="el-icon-top"></i> 置顶显示</span>
@@ -1721,6 +1770,9 @@
                             <div class="conn-set-row conn-set-action" @click="editConnFromDialog(row.id)">
                                 <span><i class="el-icon-edit"></i> 编辑连接</span>
                                 <i class="el-icon-arrow-right"></i>
+                            </div>
+                            <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
+                                <span><i class="el-icon-document-copy"></i> 复制连接</span>
                             </div>
                             <div class="conn-set-row conn-set-action conn-set-danger"
                                  @click="removeConnFromDialog(row.id)">
@@ -1740,7 +1792,7 @@
             </div>
         </div>
         <div class="conn-dlg-tip" v-if="connFilter === 'all' && folders.length">
-            <i class="el-icon-rank"></i> 可将连接拖到文件夹上移动
+            <i class="el-icon-rank"></i> 拖动连接可调整同级顺序，拖到文件夹上可移动
         </div>
         <div slot="footer">
             <el-button size="small" icon="el-icon-upload2" @click="connImportVisible = true">连接导入</el-button>
@@ -2429,43 +2481,6 @@
         </div>
     </el-dialog>
 
-    <!-- 传输队列 -->
-    <div class="xfer-panel" v-if="transfers.length">
-        <div class="xfer-head" @click="transferPanelOpen = !transferPanelOpen">
-            <i class="el-icon-sort"></i>
-            <span>传输队列（{{ transfers.length }}）</span>
-            <span class="spacer"></span>
-            <i class="el-icon-delete" title="清除已完成" @click.stop="clearFinishedTransfers"></i>
-            <i :class="transferPanelOpen ? 'el-icon-arrow-down' : 'el-icon-arrow-up'"></i>
-        </div>
-        <div class="xfer-list" v-show="transferPanelOpen">
-            <div class="xfer-item" v-for="t in transfers" :key="t.id">
-                <div class="xfer-line">
-                    <span class="xfer-name" :title="t.kind === 'localDownload'
-                              ? (t.rel + (t.currentFile ? ' · ' + t.currentFile : '')) : t.rel">{{ t.name }}</span>
-                    <span class="xfer-status" :class="'xfer-' + t.status">{{ transferStatusText(t) }}</span>
-                </div>
-                <div class="xfer-sub" v-if="t.kind === 'localDownload' && t.status === 'downloading' && t.currentFile"
-                     :title="t.currentFile">{{ t.currentFile }}</div>
-                <div class="xfer-bar">
-                    <i :style="{ width: transferPct(t) + '%' }" :class="'xfer-bar-' + t.status"></i>
-                </div>
-                <div class="xfer-actions">
-                    <span class="xfer-pct">{{ transferPct(t) }}%</span>
-                    <span class="spacer"></span>
-                    <el-button v-if="t.kind === 'localDownload'"
-                               size="mini" type="text" @click="showLocalDownloadSummary(t)">详情</el-button>
-                    <el-button v-if="t.kind !== 'localDownload'
-                               && (t.status === 'pending' || t.status === 'uploading' || t.status === 'processing')"
-                               size="mini" type="text" @click="cancelTransfer(t)">取消</el-button>
-                    <el-button v-if="t.kind !== 'localDownload'
-                               && (t.status === 'error' || t.status === 'cancelled')"
-                               size="mini" type="text" @click="retryTransfer(t)">重试</el-button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- 下载到本机：结果汇总 -->
     <el-dialog title="下载到本机结果" :visible.sync="localDlSummary.visible" width="560px" append-to-body>
         <div v-if="localDlSummary.item" class="local-dl-summary">
@@ -2696,6 +2711,38 @@
                             </div>
                         </div>
                     </div>
+</script>
+
+<script type="text/x-template" id="xfer-list-tpl">
+    <div class="xfer-list">
+        <div class="xfer-empty" v-if="!items.length">
+            <i class="el-icon-s-promotion"></i>
+            <span>暂无传输任务</span>
+        </div>
+        <div class="xfer-item" v-for="t in items" :key="t.id">
+            <div class="xfer-line">
+                <span class="xfer-kind" :class="'xfer-kind-' + kindClass(t)">{{ kindLabel(t) }}</span>
+                <span class="xfer-name" :title="nameTitle(t)">{{ t.name }}</span>
+                <span class="xfer-status" :class="'xfer-' + t.status">{{ statusText(t) }}</span>
+            </div>
+            <div class="xfer-sub" v-if="t.kind === 'localDownload' && t.status === 'downloading' && t.currentFile"
+                 :title="t.currentFile">{{ t.currentFile }}</div>
+            <div class="xfer-bar" :class="{ indeterminate: pct(t) < 0 }">
+                <i :style="{ width: (pct(t) < 0 ? 100 : pct(t)) + '%' }" :class="'xfer-bar-' + t.status"></i>
+            </div>
+            <div class="xfer-actions">
+                <span class="xfer-pct">{{ pctText(t) }}</span>
+                <span class="xfer-speed" v-if="t.speed > 0">{{ fmtSpeed(t.speed) }}</span>
+                <span class="spacer"></span>
+                <el-button v-if="t.kind === 'localDownload'" size="mini" type="text"
+                           @click="$emit('summary', t)">详情</el-button>
+                <el-button v-if="canCancel(t)" size="mini" type="text"
+                           @click="$emit('cancel', t)">取消</el-button>
+                <el-button v-if="canRetry(t)" size="mini" type="text"
+                           @click="$emit('retry', t)">重试</el-button>
+            </div>
+        </div>
+    </div>
 </script>
 
 <script th:src="@{/vendor/vue/vue.min.js}"></script>

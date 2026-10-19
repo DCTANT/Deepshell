@@ -832,6 +832,15 @@ body.resizing .term-host {
     box-shadow: inset 0 0 0 1px #3d7eff;
 }
 
+/* 拖动连接排序时的插入位置提示 */
+.conn-row.drop-before {
+    box-shadow: inset 0 2px 0 #3d7eff;
+}
+
+.conn-row.drop-after {
+    box-shadow: inset 0 -2px 0 #3d7eff;
+}
+
 .conn-dlg-tip {
     padding: 6px 4px 0;
     font-size: 12px;
@@ -5709,33 +5718,124 @@ body.resizing .term-host {
     color: #6ea8ff;
 }
 
-/* ---------- 传输队列 ---------- */
-.xfer-panel {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    width: 330px;
-    background: #fff;
-    border: 1px solid #e4e7ed;
-    border-radius: 10px;
-    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.18);
-    z-index: 1500;
-    overflow: hidden;
+/* ---------- 传输中心 ---------- */
+.xfer-center-btn.active {
+    color: #3d7eff;
+}
+
+.xfer-pop {
+    padding: 0 !important;
+}
+
+.xfer-pop-head,
+.xfer-win-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f5f7fa;
+    border-bottom: 1px solid #ebeef5;
+    color: #303133;
     font-size: 12px;
 }
 
-.xfer-head {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 9px 12px;
-    background: #f5f7fa;
-    border-bottom: 1px solid #ebeef5;
+.xfer-pop-title,
+.xfer-win-title {
+    font-weight: 600;
+}
+
+.xfer-pop-sub {
+    color: #3d7eff;
+    font-size: 11px;
+}
+
+.xfer-pop-close {
+    margin-left: 4px;
     cursor: pointer;
+    color: #909399;
+}
+
+.xfer-pop-close:hover {
     color: #303133;
 }
 
-.xfer-head .spacer { flex: 1; }
+.xfer-pop-body {
+    max-height: 380px;
+    overflow: auto;
+    padding: 4px 12px 8px;
+}
+
+.xfer-pop-body .xfer-list {
+    max-height: none;
+    padding: 0;
+}
+
+.dsk-transfer-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+}
+
+.dsk-transfer-body .xfer-list {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    padding: 4px 14px 10px;
+}
+
+.xfer-empty {
+    padding: 26px 0;
+    text-align: center;
+    color: #9aa7bd;
+    font-size: 12px;
+}
+
+.xfer-empty i {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 22px;
+}
+
+.xfer-kind {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 16px;
+}
+
+.xfer-kind-up {
+    color: #3d7eff;
+    background: rgba(61, 126, 255, 0.1);
+}
+
+.xfer-kind-down {
+    color: #22a06b;
+    background: rgba(34, 160, 107, 0.1);
+}
+
+.xfer-speed {
+    margin-left: 8px;
+    color: #6ea8ff;
+    font-size: 11px;
+}
+
+.xfer-bar.indeterminate i {
+    width: 100% !important;
+    background-image: linear-gradient(45deg,
+        rgba(255, 255, 255, 0.28) 25%, transparent 25%, transparent 50%,
+        rgba(255, 255, 255, 0.28) 50%, rgba(255, 255, 255, 0.28) 75%, transparent 75%);
+    background-size: 18px 18px;
+    animation: xfer-stripes 0.9s linear infinite;
+}
+
+@keyframes xfer-stripes {
+    from { background-position: 18px 0; }
+    to { background-position: 0 0; }
+}
 
 .xfer-list {
     max-height: 280px;

@@ -7,8 +7,11 @@ import com.itdct.deepshell.repo.CommonDirRepository;
 import com.itdct.deepshell.repo.ConnFolderRepository;
 import com.itdct.deepshell.repo.SshConnectionRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class ConnectionService {
@@ -47,6 +50,47 @@ public class ConnectionService {
         SshConnection c = get(id);
         apply(c, form);
         return repo.save(c);
+    }
+
+    /** 复制连接：保留主机、认证方式与已加密的密码/私钥口令，名称追加「-4位uuid」 */
+    public SshConnection duplicate(Long id) {
+        SshConnection src = get(id);
+        SshConnection c = new SshConnection();
+        c.setName(duplicateName(src.getName()));
+        c.setGroupName(src.getGroupName());
+        c.setHost(src.getHost());
+        c.setPort(src.getPort());
+        c.setUsername(src.getUsername());
+        c.setAuthType(src.getAuthType());
+        c.setPasswordEnc(src.getPasswordEnc());
+        c.setKeyPath(src.getKeyPath());
+        c.setPassphraseEnc(src.getPassphraseEnc());
+        c.setRemark(src.getRemark());
+        c.setFolderId(src.getFolderId());
+        c.setSortOrder(src.getSortOrder());
+        return repo.save(c);
+    }
+
+    private static String duplicateName(String name) {
+        String suffix = "-" + UUID.randomUUID().toString().substring(0, 4);
+        String base = name == null ? "" : name;
+        int maxBase = 100 - suffix.length();
+        if (base.length() > maxBase) {
+            base = base.substring(0, maxBase);
+        }
+        return base + suffix;
+    }
+
+    /** 按传入顺序重写同组连接的排序值 */
+    @Transactional
+    public void reorder(List<Long> ids) {
+        List<SshConnection> list = new ArrayList<>(ids.size());
+        for (int i = 0; i < ids.size(); i++) {
+            SshConnection c = get(ids.get(i));
+            c.setSortOrder(i);
+            list.add(c);
+        }
+        repo.saveAll(list);
     }
 
     public void delete(Long id) {
@@ -111,7 +155,10 @@ public class ConnectionService {
         c.setGroupName(trimOrNull(f.getGroupName()));
         c.setKeyPath(trimOrNull(f.getKeyPath()));
         c.setRemark(trimOrNull(f.getRemark()));
-        c.setSortOrder(f.getSortOrder() == null ? 0 : f.getSortOrder());
+        // 编辑表单不携带排序值，缺省时保留现有顺序
+        if (f.getSortOrder() != null) {
+            c.setSortOrder(f.getSortOrder());
+        }
         // 前端表单总是携带 folderId（null 表示根目录），可直接覆盖
         c.setFolderId(f.getFolderId());
         if (f.getFavorite() != null) {
