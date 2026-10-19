@@ -941,12 +941,11 @@
                         ↓ {{ fmtRate(desktopTab.stats.rxRate) }} ↑ {{ fmtRate(desktopTab.stats.txRate) }}
                     </span>
                 </div>
-                <div class="dsk-tray-conn" :title="statusText(desktopTab)">
+                <div class="dsk-tray-conn" :title="connAddress(desktopTab)">
                     <span class="dsk-tray-conn-line">
                         <span class="dot" :class="'dot-' + desktopTab.status"></span>{{ statusText(desktopTab) }}
                     </span>
                     <span class="dsk-tray-conn-name" :title="desktopTab.title">{{ desktopTab.title }}</span>
-                    <span class="dsk-tray-conn-addr">{{ connAddress(desktopTab) }}</span>
                 </div>
             </div>
             <div class="dsk-tray-clock" :class="{ active: desktop.calendarOpen }"

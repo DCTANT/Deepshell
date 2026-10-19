@@ -4205,12 +4205,6 @@ body.resizing .term-host {
     font-size: 10.5px;
 }
 
-.dsk-tray-conn-addr {
-    color: #7185a1;
-    font-size: 9.5px;
-    white-space: nowrap;
-}
-
 .dsk-tray-clock {
     flex: 0 0 auto;
     display: flex;
