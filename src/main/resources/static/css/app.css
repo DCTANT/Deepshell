@@ -2854,6 +2854,38 @@ body.resizing .term-host {
     color: #d7dde8;
 }
 
+/* 桌面终端窗口：终端 + 与工作台一致的命令底栏 */
+.term-cmd-bar-wrap {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.dsk-terminal-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--term-bg);
+}
+
+.dsk-term {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    padding: 4px 6px 0;
+}
+
+.dsk-term .xterm {
+    height: 100%;
+}
+
+.dsk-terminal-body .cmd-bar,
+.dsk-terminal-body .cmd-ai-bar {
+    border-top-color: #2a3140;
+}
+
 .dsk-ai-body > .aichat {
     flex: 1;
     min-height: 0;

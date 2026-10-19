@@ -104,94 +104,7 @@
                 </div>
             </div>
 
-            <div class="cmd-ai-bar" v-if="activeTab && activeTab.cmdVisible && activeTab.aiVisible">
-                <i class="el-icon-magic-stick cmd-ai-icon"></i>
-                <el-input ref="aiInput" size="mini" v-model="activeTab.aiText" class="cmd-ai-input"
-                          placeholder="用一句话描述你要做的事，例如：查看磁盘占用最大的前 10 个目录（Enter 生成 ｜ Esc 关闭）"
-                          @keydown.native="onAiKeydown"></el-input>
-                <el-button size="mini" type="primary" :loading="activeTab.aiLoading" @click="aiGenerate">
-                    {{ activeTab.aiLoading ? '生成中' : '生成' }}
-                </el-button>
-            </div>
-            <div class="cmd-bar" v-if="activeTab && activeTab.cmdVisible">
-                <el-button size="mini" type="primary" icon="el-icon-position" class="cmd-send-btn"
-                           title="发送 (Enter)" @click="sendCmd"></el-button>
-                <el-input ref="cmdInput" size="mini" v-model="activeTab.cmdText" class="cmd-input"
-                          :placeholder="activeTab.sessionId
-                              ? '输入命令：Enter 发送 ｜ Tab 补全 ｜ ↑↓ 历史 ｜ Alt 历史列表 ｜ Esc 关闭 ｜ 双击 Ctrl 显隐'
-                              : '等待连接…'"
-                          @keydown.native="onCmdKeydown" @keyup.native="onCmdKeyup" @input.native="resetComp"></el-input>
-                <span class="cmd-tools">
-                    <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
-                       :class="{ 'cmd-tool-active': activeTab.aiVisible }" @click="toggleAiBar"></i>
-                    <el-popover placement="top-end" width="300" trigger="click" v-model="histVisible"
-                                popper-class="cmd-pop">
-                        <div class="cmd-hist">
-                            <div class="cmd-hist-head">
-                                <span>命令历史（{{ (activeTab.cmdHistory || []).length }}）</span>
-                                <el-button size="mini" type="text" @click="clearHistory">清空</el-button>
-                            </div>
-                            <div class="cmd-hist-list">
-                                <div v-for="(h, i) in (activeTab.cmdHistory || []).slice().reverse()" :key="i"
-                                     class="cmd-hist-item" :title="h"
-                                     @click="pickHistory(h)" @dblclick="runHistory(h)">{{ h }}</div>
-                                <div v-if="!activeTab.cmdHistory || !activeTab.cmdHistory.length" class="panel-tip">
-                                    暂无历史
-                                </div>
-                            </div>
-                        </div>
-                        <i slot="reference" class="el-icon-time cmd-tool" title="历史 (Alt)"></i>
-                    </el-popover>
-                    <el-popover placement="top-end" width="250" trigger="click" v-model="optsVisible"
-                                popper-class="cmd-pop">
-                        <div class="cmd-opts">
-                            <div class="cmd-opt-row">
-                                <span>发送后清空输入框</span>
-                                <el-switch v-model="cmdOpts.clearAfterSend" size="mini"></el-switch>
-                            </div>
-                            <div class="cmd-opt-row">
-                                <span>发送时自动追加回车</span>
-                                <el-switch v-model="cmdOpts.appendCr" size="mini"></el-switch>
-                            </div>
-                            <div class="cmd-opt-row">
-                                <span>忽略空白行</span>
-                                <el-switch v-model="cmdOpts.ignoreBlank" size="mini"></el-switch>
-                            </div>
-                        </div>
-                        <i slot="reference" class="el-icon-setting cmd-tool" title="选项"></i>
-                    </el-popover>
-                    <el-popover placement="top-end" width="250" trigger="click" v-model="sendToVisible"
-                                popper-class="cmd-pop">
-                        <div class="cmd-opts">
-                            <div class="cmd-opt-row" v-for="t in tabs" :key="t.key">
-                                <span class="cmd-target-name" :title="t.title">{{ t.title }}</span>
-                                <el-checkbox :value="(activeTab.sendTargets || []).indexOf(t.key) >= 0"
-                                             @change="toggleTarget(t.key, $event)"></el-checkbox>
-                            </div>
-                            <div class="panel-tip" v-if="!tabs.length">没有打开的会话</div>
-                            <div class="cmd-hint">勾选多个会话可同时下发命令</div>
-                        </div>
-                        <i slot="reference" class="el-icon-connection cmd-tool" title="发送到多个会话"></i>
-                    </el-popover>
-                    <i class="el-icon-document-copy cmd-tool" title="复制终端选中内容" @click="copySelection"></i>
-                    <i class="el-icon-document cmd-tool" title="粘贴到输入框" @click="pasteToInput"></i>
-                    <el-popover placement="top-end" width="300" trigger="click" v-model="searchVisible"
-                                popper-class="cmd-pop">
-                        <div class="cmd-search">
-                            <el-input size="mini" v-model="searchText" placeholder="搜索终端输出"
-                                      @keyup.native="onSearchKey"></el-input>
-                            <div class="cmd-search-btns">
-                                <el-button size="mini" icon="el-icon-top" @click="findPrev">上一个</el-button>
-                                <el-button size="mini" icon="el-icon-bottom" @click="findNext">下一个</el-button>
-                                <span class="cmd-hint">Enter 下一个</span>
-                            </div>
-                        </div>
-                        <i slot="reference" class="el-icon-search cmd-tool" title="搜索"></i>
-                    </el-popover>
-                    <i class="el-icon-edit cmd-tool" title="编辑当前连接" @click="editCurrentConnection"></i>
-                    <i class="el-icon-full-screen cmd-tool" title="全屏" @click="toggleFullscreen"></i>
-                </span>
-            </div>
+            <term-cmd-bar v-if="activeTab" :tab="activeTab" context="workbench"></term-cmd-bar>
         </div>
 
         <div class="ws-splitter" v-if="panelVisible && activeTab" @mousedown.prevent="startResize"></div>
@@ -580,7 +493,8 @@
                      @dblclick="toggleDesktopWindowMax(w)">
                     <span class="dsk-titlebar-icon">
                         <i :class="w.type === 'ai' ? 'el-icon-chat-dot-round'
-                                   : (w.type === 'transfer' ? 'el-icon-s-promotion' : 'el-icon-folder-opened')"></i>
+                                   : (w.type === 'transfer' ? 'el-icon-s-promotion'
+                                   : (w.type === 'terminal' ? 'el-icon-monitor' : 'el-icon-folder-opened'))"></i>
                     </span>
                     <span class="dsk-titlebar-text">
                         <span class="dsk-titlebar-title">{{ desktopWindowTitle(w) }}</span>
@@ -601,7 +515,13 @@
                     </span>
                 </div>
 
-                <template v-if="w.type === 'transfer'">
+                <template v-if="w.type === 'terminal'">
+                    <div class="dsk-terminal-body" v-if="w.termTab">
+                        <div class="dsk-term" :ref="'desk-term-' + w.id"></div>
+                        <term-cmd-bar :tab="w.termTab" context="window"></term-cmd-bar>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'transfer'">
                     <div class="dsk-transfer-body">
                         <div class="xfer-win-head">
                             <i class="el-icon-s-promotion"></i>
@@ -892,6 +812,11 @@
                     <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
                 </button>
+                <button class="dsk-task-app dsk-terminal-app"
+                        title="打开新的终端窗口" @click.stop="openDesktopTerminalWindow">
+                    <i class="el-icon-monitor"></i>
+                    <span class="dsk-task-label">终端</span>
+                </button>
                 <button class="dsk-task-app dsk-transfer-app"
                         :class="{ active: desktopTransferWin && desktop.activeWinId === desktopTransferWin.id && !desktopTransferWin.min,
                                   'is-min': desktopTransferWin && desktopTransferWin.min }"
@@ -908,13 +833,13 @@
                     <span class="dsk-task-label">返回终端</span>
                 </button>
                 <span class="dsk-taskbar-sep"></span>
-                <button v-for="w in desktopExplorerWindows" :key="'tw' + w.id"
+                <button v-for="w in desktopTaskWindows" :key="'tw' + w.id"
                         class="dsk-task-app dsk-task-win"
                         :class="{ active: w.id === desktop.activeWinId && !w.min, 'is-min': w.min }"
                         :title="desktopWindowSubtitle(w)"
                         @click.stop="toggleDesktopTaskbarWindow(w)"
                         @contextmenu.prevent.stop="onDesktopTaskContextMenu($event, w)">
-                    <i class="el-icon-folder-opened"></i>
+                    <i :class="w.type === 'terminal' ? 'el-icon-monitor' : 'el-icon-folder-opened'"></i>
                     <span class="dsk-task-label">{{ desktopWindowTitle(w) }}</span>
                 </button>
             </div>
@@ -2749,6 +2674,101 @@
             </div>
         </div>
     </div>
+</script>
+
+<script type="text/x-template" id="term-cmd-bar-tpl">
+<div class="term-cmd-bar-wrap">
+    <div class="cmd-ai-bar" v-if="tab.cmdVisible && tab.aiVisible">
+        <i class="el-icon-magic-stick cmd-ai-icon"></i>
+        <el-input ref="aiInput" size="mini" v-model="tab.aiText" class="cmd-ai-input"
+                  placeholder="用一句话描述你要做的事，例如：查看磁盘占用最大的前 10 个目录（Enter 生成 ｜ Esc 关闭）"
+                  @keydown.native="onAiKeydown"></el-input>
+        <el-button size="mini" type="primary" :loading="tab.aiLoading" @click="generateAi">
+            {{ tab.aiLoading ? '生成中' : '生成' }}
+        </el-button>
+    </div>
+    <div class="cmd-bar" v-if="tab.cmdVisible">
+        <el-button size="mini" type="primary" icon="el-icon-position" class="cmd-send-btn"
+                   title="发送 (Enter)" @click="send"></el-button>
+        <el-input ref="cmdInput" size="mini" v-model="tab.cmdText" class="cmd-input"
+                  :placeholder="tab.sessionId
+                      ? '输入命令：Enter 发送 ｜ Tab 补全 ｜ ↑↓ 历史 ｜ Alt 历史列表 ｜ Esc 关闭 ｜ 双击 Ctrl 显隐'
+                      : '等待连接…'"
+                  @keydown.native="onCmdKeydown" @keyup.native="onCmdKeyup" @input.native="resetComp"></el-input>
+        <span class="cmd-tools">
+            <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
+               :class="{ 'cmd-tool-active': tab.aiVisible }" @click="toggleAi"></i>
+            <el-popover placement="top-end" width="300" trigger="click" v-model="histVisible"
+                        popper-class="cmd-pop">
+                <div class="cmd-hist">
+                    <div class="cmd-hist-head">
+                        <span>命令历史（{{ (tab.cmdHistory || []).length }}）</span>
+                        <el-button size="mini" type="text" @click="clearHistory">清空</el-button>
+                    </div>
+                    <div class="cmd-hist-list">
+                        <div v-for="(h, i) in (tab.cmdHistory || []).slice().reverse()" :key="i"
+                             class="cmd-hist-item" :title="h"
+                             @click="pickHistory(h)" @dblclick="runHistory(h)">{{ h }}</div>
+                        <div v-if="!tab.cmdHistory || !tab.cmdHistory.length" class="panel-tip">
+                            暂无历史
+                        </div>
+                    </div>
+                </div>
+                <i slot="reference" class="el-icon-time cmd-tool" title="历史 (Alt)"></i>
+            </el-popover>
+            <el-popover placement="top-end" width="250" trigger="click" v-model="optsVisible"
+                        popper-class="cmd-pop">
+                <div class="cmd-opts">
+                    <div class="cmd-opt-row">
+                        <span>发送后清空输入框</span>
+                        <el-switch v-model="$root.cmdOpts.clearAfterSend" size="mini"></el-switch>
+                    </div>
+                    <div class="cmd-opt-row">
+                        <span>发送时自动追加回车</span>
+                        <el-switch v-model="$root.cmdOpts.appendCr" size="mini"></el-switch>
+                    </div>
+                    <div class="cmd-opt-row">
+                        <span>忽略空白行</span>
+                        <el-switch v-model="$root.cmdOpts.ignoreBlank" size="mini"></el-switch>
+                    </div>
+                </div>
+                <i slot="reference" class="el-icon-setting cmd-tool" title="选项"></i>
+            </el-popover>
+            <el-popover v-if="context !== 'window'" placement="top-end" width="250" trigger="click"
+                        v-model="sendToVisible" popper-class="cmd-pop">
+                <div class="cmd-opts">
+                    <div class="cmd-opt-row" v-for="t in targets" :key="t.key">
+                        <span class="cmd-target-name" :title="t.title">{{ t.title }}</span>
+                        <el-checkbox :value="(tab.sendTargets || []).indexOf(t.key) >= 0"
+                                     @change="toggleTarget(t.key, $event)"></el-checkbox>
+                    </div>
+                    <div class="panel-tip" v-if="!targets.length">没有打开的会话</div>
+                    <div class="cmd-hint">勾选多个会话可同时下发命令</div>
+                </div>
+                <i slot="reference" class="el-icon-connection cmd-tool" title="发送到多个会话"></i>
+            </el-popover>
+            <i class="el-icon-document-copy cmd-tool" title="复制终端选中内容" @click="copySelection"></i>
+            <i class="el-icon-document cmd-tool" title="粘贴到输入框" @click="pasteToInput"></i>
+            <el-popover placement="top-end" width="300" trigger="click" v-model="searchVisible"
+                        popper-class="cmd-pop">
+                <div class="cmd-search">
+                    <el-input size="mini" v-model="searchText" placeholder="搜索终端输出"
+                              @keyup.native="onSearchKey"></el-input>
+                    <div class="cmd-search-btns">
+                        <el-button size="mini" icon="el-icon-top" @click="findPrev">上一个</el-button>
+                        <el-button size="mini" icon="el-icon-bottom" @click="findNext">下一个</el-button>
+                        <span class="cmd-hint">Enter 下一个</span>
+                    </div>
+                </div>
+                <i slot="reference" class="el-icon-search cmd-tool" title="搜索"></i>
+            </el-popover>
+            <i v-if="context !== 'window'" class="el-icon-edit cmd-tool" title="编辑当前连接"
+               @click="$root.editCurrentConnection()"></i>
+            <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏"
+               @click="$root.toggleFullscreen()"></i>
+        </span>
+    </div>
+</div>
 </script>
 
 <script th:src="@{/vendor/vue/vue.min.js}"></script>

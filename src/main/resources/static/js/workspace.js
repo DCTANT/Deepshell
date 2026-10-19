@@ -158,6 +158,7 @@ function createDesktopWindow(id) {
     return {
         id: id || '',
         type: 'explorer',
+        termTab: null,
         path: '',
         pathInput: '',
         pathEditing: false,
@@ -279,6 +280,71 @@ function newSessionKey() {
         }
     } catch (e) { /* ignore */ }
     return 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+}
+
+/* 终端会话状态：工作台标签与桌面终端窗口共用同一套字段 */
+function createTerminalState(connId, conn, clientKey) {
+    var tab = {
+        key: 'tab' + Date.now() + Math.floor(Math.random() * 1000),
+        clientKey: clientKey || newSessionKey(),
+        connId: connId,
+        autoOpenDesktop: false,
+        desktopOpenPath: '',
+        desktopOnly: false,
+        windowId: '',
+        title: conn ? conn.name : ('连接 #' + connId),
+        host: conn ? conn.host : '',
+        port: conn ? (conn.port || 22) : 22,
+        status: 'connecting',
+        sessionId: null,
+        ws: null,
+        term: null,
+        reconnectAttempts: 0,
+        reconnectTimer: null,
+        explicitClose: false,
+        serverClosed: false,
+        fit: null,
+        sftpPath: '',
+        sftpEntries: [],
+        sftpSelected: [],
+        sftpLoading: false,
+        sftpHome: null,
+        sftpHistory: [],
+        termCwd: null,
+        diskPath: '',
+        diskEntries: [],
+        diskTotalKb: null,
+        diskLoading: false,
+        diskError: '',
+        diskTruncated: false,
+        searchAddon: null,
+        stats: null,
+        procList: [],
+        procLoading: false,
+        procKeyword: '',
+        procAuto: true,
+        cmdText: '',
+        cmdVisible: true,
+        cmdHistory: loadHistory(connId),
+        desktopBg: loadDesktopBgSettings(connId),
+        sendTargets: [],
+        aiVisible: false,
+        aiText: '',
+        aiLoading: false,
+        chatConvs: [],
+        chatConvId: null,
+        chatMsgs: [],
+        chatInput: '',
+        chatLoading: true,
+        chatMode: loadAiChatMode()
+    };
+    tab.sendTargets = [tab.key];
+    return tab;
+}
+
+/* 拼给 shell 的安全路径参数（单引号包裹并转义内部单引号） */
+function quoteShellPath(path) {
+    return "'" + String(path == null || path === '' ? '/' : path).replace(/'/g, "'\\''") + "'";
 }
 
 /* 每次 AI 请求的 runId：前端停止时用它通知服务端取消模型/命令 */
@@ -640,6 +706,222 @@ Vue.component('xfer-list', {
     }
 });
 
+/* 终端命令底栏：工作台与桌面终端窗口共用 */
+Vue.component('term-cmd-bar', {
+    props: {
+        tab: { type: Object, required: true },
+        context: { type: String, default: 'workbench' }
+    },
+    template: '#term-cmd-bar-tpl',
+    data: function () {
+        return {
+            histVisible: false,
+            optsVisible: false,
+            sendToVisible: false,
+            searchVisible: false,
+            searchText: '',
+            _histIdx: undefined,
+            _histDraft: undefined,
+            _altCombo: false
+        };
+    },
+    computed: {
+        targets: function () {
+            return this.$root.tabs || [];
+        }
+    },
+    watch: {
+        tab: function (nv, ov) {
+            if (ov && ov._cmdBar === this) {
+                ov._cmdBar = null;
+            }
+            if (nv) {
+                nv._cmdBar = this;
+            }
+            this.histVisible = false;
+            this.optsVisible = false;
+            this.sendToVisible = false;
+            this.searchVisible = false;
+            this.searchText = '';
+            this._histIdx = undefined;
+            this._histDraft = undefined;
+        },
+        searchVisible: function (v) {
+            if (!v && this.tab.searchAddon && this.tab.searchAddon.clearDecorations) {
+                try { this.tab.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
+            }
+        }
+    },
+    mounted: function () {
+        this.tab._cmdBar = this;
+    },
+    beforeDestroy: function () {
+        if (this.tab && this.tab._cmdBar === this) {
+            this.tab._cmdBar = null;
+        }
+    },
+    methods: {
+        focus: function () {
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.cmdInput) {
+                    self.$refs.cmdInput.focus();
+                }
+            });
+        },
+        focusAi: function () {
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.aiInput) {
+                    self.$refs.aiInput.focus();
+                }
+            });
+        },
+        send: function () {
+            this.$root.sendCmd(this.tab);
+        },
+        toggleAi: function () {
+            this.$root.toggleAiBar(this.tab);
+        },
+        generateAi: function () {
+            this.$root.aiGenerate(this.tab);
+        },
+        onAiKeydown: function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.generateAi();
+            } else if (e.key === 'Escape') {
+                e.stopPropagation();
+                if (this.tab.aiVisible) {
+                    this.toggleAi();
+                }
+            }
+        },
+        toggleTarget: function (key, checked) {
+            this.$root.toggleTarget(key, checked, this.tab);
+        },
+        clearHistory: function () {
+            this.$root.clearHistory(this.tab);
+        },
+        copySelection: function () {
+            this.$root.copySelection(this.tab);
+        },
+        pasteToInput: function () {
+            this.$root.pasteToInput(this.tab, this.$refs.cmdInput);
+        },
+        findNext: function () {
+            this.$root.findNext(this.tab, this.searchText);
+        },
+        findPrev: function () {
+            this.$root.findPrev(this.tab, this.searchText);
+        },
+        onSearchKey: function (e) {
+            if (e.key === 'Enter') {
+                if (e.shiftKey) {
+                    this.findPrev();
+                } else {
+                    this.findNext();
+                }
+            }
+        },
+        resetComp: function () {
+            this.tab._comp = null;
+            this._histIdx = undefined;
+            this._histDraft = undefined;
+        },
+        histMove: function (dir) {
+            var t = this.tab;
+            var h = t.cmdHistory || [];
+            if (!h.length) {
+                return;
+            }
+            if (this._histIdx === undefined) {
+                this._histIdx = -1;
+                this._histDraft = t.cmdText;
+            }
+            if (dir === -1) {
+                if (this._histIdx < h.length - 1) {
+                    this._histIdx++;
+                }
+            } else {
+                if (this._histIdx > 0) {
+                    this._histIdx--;
+                } else if (this._histIdx === 0) {
+                    this._histIdx = -1;
+                    t.cmdText = this._histDraft || '';
+                    return;
+                }
+            }
+            if (this._histIdx >= 0) {
+                t.cmdText = h[h.length - 1 - this._histIdx];
+            }
+        },
+        onCmdKeydown: function (e) {
+            var t = this.tab;
+            if (!t) {
+                return;
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                if (this.$root.hotkeySettings.escClose) {
+                    t.cmdVisible = false;
+                    var self = this;
+                    this.$nextTick(function () {
+                        self.$root.fitTab(t);
+                        if (t.term) {
+                            t.term.focus();
+                        }
+                    });
+                }
+                return;
+            }
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.$root.sendCmd(t);
+                return;
+            }
+            if (e.key === 'Tab') {
+                if (this.$root.hotkeySettings.tabComplete) {
+                    e.preventDefault();
+                    this.$root.doComplete(t, this.$refs.cmdInput);
+                }
+                return;
+            }
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.histMove(-1);
+                return;
+            }
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.histMove(1);
+                return;
+            }
+            if (e.key === 'Alt') {
+                e.preventDefault();
+                this._altCombo = false;
+            } else if (e.key !== 'Control' && e.key !== 'Shift' && e.key !== 'Meta') {
+                this._altCombo = true;
+            }
+        },
+        onCmdKeyup: function (e) {
+            if (e.key === 'Alt' && !this._altCombo) {
+                this.histVisible = true;
+            }
+        },
+        pickHistory: function (h) {
+            this.tab.cmdText = h;
+            this.histVisible = false;
+            this.focus();
+        },
+        runHistory: function (h) {
+            this.tab.cmdText = h;
+            this.histVisible = false;
+            this.send();
+        }
+    }
+});
+
 new Vue({
     el: '#app',
     data: {
@@ -662,6 +944,8 @@ new Vue({
         desktopAppIcons: [
             { key: 'app:explorer', type: 'app', action: 'explorer', label: '资源管理器',
               icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
+              icon: 'el-icon-monitor', color: '#22a06b' },
             { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
               icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
@@ -671,6 +955,7 @@ new Vue({
         ],
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+            { id: 'terminal', label: '终端', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
@@ -793,11 +1078,6 @@ new Vue({
         cmdOpts: loadCmdOpts(),
         snippetTarget: loadSnippetTarget(),
         snippetTargets: [],
-        histVisible: false,
-        optsVisible: false,
-        sendToVisible: false,
-        searchVisible: false,
-        searchText: '',
         tabMenu: { visible: false, x: 0, y: 0, tab: null },
         folderMenu: { visible: false, x: 0, y: 0, row: null },
         topMenuVisible: false,
@@ -911,14 +1191,6 @@ new Vue({
         },
         sftpFollow: function (v) {
             try { localStorage.setItem('deepshell.sftpFollow', v ? '1' : '0'); } catch (e) { /* ignore */ }
-        },
-        searchVisible: function (v) {
-            if (!v) {
-                var t = this.activeTab;
-                if (t && t.searchAddon && t.searchAddon.clearDecorations) {
-                    try { t.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
-                }
-            }
         },
         sysInfoVisible: function (v) {
             this.refreshSysInfoTimer(v && this.sysInfoAuto);
@@ -1077,9 +1349,9 @@ new Vue({
             }
             return null;
         },
-        desktopExplorerWindows: function () {
+        desktopTaskWindows: function () {
             return this.desktop.windows.filter(function (w) {
-                return w.type === 'explorer';
+                return w.type === 'explorer' || w.type === 'terminal';
             });
         },
         transferActiveCount: function () {
@@ -1476,60 +1748,9 @@ new Vue({
             // 只有本次启动的首个连接才按设置自动进入桌面；强制桌面（新标签打开）不受此限制
             var firstConnect = consumeFirstConnect();
             var conn = this.connections.find(function (c) { return c.id === connId; });
-            var tab = {
-                key: 'tab' + Date.now() + Math.floor(Math.random() * 1000),
-                clientKey: clientKey || newSessionKey(),
-                connId: connId,
-                autoOpenDesktop: !!autoAfterConnect
-                    && (!!forceDesktop || (firstConnect && this.openAfterConnect === 'desktop')),
-                desktopOpenPath: '',
-                title: conn ? conn.name : ('连接 #' + connId),
-                host: conn ? conn.host : '',
-                port: conn ? (conn.port || 22) : 22,
-                status: 'connecting',
-                sessionId: null,
-                ws: null,
-                term: null,
-                reconnectAttempts: 0,
-                reconnectTimer: null,
-                explicitClose: false,
-                serverClosed: false,
-                fit: null,
-                sftpPath: '',
-                sftpEntries: [],
-                sftpSelected: [],
-                sftpLoading: false,
-                sftpHome: null,
-                sftpHistory: [],
-                termCwd: null,
-                diskPath: '',
-                diskEntries: [],
-                diskTotalKb: null,
-                diskLoading: false,
-                diskError: '',
-                diskTruncated: false,
-                searchAddon: null,
-                stats: null,
-                procList: [],
-                procLoading: false,
-                procKeyword: '',
-                procAuto: true,
-                cmdText: '',
-                cmdVisible: true,
-                cmdHistory: loadHistory(connId),
-                desktopBg: loadDesktopBgSettings(connId),
-                sendTargets: [],
-                aiVisible: false,
-                aiText: '',
-                aiLoading: false,
-                chatConvs: [],
-                chatConvId: null,
-                chatMsgs: [],
-                chatInput: '',
-                chatLoading: true,
-                chatMode: loadAiChatMode()
-            };
-            tab.sendTargets = [tab.key];
+            var tab = createTerminalState(connId, conn, clientKey);
+            tab.autoOpenDesktop = !!autoAfterConnect
+                && (!!forceDesktop || (firstConnect && this.openAfterConnect === 'desktop'));
             this.tabs.push(tab);
             this.activeKey = tab.key;
             this.connectDialogVisible = false;
@@ -1900,6 +2121,17 @@ new Vue({
                         t.port = c.port || 22;
                     }
                 });
+                self.desktop.windows.forEach(function (w) {
+                    if (w.type !== 'terminal' || !w.termTab) {
+                        return;
+                    }
+                    var c = self.connections.find(function (x) { return x.id === w.termTab.connId; });
+                    if (c) {
+                        w.termTab.title = c.name;
+                        w.termTab.host = c.host;
+                        w.termTab.port = c.port || 22;
+                    }
+                });
             });
         },
         /* ---------- 右上角菜单与设置 ---------- */
@@ -2090,33 +2322,22 @@ new Vue({
                 self.aiSetSaving = false;
             });
         },
-        toggleAiBar: function () {
-            var t = this.activeTab;
+        toggleAiBar: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
             t.aiVisible = !t.aiVisible;
             var self = this;
             this.$nextTick(function () {
-                self.fitActive();
-                if (t.aiVisible && self.$refs.aiInput) {
-                    self.$refs.aiInput.focus();
+                self.fitTab(t);
+                if (t.aiVisible) {
+                    self.focusAiInput(t);
                 }
             });
         },
-        onAiKeydown: function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                this.aiGenerate();
-            } else if (e.key === 'Escape') {
-                e.stopPropagation();
-                if (this.activeTab && this.activeTab.aiVisible) {
-                    this.toggleAiBar();
-                }
-            }
-        },
-        aiGenerate: function () {
-            var t = this.activeTab;
+        aiGenerate: function (tab) {
+            var t = tab || this.activeTab;
             if (!t || t.aiLoading) {
                 return;
             }
@@ -2141,10 +2362,8 @@ new Vue({
                 t.aiText = '';
                 ELEMENT.Message.success('已生成命令，确认后回车执行');
                 self.$nextTick(function () {
-                    self.fitActive();
-                    if (self.$refs.cmdInput) {
-                        self.$refs.cmdInput.focus();
-                    }
+                    self.fitTab(t);
+                    self.focusCmdInput(t);
                 });
             }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
                 t.aiLoading = false;
@@ -2898,6 +3117,9 @@ new Vue({
             this.resetSurfaceThumbs();
             this.desktop.windows.forEach(function (w) {
                 self.releaseDesktopWindowThumbs(w);
+                if (w.type === 'terminal') {
+                    self.closeDesktopTerminal(w);
+                }
             });
             this.desktop.windows = [];
             this.desktop.activeWinId = '';
@@ -2952,6 +3174,9 @@ new Vue({
             var self = this;
             this.desktop.windows.forEach(function (w) {
                 self.releaseDesktopWindowThumbs(w);
+                if (w.type === 'terminal') {
+                    self.closeDesktopTerminal(w);
+                }
             });
             this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
             this.desktop.visible = false;
@@ -2996,9 +3221,19 @@ new Vue({
             }
             return null;
         },
+        desktopTerminalFocusTab: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var w = this.desktopWindowById(this.desktop.activeWinId);
+            return w && w.type === 'terminal' && w.termTab ? w.termTab : null;
+        },
         desktopWindowTitle: function (w) {
             if (w && w.type === 'ai') {
                 return 'AI 终端';
+            }
+            if (w && w.type === 'terminal') {
+                return w.termTab ? w.termTab.title : '终端';
             }
             if (w && w.type === 'transfer') {
                 return '传输中心';
@@ -3012,6 +3247,14 @@ new Vue({
         },
         desktopWindowSubtitle: function (w) {
             var host = this.desktopTab ? this.desktopTab.host : '';
+            if (w && w.type === 'terminal') {
+                var tab = w.termTab;
+                if (!tab) {
+                    return '';
+                }
+                var addr = tab.host ? (tab.host + ':' + (tab.port || 22)) : '';
+                return '终端 · ' + (addr ? addr + ' · ' : '') + this.statusText(tab);
+            }
             if (w && w.type === 'transfer') {
                 var busy = this.transferActiveCount;
                 var text = busy ? '全部会话 · 进行中 ' + busy : '全部会话';
@@ -3242,6 +3485,65 @@ new Vue({
             }
             this.toggleDesktopTaskbarWindow(w);
         },
+        openDesktopTerminalWindow: function (startDir) {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var src = this.desktopTab;
+            if (!src || src.connId == null) {
+                ELEMENT.Message.warning('当前桌面没有可用的连接');
+                return null;
+            }
+            var conn = this.connections.find(function (c) { return c.id === src.connId; });
+            var w = this.addDesktopWindow('terminal');
+            var tab = createTerminalState(src.connId, conn, newSessionKey());
+            tab.desktopOnly = true;
+            tab.windowId = w.id;
+            tab.initialDir = startDir || '';
+            tab.title = src.title || tab.title;
+            tab.host = src.host || tab.host;
+            tab.port = src.port || (conn && conn.port) || tab.port;
+            tab.sftpHome = src.sftpHome || null;
+            tab.sftpPath = src.sftpPath || '';
+            tab.termCwd = src.termCwd || null;
+            w.termTab = tab;
+            var self = this;
+            this.$nextTick(function () {
+                var ref = self.$refs['desk-term-' + w.id];
+                var el = Array.isArray(ref) ? ref[0] : ref;
+                self.initTerminal(tab, el);
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        closeDesktopTerminal: function (w) {
+            var tab = w && w.termTab;
+            if (!tab) {
+                return;
+            }
+            this.cancelTransfersForTab(tab);
+            clearReconnectTimer(tab);
+            tab.explicitClose = true;
+            tab.serverClosed = true;
+            if (tab.ws) {
+                try {
+                    if (tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({ type: 'close' }));
+                    }
+                    tab.ws.close();
+                } catch (e) { /* ignore */ }
+                tab.ws = null;
+            }
+            if (tab.term) {
+                try { tab.term.dispose(); } catch (e) { /* ignore */ }
+            }
+            tab.term = null;
+            tab.fit = null;
+            tab.searchAddon = null;
+            w.termTab = null;
+        },
         openDesktopExplorerWindow: function (path) {
             if (!this.desktop.visible) {
                 return null;
@@ -3263,6 +3565,15 @@ new Vue({
                 this.desktop.explorerId = id;
             }
             w.z = ++this.desktop.zSeq;
+            if (w.type === 'terminal' && w.termTab) {
+                var termSelf = this;
+                this.$nextTick(function () {
+                    if (w.termTab && w.termTab.term) {
+                        w.termTab.term.focus();
+                    }
+                    termSelf.fitTab(w.termTab);
+                });
+            }
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
@@ -3360,11 +3671,17 @@ new Vue({
             var self = this;
             this.$nextTick(function () {
                 self.setupDesktopThumbs(w);
+                if (w.type === 'terminal') {
+                    self.fitTab(w.termTab);
+                }
             });
         },
         closeDesktopWindow: function (w) {
             if (!w) {
                 return;
+            }
+            if (w.type === 'terminal') {
+                this.closeDesktopTerminal(w);
             }
             if (this.desktop.taskMenu.visible && this.desktop.taskMenu.winId === w.id) {
                 this.desktop.taskMenu.visible = false;
@@ -3482,6 +3799,14 @@ new Vue({
                 w.y = Math.min(Math.max(0, w.y), Math.max(0, area.height - w.h));
             });
             this.scheduleSaveDesktopWinLayouts();
+            var self = this;
+            this.$nextTick(function () {
+                self.desktop.windows.forEach(function (w) {
+                    if (w.type === 'terminal') {
+                        self.fitTab(w.termTab);
+                    }
+                });
+            });
         },
         startDesktopWindowDrag: function (ev, w) {
             if (!w || ev.button !== 0 || w.max) {
@@ -3575,6 +3900,9 @@ new Vue({
             s.w.y = y;
             s.w.w = w;
             s.w.h = h;
+            if (s.w.type === 'terminal') {
+                this.fitTab(s.w.termTab);
+            }
         },
         onDesktopWindowResizeUp: function () {
             var s = this._deskResize;
@@ -3587,6 +3915,9 @@ new Vue({
                 var self = this;
                 this.$nextTick(function () {
                     self.setupDesktopThumbs(s.w);
+                    if (s.w.type === 'terminal') {
+                        self.fitTab(s.w.termTab);
+                    }
                 });
             }
         },
@@ -4325,6 +4656,8 @@ new Vue({
             if (item.type === 'app') {
                 if (item.action === 'explorer') {
                     this.openDesktopExplorerWindow('/');
+                } else if (item.action === 'terminal') {
+                    this.openDesktopTerminalWindow();
                 } else if (item.action === 'transfers') {
                     this.openTransferDesktopWindow();
                 } else if (item.action === 'settings') {
@@ -5711,7 +6044,12 @@ new Vue({
                 self.desktop.menu.y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
             });
         },
-        onDesktopSurfaceClick: function () {
+        onDesktopSurfaceClick: function (ev) {
+            // 只有点击桌面背景/图标层才算聚焦桌面；窗口、任务栏、菜单内的点击会冒泡到这里
+            var target = ev && ev.target;
+            if (target && target.closest && !target.closest('.dsk-wallpaper, .dsk-icons')) {
+                return;
+            }
             this.desktop.calendarOpen = false;
             if (this.desktop.menu.visible) {
                 this.desktop.menu.visible = false;
@@ -6374,21 +6712,12 @@ new Vue({
             this.openRemoteEdit(t, this.desktopEntryPath(row, d));
         },
         desktopOpenTerminal: function (row, win) {
-            var t = this.desktopTab;
-            if (!t || !t.ws || t.ws.readyState !== 1 || t.status !== 'open') {
-                ELEMENT.Message.warning('当前终端未连接，无法在终端中打开');
-                return;
-            }
             var d = win || this.desk;
-            var dir = d.path;
+            var dir = d.path || this.desktop.surface.dir || '/';
             if (row) {
-                dir = row.dir ? this.desktopEntryPath(row, d) : d.path;
+                dir = row.dir ? this.desktopEntryPath(row, d) : (d.path || '/');
             }
-            var self = this;
-            this.closeAiDesktop();
-            this.$nextTick(function () {
-                self.cdIntoDir({ path: dir });
-            });
+            this.openDesktopTerminalWindow(dir);
         },
         pickDesktopUpload: function (win) {
             var d = win || this.desk;
@@ -7042,6 +7371,10 @@ new Vue({
                 this.openTransferDesktopWindow();
                 return;
             }
+            if (id === 'terminal') {
+                this.openDesktopTerminalWindow();
+                return;
+            }
             if (id === 'file') {
                 this.openDesktopExplorerWindow();
                 return;
@@ -7692,11 +8025,20 @@ new Vue({
             th.background = this.bgSettings.url ? 'rgba(16, 19, 24, 0.72)' : '#101318';
             return th;
         },
+        allTerminalTabs: function () {
+            var out = this.tabs.slice();
+            this.desktop.windows.forEach(function (w) {
+                if (w.type === 'terminal' && w.termTab) {
+                    out.push(w.termTab);
+                }
+            });
+            return out;
+        },
         applyFont: function () {
             var self = this;
             var f = this.fontSettings;
             try { localStorage.setItem('deepshell.font', JSON.stringify(f)); } catch (e) { /* ignore */ }
-            this.tabs.forEach(function (x) {
+            this.allTerminalTabs().forEach(function (x) {
                 if (x.term) {
                     x.term.options.fontFamily = f.family;
                     x.term.options.fontSize = f.size;
@@ -7711,7 +8053,7 @@ new Vue({
         applyBg: function () {
             try { localStorage.setItem('deepshell.bg', JSON.stringify(this.bgSettings)); } catch (e) { /* ignore */ }
             var theme = this.buildTermTheme();
-            this.tabs.forEach(function (x) {
+            this.allTerminalTabs().forEach(function (x) {
                 if (x.term) {
                     x.term.options.theme = theme;
                 }
@@ -7776,10 +8118,14 @@ new Vue({
             this.applyBgDraft();
             ELEMENT.Message.success('已清除背景');
         },
-        initTerminal: function (tab) {
+        initTerminal: function (tab, el) {
             var self = this;
-            var ref = this.$refs['term-' + tab.key];
-            var el = Array.isArray(ref) ? ref[0] : ref;
+            if (!el) {
+                var ref = tab.desktopOnly && tab.windowId
+                    ? this.$refs['desk-term-' + tab.windowId]
+                    : this.$refs['term-' + tab.key];
+                el = Array.isArray(ref) ? ref[0] : ref;
+            }
             if (!el) {
                 return;
             }
@@ -7834,15 +8180,25 @@ new Vue({
                         tab.explicitClose = false;
                         tab.reconnectAttempts = 0;
                         clearReconnectTimer(tab);
-                        var dirReady;
-                        if (msg.reattached) {
-                            // 服务端会紧接着发来最近输出快照，先清屏避免重复
-                            try { term.reset(); } catch (e) { /* ignore */ }
-                            dirReady = tab.sftpHome
-                                ? self.loadDir(tab.sftpPath || tab.sftpHome, tab)
-                                : self.loadHome(tab);
-                        } else {
-                            dirReady = self.loadHome(tab);
+                        if (tab.desktopOnly && tab.initialDir && !msg.reattached) {
+                            try {
+                                ws.send(JSON.stringify({
+                                    type: 'data',
+                                    data: 'cd ' + quoteShellPath(tab.initialDir) + '\r'
+                                }));
+                            } catch (e) { /* ignore */ }
+                        }
+                        var dirReady = Promise.resolve();
+                        if (!tab.desktopOnly) {
+                            if (msg.reattached) {
+                                // 服务端会紧接着发来最近输出快照，先清屏避免重复
+                                try { term.reset(); } catch (e) { /* ignore */ }
+                                dirReady = tab.sftpHome
+                                    ? self.loadDir(tab.sftpPath || tab.sftpHome, tab)
+                                    : self.loadHome(tab);
+                            } else {
+                                dirReady = self.loadHome(tab);
+                            }
                         }
                         if (tab.autoOpenDesktop) {
                             tab.autoOpenDesktop = false;
@@ -8057,6 +8413,7 @@ new Vue({
             if (conn) {
                 tab.title = conn.name;
                 tab.host = conn.host;
+                tab.port = conn.port || 22;
             }
             // 静默回收旧连接与终端，避免旧回调写入已销毁的终端
             tab.explicitClose = true;
@@ -8093,9 +8450,12 @@ new Vue({
                 tab.procList = [];
                 tab._comp = null;
             }
-            this.activate(tab.key);
+            if (this.tabs.indexOf(tab) >= 0) {
+                this.activate(tab.key);
+            }
             this.$nextTick(function () {
                 self.initTerminal(tab);
+                self.fitTab(tab);
             });
         },
         disconnectTab: function (tab) {
@@ -8191,6 +8551,9 @@ new Vue({
                 return;
             }
             tab.termCwd = path;
+            if (tab.desktopOnly) {
+                return;
+            }
             if (!this.sftpFollow || !tab.sessionId) {
                 return;
             }
@@ -9792,111 +10155,51 @@ new Vue({
         },
 
         /* ---------- 命令输入栏 ---------- */
-        focusCmdInput: function () {
+        fitTab: function (tab) {
+            if (tab && tab.fit) {
+                try { tab.fit.fit(); } catch (e) { /* ignore */ }
+            }
+        },
+        focusCmdInput: function (tab) {
+            var t = tab || this.activeTab;
             var self = this;
             this.$nextTick(function () {
+                if (t && t._cmdBar) {
+                    t._cmdBar.focus();
+                    return;
+                }
                 var r = self.$refs.cmdInput;
                 if (r) {
                     r.focus();
                 }
             });
         },
-        toggleCmdBar: function () {
-            var t = this.activeTab;
+        focusAiInput: function (tab) {
+            var t = tab || this.activeTab;
+            var self = this;
+            this.$nextTick(function () {
+                if (t && t._cmdBar) {
+                    t._cmdBar.focusAi();
+                    return;
+                }
+                if (self.$refs.aiInput) {
+                    self.$refs.aiInput.focus();
+                }
+            });
+        },
+        toggleCmdBar: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
             t.cmdVisible = !t.cmdVisible;
             var self = this;
             this.$nextTick(function () {
-                self.fitActive();
+                self.fitTab(t);
                 if (t.cmdVisible) {
-                    self.focusCmdInput();
+                    self.focusCmdInput(t);
                 }
             });
-        },
-        onCmdKeydown: function (e) {
-            var t = this.activeTab;
-            if (!t) {
-                return;
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                if (this.hotkeySettings.escClose) {
-                    t.cmdVisible = false;
-                    var self = this;
-                    this.$nextTick(function () { self.fitActive(); });
-                }
-                return;
-            }
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                this.sendCmd();
-                return;
-            }
-            if (e.key === 'Tab') {
-                if (this.hotkeySettings.tabComplete) {
-                    e.preventDefault();
-                    this.doComplete();
-                }
-                return;
-            }
-            if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                this.histMove(-1);
-                return;
-            }
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                this.histMove(1);
-                return;
-            }
-            if (e.key === 'Alt') {
-                e.preventDefault();
-                this._altCombo = false;
-            } else if (e.key !== 'Control' && e.key !== 'Shift' && e.key !== 'Meta') {
-                this._altCombo = true;
-            }
-        },
-        onCmdKeyup: function (e) {
-            if (e.key === 'Alt' && !this._altCombo) {
-                this.histVisible = true;
-            }
-        },
-        resetComp: function () {
-            var t = this.activeTab;
-            if (t) {
-                t._comp = null;
-            }
-            this._histIdx = undefined;
-            this._histDraft = undefined;
-        },
-        histMove: function (dir) {
-            var t = this.activeTab;
-            var h = t.cmdHistory || [];
-            if (!h.length) {
-                return;
-            }
-            if (this._histIdx === undefined) {
-                this._histIdx = -1;
-                this._histDraft = t.cmdText;
-            }
-            if (dir === -1) {
-                if (this._histIdx < h.length - 1) {
-                    this._histIdx++;
-                }
-            } else {
-                if (this._histIdx > 0) {
-                    this._histIdx--;
-                } else if (this._histIdx === 0) {
-                    this._histIdx = -1;
-                    t.cmdText = this._histDraft || '';
-                    return;
-                }
-            }
-            if (this._histIdx >= 0) {
-                t.cmdText = h[h.length - 1 - this._histIdx];
-            }
         },
         pushHistory: function (t, text) {
             if (!text || !text.trim()) {
@@ -9913,24 +10216,8 @@ new Vue({
                 localStorage.setItem('deepshell.cmdHistory.' + t.connId, JSON.stringify(h));
             } catch (e) { /* ignore */ }
         },
-        pickHistory: function (h) {
-            var t = this.activeTab;
-            if (t) {
-                t.cmdText = h;
-            }
-            this.histVisible = false;
-            this.focusCmdInput();
-        },
-        runHistory: function (h) {
-            var t = this.activeTab;
-            if (t) {
-                t.cmdText = h;
-            }
-            this.histVisible = false;
-            this.sendCmd();
-        },
-        clearHistory: function () {
-            var t = this.activeTab;
+        clearHistory: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -9940,8 +10227,8 @@ new Vue({
             } catch (e) { /* ignore */ }
             ELEMENT.Message.success('历史已清空');
         },
-        sendCmd: function () {
-            var t = this.activeTab;
+        sendCmd: function (tab) {
+            var t = tab || this.activeTab;
             if (!t || !t.sessionId) {
                 return;
             }
@@ -9950,10 +10237,15 @@ new Vue({
                 return;
             }
             var payload = text + (this.cmdOpts.appendCr ? '\r' : '');
-            var targets = this.tabs.filter(function (x) {
-                return (t.sendTargets || []).indexOf(x.key) >= 0
-                    && x.ws && x.ws.readyState === 1 && x.status === 'open';
-            });
+            var targets;
+            if (t.desktopOnly) {
+                targets = (t.ws && t.ws.readyState === 1 && t.status === 'open') ? [t] : [];
+            } else {
+                targets = this.tabs.filter(function (x) {
+                    return (t.sendTargets || []).indexOf(x.key) >= 0
+                        && x.ws && x.ws.readyState === 1 && x.status === 'open';
+                });
+            }
             if (!targets.length) {
                 ELEMENT.Message.warning('没有已连接的会话');
                 return;
@@ -9966,11 +10258,11 @@ new Vue({
             if (this.cmdOpts.clearAfterSend) {
                 t.cmdText = '';
             }
-            this.resetComp();
-            this.focusCmdInput();
+            t._comp = null;
+            this.focusCmdInput(t);
         },
-        toggleTarget: function (key, checked) {
-            var t = this.activeTab;
+        toggleTarget: function (key, checked, tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -9983,14 +10275,14 @@ new Vue({
                 arr.splice(i, 1);
             }
         },
-        doComplete: function () {
+        doComplete: function (tab, comp) {
             var self = this;
-            var t = this.activeTab;
-            var comp = this.$refs.cmdInput;
-            if (!t || !comp) {
+            var t = tab || this.activeTab;
+            var cmdComp = comp || (t && t._cmdBar && t._cmdBar.$refs.cmdInput) || this.$refs.cmdInput;
+            if (!t || !cmdComp) {
                 return;
             }
-            var el = comp.$refs.input;
+            var el = cmdComp.$refs.input;
             var val = t.cmdText || '';
             var pos = el.selectionStart == null ? val.length : el.selectionStart;
             var left = val.slice(0, pos);
@@ -10048,23 +10340,23 @@ new Vue({
                     uniq.push(c);
                 }
             });
-            this.applyCandidates(t, left, right, token, uniq);
+            this.applyCandidates(t, left, right, token, uniq, cmdComp);
         },
-        applyCandidates: function (t, left, right, token, cands) {
+        applyCandidates: function (t, left, right, token, cands, cmdComp) {
             if (!cands || !cands.length) {
                 ELEMENT.Message.info('没有匹配项');
                 return;
             }
             t._comp = { token: token, list: cands, idx: 0 };
-            this.applyCompletion(t, left, right, token, t._comp);
+            this.applyCompletion(t, left, right, token, t._comp, cmdComp);
         },
-        applyCompletion: function (t, left, right, token, compState) {
+        applyCompletion: function (t, left, right, token, compState, cmdComp) {
             var choice = compState.list[compState.idx];
             var newLeft = left.slice(0, left.length - token.length) + choice;
             t.cmdText = newLeft + right;
             var self = this;
             this.$nextTick(function () {
-                var c2 = self.$refs.cmdInput;
+                var c2 = cmdComp || (t._cmdBar && t._cmdBar.$refs.cmdInput) || self.$refs.cmdInput;
                 if (c2) {
                     var el2 = c2.$refs.input;
                     el2.setSelectionRange(newLeft.length, newLeft.length);
@@ -10072,8 +10364,8 @@ new Vue({
                 }
             });
         },
-        copySelection: function () {
-            var t = this.activeTab;
+        copySelection: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -10103,9 +10395,9 @@ new Vue({
             try { document.execCommand('copy'); } catch (e) { /* ignore */ }
             ta.remove();
         },
-        pasteToInput: function () {
+        pasteToInput: function (tab, inputComp) {
             var self = this;
-            var t = this.activeTab;
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -10114,7 +10406,7 @@ new Vue({
                     if (!txt) {
                         return;
                     }
-                    var comp = self.$refs.cmdInput;
+                    var comp = inputComp || (t._cmdBar && t._cmdBar.$refs.cmdInput) || self.$refs.cmdInput;
                     var el = comp && comp.$refs.input;
                     var cur = t.cmdText || '';
                     if (el) {
@@ -10153,25 +10445,16 @@ new Vue({
                 document.exitFullscreen().catch(function () { /* ignore */ });
             }
         },
-        onSearchKey: function (e) {
-            if (e.key === 'Enter') {
-                if (e.shiftKey) {
-                    this.findPrev();
-                } else {
-                    this.findNext();
-                }
+        findNext: function (tab, text) {
+            var t = tab || this.activeTab;
+            if (t && t.searchAddon && text) {
+                t.searchAddon.findNext(text, { decorations: SEARCH_DECOR });
             }
         },
-        findNext: function () {
-            var t = this.activeTab;
-            if (t && t.searchAddon && this.searchText) {
-                t.searchAddon.findNext(this.searchText, { decorations: SEARCH_DECOR });
-            }
-        },
-        findPrev: function () {
-            var t = this.activeTab;
-            if (t && t.searchAddon && this.searchText) {
-                t.searchAddon.findPrevious(this.searchText, { decorations: SEARCH_DECOR });
+        findPrev: function (tab, text) {
+            var t = tab || this.activeTab;
+            if (t && t.searchAddon && text) {
+                t.searchAddon.findPrevious(text, { decorations: SEARCH_DECOR });
             }
         },
 
@@ -10493,8 +10776,12 @@ new Vue({
                 var now = Date.now();
                 if (now - self._lastCtrl < 420 && !self._otherSinceCtrl) {
                     self._lastCtrl = 0;
-                    if (self.hotkeySettings.doubleCtrl && !self.desktop.visible) {
-                        self.toggleCmdBar();
+                    if (self.hotkeySettings.doubleCtrl) {
+                        var target = self.desktopTerminalFocusTab()
+                            || (self.desktop.visible ? null : self.activeTab);
+                        if (target) {
+                            self.toggleCmdBar(target);
+                        }
                     }
                 } else {
                     self._lastCtrl = now;
