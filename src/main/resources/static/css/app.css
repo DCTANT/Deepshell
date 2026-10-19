@@ -3312,6 +3312,11 @@ body.resizing .term-host {
     padding: 10px 12px 24px;
 }
 
+/* 详细列表：去掉顶部内边距，避免滚动时文件行从粘性表头上方透出 */
+.dsk-files.view-list {
+    padding-top: 0;
+}
+
 /* 视图切换：小图标用 4x4 点阵（Element 没有 el-icon-grid） */
 .dsk-vsmall {
     display: inline-block;
@@ -4172,10 +4177,38 @@ body.resizing .term-host {
 }
 
 .dsk-tray-conn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 1px;
+    max-width: 180px;
+    min-width: 0;
+    line-height: 1.15;
+    color: #8f9db2;
+}
+
+.dsk-tray-conn-line {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    color: #8f9db2;
+    white-space: nowrap;
+}
+
+.dsk-tray-conn-name {
+    align-self: stretch;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #c3cede;
+    font-size: 10.5px;
+}
+
+.dsk-tray-conn-addr {
+    color: #7185a1;
+    font-size: 9.5px;
+    white-space: nowrap;
 }
 
 .dsk-tray-clock {
@@ -5718,13 +5751,32 @@ body.resizing .term-host {
     color: #6ea8ff;
 }
 
-/* ---------- 传输中心 ---------- */
+/* ---------- 传输中心（气泡深色，桌面窗口跟随窗口浅色主题） ---------- */
 .xfer-center-btn.active {
-    color: #3d7eff;
+    color: #6ea8ff;
 }
 
 .xfer-pop {
     padding: 0 !important;
+    background: #1e2530 !important;
+    border-color: #2a3140 !important;
+    color: #c9d4e3 !important;
+}
+
+.xfer-pop[x-placement^="bottom"] .popper__arrow {
+    border-bottom-color: #2a3140 !important;
+}
+
+.xfer-pop[x-placement^="bottom"] .popper__arrow::after {
+    border-bottom-color: #1e2530 !important;
+}
+
+.xfer-pop[x-placement^="top"] .popper__arrow {
+    border-top-color: #2a3140 !important;
+}
+
+.xfer-pop[x-placement^="top"] .popper__arrow::after {
+    border-top-color: #1e2530 !important;
 }
 
 .xfer-pop-head,
@@ -5733,10 +5785,19 @@ body.resizing .term-host {
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
+    font-size: 12px;
+}
+
+.xfer-pop-head {
+    background: #171c26;
+    border-bottom: 1px solid #2a3140;
+    color: #d7dde8;
+}
+
+.xfer-win-head {
     background: #f5f7fa;
     border-bottom: 1px solid #ebeef5;
     color: #303133;
-    font-size: 12px;
 }
 
 .xfer-pop-title,
@@ -5749,14 +5810,26 @@ body.resizing .term-host {
     font-size: 11px;
 }
 
+.xfer-pop .xfer-pop-sub {
+    color: #6ea8ff;
+}
+
 .xfer-pop-close {
     margin-left: 4px;
     cursor: pointer;
-    color: #909399;
+    color: #8b98ad;
 }
 
 .xfer-pop-close:hover {
-    color: #303133;
+    color: #ffffff;
+}
+
+.xfer-pop-head .el-button--text {
+    color: #8fa8cc;
+}
+
+.xfer-pop-head .el-button--text:hover {
+    color: #ffffff;
 }
 
 .xfer-pop-body {
@@ -5775,7 +5848,7 @@ body.resizing .term-host {
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: #fff;
+    background: var(--panel);
 }
 
 .dsk-transfer-body .xfer-list {
@@ -5789,7 +5862,7 @@ body.resizing .term-host {
 .xfer-empty {
     padding: 26px 0;
     text-align: center;
-    color: #9aa7bd;
+    color: var(--xfer-empty);
     font-size: 12px;
 }
 
@@ -5808,18 +5881,18 @@ body.resizing .term-host {
 }
 
 .xfer-kind-up {
-    color: #3d7eff;
-    background: rgba(61, 126, 255, 0.1);
+    color: var(--xfer-up);
+    background: var(--xfer-up-bg);
 }
 
 .xfer-kind-down {
-    color: #22a06b;
-    background: rgba(34, 160, 107, 0.1);
+    color: var(--xfer-down);
+    background: var(--xfer-down-bg);
 }
 
 .xfer-speed {
     margin-left: 8px;
-    color: #6ea8ff;
+    color: var(--xfer-speed);
     font-size: 11px;
 }
 
@@ -5838,14 +5911,46 @@ body.resizing .term-host {
 }
 
 .xfer-list {
+    /* 默认跟随应用浅色主题；深色容器只需覆盖这些变量 */
+    --xfer-text: var(--text);
+    --xfer-sub: var(--text-2);
+    --xfer-muted: #909399;
+    --xfer-empty: #9aa7bd;
+    --xfer-border: rgba(148, 163, 184, 0.22);
+    --xfer-track: #ebeef5;
+    --xfer-accent: #409eff;
+    --xfer-speed: #409eff;
+    --xfer-up: #3d7eff;
+    --xfer-up-bg: rgba(61, 126, 255, 0.1);
+    --xfer-down: #22a06b;
+    --xfer-down-bg: rgba(34, 160, 107, 0.1);
+    --xfer-action: #409eff;
+    --xfer-action-hover: #66b1ff;
     max-height: 280px;
     overflow: auto;
     padding: 4px 12px 8px;
 }
 
+.xfer-pop .xfer-list {
+    --xfer-text: #d7dde8;
+    --xfer-sub: #6b7891;
+    --xfer-muted: #8b98ad;
+    --xfer-empty: #7b88a0;
+    --xfer-border: rgba(148, 163, 184, 0.16);
+    --xfer-track: #2a3140;
+    --xfer-accent: #6ea8ff;
+    --xfer-speed: #6ea8ff;
+    --xfer-up: #6ea8ff;
+    --xfer-up-bg: rgba(110, 168, 255, 0.14);
+    --xfer-down: #3ddc97;
+    --xfer-down-bg: rgba(61, 220, 151, 0.12);
+    --xfer-action: #8fa8cc;
+    --xfer-action-hover: #ffffff;
+}
+
 .xfer-item {
     padding: 8px 0;
-    border-bottom: 1px dashed #ebeef5;
+    border-bottom: 1px dashed var(--xfer-border);
 }
 
 .xfer-item:last-child { border-bottom: 0; }
@@ -5862,11 +5967,11 @@ body.resizing .term-host {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #303133;
+    color: var(--xfer-text);
 }
 
 .xfer-status {
-    color: #909399;
+    color: var(--xfer-muted);
     font-size: 11px;
     white-space: nowrap;
 }
@@ -5876,20 +5981,20 @@ body.resizing .term-host {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #909399;
+    color: var(--xfer-sub);
     font-size: 10.5px;
 }
 
 .xfer-queued, .xfer-scanning, .xfer-downloading,
-.xfer-uploading, .xfer-processing { color: #409eff; }
+.xfer-uploading, .xfer-processing { color: var(--xfer-accent); }
 .xfer-partial { color: #e6a23c; }
 .xfer-done { color: #67c23a; }
 .xfer-error { color: #f56c6c; }
-.xfer-cancelled { color: #909399; }
+.xfer-cancelled { color: var(--xfer-muted); }
 
 .xfer-bar {
     height: 4px;
-    background: #ebeef5;
+    background: var(--xfer-track);
     border-radius: 2px;
     margin: 6px 0 3px;
     overflow: hidden;
@@ -5898,7 +6003,7 @@ body.resizing .term-host {
 .xfer-bar i {
     display: block;
     height: 100%;
-    background: #409eff;
+    background: var(--xfer-accent);
     transition: width 0.2s;
 }
 
@@ -5965,8 +6070,24 @@ body.resizing .term-host {
     align-items: center;
 }
 
+.xfer-actions .el-button--text {
+    color: var(--xfer-action);
+}
+
+.xfer-actions .el-button--text:hover {
+    color: var(--xfer-action-hover);
+}
+
+.xfer-actions .el-button--text.xfer-remove {
+    color: #e06c75;
+}
+
+.xfer-actions .el-button--text.xfer-remove:hover {
+    color: #f56c6c;
+}
+
 .xfer-pct {
-    color: #909399;
+    color: var(--xfer-muted);
     font-size: 11px;
 }
 

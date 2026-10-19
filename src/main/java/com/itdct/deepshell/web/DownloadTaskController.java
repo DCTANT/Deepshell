@@ -28,4 +28,11 @@ public class DownloadTaskController {
     public R<DownloadTaskService.Task> get(@PathVariable String id) {
         return R.ok(service.get(id));
     }
+
+    /** 终止进行中的下载：服务端停止输出，浏览器下载随之结束 */
+    @PostMapping("/tasks/{id}/cancel")
+    public R<Void> cancel(@PathVariable String id) {
+        service.cancel(id);
+        return R.ok();
+    }
 }

@@ -156,6 +156,23 @@ public class LocalDownloadService {
         return snapshot(task);
     }
 
+    /** 终止进行中的本机下载：当前文件写完一个数据块后停止，已下载的文件保留 */
+    public void cancelTask(String id) {
+        DownloadTask task = id == null ? null : tasks.get(id.trim());
+        if (task == null) {
+            throw new IllegalArgumentException("下载任务不存在或已过期");
+        }
+        if ("done".equals(task.status) || "error".equals(task.status)
+                || "cancelled".equals(task.status)) {
+            return;
+        }
+        task.cancelled = true;
+        task.status = "cancelled";
+        task.currentFile = "";
+        task.finishedAt = System.currentTimeMillis();
+        recordAudit(task, "CANCELLED", "下载到本机：" + task.targetPath + "，用户已取消");
+    }
+
     /** 在运行 DeepShell 的本机上打开下载目录 */
     public void openTarget(String id) {
         DownloadTask task = id == null ? null : tasks.get(id.trim());
@@ -183,6 +200,9 @@ public class LocalDownloadService {
             plan = sftp.planLocalDownload(task.sessionId, task.remoteDir, task.paths);
         } catch (Exception e) {
             fail(task, e);
+            return;
+        }
+        if (task.cancelled) {
             return;
         }
         task.totalFiles = plan.totalFiles;
@@ -229,7 +249,15 @@ public class LocalDownloadService {
                         public void onRenamed(String relativePath, String localName) {
                             task.addRenamed(relativePath, localName);
                         }
+
+                        @Override
+                        public boolean isCancelled() {
+                            return task.cancelled;
+                        }
                     });
+            if (task.cancelled) {
+                return;
+            }
             task.status = "done";
             task.currentFile = "";
             task.finishedAt = System.currentTimeMillis();
@@ -238,11 +266,22 @@ public class LocalDownloadService {
                             + task.totalFiles + (task.errorCount.get() > 0
                             ? "，失败 " + task.errorCount.get() : ""));
         } catch (Exception e) {
+            if (task.cancelled || e instanceof InterruptedException) {
+                task.status = "cancelled";
+                task.currentFile = "";
+                if (task.finishedAt == 0) {
+                    task.finishedAt = System.currentTimeMillis();
+                }
+                return;
+            }
             fail(task, e);
         }
     }
 
     private void fail(DownloadTask task, Exception e) {
+        if (task.cancelled) {
+            return;
+        }
         task.status = "error";
         task.message = displayError(e);
         task.currentFile = "";
@@ -427,6 +466,7 @@ public class LocalDownloadService {
         volatile long doneBytes;
         volatile String currentFile = "";
         volatile String message = "";
+        volatile boolean cancelled;
         volatile long finishedAt;
 
         DownloadTask(String id, String sessionId, String remoteDir, String subDir,

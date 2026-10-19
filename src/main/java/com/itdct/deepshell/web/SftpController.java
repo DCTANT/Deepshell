@@ -25,6 +25,7 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 import java.util.function.LongConsumer;
 
 @RestController
@@ -142,10 +143,13 @@ public class SftpController {
             // 取不到大小时仍继续下载，前端显示已传字节
         }
         try (CountingOutputStream out = new CountingOutputStream(
-                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n))) {
+                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n),
+                () -> downloadTasks.isCancelled(taskId))) {
             sftp.download(sessionId, path, out);
         } catch (Exception e) {
-            downloadTasks.fail(taskId, e.getMessage());
+            if (!downloadTasks.isCancelled(taskId)) {
+                downloadTasks.fail(taskId, e.getMessage());
+            }
             throw e;
         }
         downloadTasks.finish(taskId);
@@ -190,10 +194,13 @@ public class SftpController {
         }
         // 流式 ZIP 无法预知最终大小，只按已发送字节提供进度
         try (CountingOutputStream out = new CountingOutputStream(
-                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n))) {
+                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n),
+                () -> downloadTasks.isCancelled(taskId))) {
             sftp.writeZip(sessionId, destDir, paths, out);
         } catch (Exception e) {
-            downloadTasks.fail(taskId, e.getMessage());
+            if (!downloadTasks.isCancelled(taskId)) {
+                downloadTasks.fail(taskId, e.getMessage());
+            }
             throw e;
         }
         downloadTasks.finish(taskId);
@@ -231,18 +238,21 @@ public class SftpController {
         return disposition + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded;
     }
 
-    /** 统计已写入响应流的字节数，供下载进度轮询读取 */
+    /** 统计已写入响应流的字节数，供下载进度轮询读取；取消时中断输出 */
     private static final class CountingOutputStream extends FilterOutputStream {
         private final LongConsumer onProgress;
+        private final BooleanSupplier cancelled;
         private long count;
 
-        CountingOutputStream(OutputStream out, LongConsumer onProgress) {
+        CountingOutputStream(OutputStream out, LongConsumer onProgress, BooleanSupplier cancelled) {
             super(out);
             this.onProgress = onProgress;
+            this.cancelled = cancelled;
         }
 
         @Override
         public void write(int b) throws IOException {
+            checkCancelled();
             out.write(b);
             count++;
             onProgress.accept(count);
@@ -250,9 +260,16 @@ public class SftpController {
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
+            checkCancelled();
             out.write(b, off, len);
             count += len;
             onProgress.accept(count);
+        }
+
+        private void checkCancelled() throws IOException {
+            if (cancelled != null && cancelled.getAsBoolean()) {
+                throw new IOException("下载已取消");
+            }
         }
     }
 

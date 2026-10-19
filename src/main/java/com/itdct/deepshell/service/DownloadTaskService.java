@@ -67,14 +67,28 @@ public class DownloadTaskService {
 
     public void progress(String id, long doneBytes) {
         Task t = get(id);
-        if (t != null && !"done".equals(t.status) && !"error".equals(t.status)) {
+        if (t != null && !isFinished(t.status)) {
             t.doneBytes = Math.max(0, doneBytes);
         }
     }
 
+    /** 取消下载：写入端检测到后立即停止输出 */
+    public void cancel(String id) {
+        Task t = get(id);
+        if (t != null && !isFinished(t.status)) {
+            t.status = "cancelled";
+            t.finishedAt = System.currentTimeMillis();
+        }
+    }
+
+    public boolean isCancelled(String id) {
+        Task t = get(id);
+        return t != null && "cancelled".equals(t.status);
+    }
+
     public void finish(String id) {
         Task t = get(id);
-        if (t != null) {
+        if (t != null && !isFinished(t.status)) {
             if (t.totalBytes > 0) {
                 t.doneBytes = t.totalBytes;
             }
@@ -85,11 +99,15 @@ public class DownloadTaskService {
 
     public void fail(String id, String message) {
         Task t = get(id);
-        if (t != null) {
+        if (t != null && !isFinished(t.status)) {
             t.status = "error";
             t.error = message == null || message.trim().isEmpty() ? "下载失败" : message;
             t.finishedAt = System.currentTimeMillis();
         }
+    }
+
+    private static boolean isFinished(String status) {
+        return "done".equals(status) || "error".equals(status) || "cancelled".equals(status);
     }
 
     private void purgeExpired() {
@@ -97,7 +115,7 @@ public class DownloadTaskService {
         Iterator<Map.Entry<String, Task>> it = tasks.entrySet().iterator();
         while (it.hasNext()) {
             Task t = it.next().getValue();
-            boolean finished = "done".equals(t.status) || "error".equals(t.status);
+            boolean finished = isFinished(t.status);
             if (finished && t.finishedAt > 0 && now - t.finishedAt > EXPIRE_MS) {
                 it.remove();
             }

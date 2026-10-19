@@ -639,6 +639,11 @@ public class SftpService {
         void onDirFailed(String relativePath, String message);
 
         void onRenamed(String relativePath, String localName);
+
+        /** 用户取消时为 true，下载循环据此尽快停止 */
+        default boolean isCancelled() {
+            return false;
+        }
     }
 
     /** 扫描选中目录树，供本机直写下载使用 */
@@ -734,6 +739,9 @@ public class SftpService {
         localDirs.put("", targetRoot);
         int consecutiveFailures = 0;
         for (LocalDownloadEntry entry : plan.entries) {
+            if (progress.isCancelled()) {
+                throw new InterruptedException("下载已取消");
+            }
             String parentRelative = parentRelative(entry.relativePath);
             Path localParent = localDirs.get(parentRelative);
             if (localParent == null) {
@@ -773,6 +781,9 @@ public class SftpService {
                         byte[] buf = new byte[64 * 1024];
                         int n;
                         while ((n = in.read(buf)) != -1) {
+                            if (progress.isCancelled()) {
+                                throw new InterruptedException("下载已取消");
+                            }
                             out.write(buf, 0, n);
                             progress.onBytes(n);
                         }
@@ -793,6 +804,9 @@ public class SftpService {
                         } catch (Exception ignore) {
                             // 忽略临时文件清理失败
                         }
+                    }
+                    if (progress.isCancelled()) {
+                        throw new InterruptedException("下载已取消");
                     }
                     progress.onFileFailed(entry.relativePath, errorText(e));
                     consecutiveFailures++;

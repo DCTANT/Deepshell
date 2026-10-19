@@ -56,6 +56,14 @@ public class LocalDownloadController {
         return R.ok();
     }
 
+    /** 终止进行中的本机下载（已下载文件保留） */
+    @PostMapping("/tasks/{id}/cancel")
+    public R<Void> cancel(@PathVariable String id, HttpServletRequest request) {
+        requireLocal(request);
+        localDownloadService.cancelTask(id);
+        return R.ok();
+    }
+
     private static void requireLocal(HttpServletRequest request) {
         if (!isLoopback(request)) {
             throw new IllegalArgumentException("仅支持在本机访问（127.0.0.1 / localhost）时下载到本机目录");

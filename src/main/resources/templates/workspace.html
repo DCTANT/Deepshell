@@ -71,7 +71,7 @@
                 </div>
                 <div class="xfer-pop-body">
                     <xfer-list :items="transfers" @cancel="cancelTransfer" @retry="retryTransfer"
-                               @summary="showLocalDownloadSummary"></xfer-list>
+                               @summary="showLocalDownloadSummary" @remove="removeTransfer"></xfer-list>
                 </div>
                 <i slot="reference" class="el-icon-s-promotion tbtn xfer-center-btn"
                    :class="{ active: transferCenterOpen }" title="传输中心"
@@ -612,7 +612,7 @@
                                        @click="clearFinishedTransfers">清除已完成</el-button>
                         </div>
                         <xfer-list :items="transfers" @cancel="cancelTransfer" @retry="retryTransfer"
-                                   @summary="showLocalDownloadSummary"></xfer-list>
+                                   @summary="showLocalDownloadSummary" @remove="removeTransfer"></xfer-list>
                     </div>
                 </template>
                 <template v-else-if="w.type === 'ai'">
@@ -725,7 +725,8 @@
             </aside>
 
             <main class="dsk-main">
-                <div class="dsk-files" :id="'dsk-files-' + w.id" @click="onDesktopFilesClick"
+                <div class="dsk-files" :class="{ 'view-list': !isDeskGrid(w) }" :id="'dsk-files-' + w.id"
+                     @click="onDesktopFilesClick"
                      @mousedown="onDesktopFilesMouseDown"
                      @contextmenu.prevent="desktopBlankContextMenu($event)"
                      @dragover="onDesktopSurfaceDragOver" @drop="onDesktopSurfaceDrop"
@@ -940,9 +941,13 @@
                         ↓ {{ fmtRate(desktopTab.stats.rxRate) }} ↑ {{ fmtRate(desktopTab.stats.txRate) }}
                     </span>
                 </div>
-                <span class="dsk-tray-conn" :title="statusText(desktopTab)">
-                    <span class="dot" :class="'dot-' + desktopTab.status"></span>{{ statusText(desktopTab) }}
-                </span>
+                <div class="dsk-tray-conn" :title="statusText(desktopTab)">
+                    <span class="dsk-tray-conn-line">
+                        <span class="dot" :class="'dot-' + desktopTab.status"></span>{{ statusText(desktopTab) }}
+                    </span>
+                    <span class="dsk-tray-conn-name" :title="desktopTab.title">{{ desktopTab.title }}</span>
+                    <span class="dsk-tray-conn-addr">{{ connAddress(desktopTab) }}</span>
+                </div>
             </div>
             <div class="dsk-tray-clock" :class="{ active: desktop.calendarOpen }"
                  :title="desktopClockFull + ' · ' + desktopClockTimezone"
@@ -2740,6 +2745,8 @@
                            @click="$emit('cancel', t)">取消</el-button>
                 <el-button v-if="canRetry(t)" size="mini" type="text"
                            @click="$emit('retry', t)">重试</el-button>
+                <el-button v-if="canRemove(t)" size="mini" type="text"
+                           class="xfer-remove" @click="$emit('remove', t)">删除</el-button>
             </div>
         </div>
     </div>

@@ -595,6 +595,7 @@ Vue.component('xfer-list', {
                 if (t.status === 'done') {
                     return t.totalFiles > 0 ? '已完成 ' + (t.doneFiles || 0) + ' 个文件' : '已完成';
                 }
+                if (t.status === 'cancelled') return '已取消';
                 return t.error || '失败';
             }
             if (t.kind === 'download') {
@@ -618,11 +619,23 @@ Vue.component('xfer-list', {
             return t.error || '失败';
         },
         canCancel: function (t) {
-            return t.kind === 'upload'
-                && (t.status === 'pending' || t.status === 'uploading' || t.status === 'processing');
+            if (t.kind === 'upload') {
+                return t.status === 'pending' || t.status === 'uploading' || t.status === 'processing';
+            }
+            if (t.kind === 'download') {
+                return t.status === 'downloading';
+            }
+            if (t.kind === 'localDownload') {
+                return t.status === 'queued' || t.status === 'scanning' || t.status === 'downloading';
+            }
+            return false;
         },
         canRetry: function (t) {
             return t.kind === 'upload' && (t.status === 'error' || t.status === 'cancelled');
+        },
+        canRemove: function (t) {
+            return ['pending', 'uploading', 'processing', 'queued', 'scanning', 'downloading']
+                .indexOf(t.status) < 0;
         }
     }
 });
@@ -1472,6 +1485,7 @@ new Vue({
                 desktopOpenPath: '',
                 title: conn ? conn.name : ('连接 #' + connId),
                 host: conn ? conn.host : '',
+                port: conn ? (conn.port || 22) : 22,
                 status: 'connecting',
                 sessionId: null,
                 ws: null,
@@ -1883,6 +1897,7 @@ new Vue({
                     if (c) {
                         t.title = c.name;
                         t.host = c.host;
+                        t.port = c.port || 22;
                     }
                 });
             });
@@ -2845,6 +2860,8 @@ new Vue({
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
             }
+            // 终端页的气泡是 body 级浮层，进入桌面后会盖在桌面上，先关闭
+            this.transferCenterOpen = false;
             // 同一连接可能在多个标签打开，进入桌面时以存储中的最新背景为准
             t.desktopBg = loadDesktopBgSettings(t.connId);
             var conv = this.aiActiveConv(t);
@@ -8109,6 +8126,12 @@ new Vue({
             var map = { connecting: '连接中…', reconnecting: '重连中…', open: '已连接', closed: '已断开', error: '连接失败' };
             return map[tab.status] || tab.status;
         },
+        connAddress: function (tab) {
+            if (!tab || !tab.host) {
+                return '';
+            }
+            return tab.host + ':' + (tab.port || 22);
+        },
 
         /* ---------- SFTP ---------- */
         loadHome: function (tab) {
@@ -8409,7 +8432,7 @@ new Vue({
                     item.offset = t.doneBytes || 0;
                     item.status = t.status || item.status;
                     item.error = t.error || '';
-                    if (item.status === 'done' || item.status === 'error') {
+                    if (item.status === 'done' || item.status === 'error' || item.status === 'cancelled') {
                         clearInterval(item._timer);
                         item._timer = null;
                         if (item.status === 'done') {
@@ -8618,6 +8641,12 @@ new Vue({
                     item.renamed = t.renamed || [];
                     item.error = t.message || '';
                     item.targetPath = t.targetPath || item.targetPath;
+                    if (t.status === 'cancelled') {
+                        clearInterval(item._timer);
+                        item._timer = null;
+                        item.status = 'cancelled';
+                        return;
+                    }
                     if (t.status === 'done' || t.status === 'error') {
                         clearInterval(item._timer);
                         item._timer = null;
@@ -8747,7 +8776,10 @@ new Vue({
         pushTransfer: function (item) {
             item.speed = 0;
             this.transfers.push(item);
-            this.transferCenterOpen = true;
+            // 桌面模式下不显示终端页气泡，传输中心入口在桌面应用/任务栏
+            if (!this.desktop.visible) {
+                this.transferCenterOpen = true;
+            }
             this.ensureTransferSpeedTimer();
             return item;
         },
@@ -8901,16 +8933,59 @@ new Vue({
             });
         },
         cancelTransfer: function (item) {
-            if (item.kind !== 'upload') {
+            if (!item) {
                 return;
             }
-            var wasRunning = item.status === 'uploading' || item.status === 'processing';
-            item.status = 'cancelled';
-            if (!wasRunning && item.uploadId) {
-                http.post('/api/sftp/upload/abort', { uploadId: item.uploadId }).catch(function () {});
-                item.uploadId = '';
+            if (item.kind === 'upload') {
+                var wasRunning = item.status === 'uploading' || item.status === 'processing';
+                item.status = 'cancelled';
+                if (!wasRunning && item.uploadId) {
+                    http.post('/api/sftp/upload/abort', { uploadId: item.uploadId }).catch(function () {});
+                    item.uploadId = '';
+                }
+                this.pumpTransfers();
+                return;
             }
-            this.pumpTransfers();
+            if (item.kind === 'download') {
+                if (item.status !== 'downloading') {
+                    return;
+                }
+                item.status = 'cancelled';
+                if (item._timer) {
+                    clearInterval(item._timer);
+                    item._timer = null;
+                }
+                if (item.taskId) {
+                    http.post('/api/downloads/tasks/' + encodeURIComponent(item.taskId) + '/cancel')
+                        .catch(function () { /* 已由拦截器提示 */ });
+                }
+                return;
+            }
+            if (item.kind === 'localDownload') {
+                if (!item.taskId) {
+                    return;
+                }
+                http.post('/api/local-download/tasks/' + encodeURIComponent(item.taskId) + '/cancel')
+                    .then(function () {
+                        item.status = 'cancelled';
+                        if (item._timer) {
+                            clearInterval(item._timer);
+                            item._timer = null;
+                        }
+                    }).catch(function () { /* 已由拦截器提示 */ });
+            }
+        },
+        removeTransfer: function (item) {
+            if (!item) {
+                return;
+            }
+            if (item._timer) {
+                clearInterval(item._timer);
+                item._timer = null;
+            }
+            this.transfers = this.transfers.filter(function (t) {
+                return t !== item;
+            });
         },
         retryTransfer: function (item) {
             if (item.kind !== 'upload') {
