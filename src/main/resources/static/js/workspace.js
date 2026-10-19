@@ -153,6 +153,16 @@ function loadDesktopIdleMinutes() {
     return 0;
 }
 
+/* 任务管理器「启动应用」开关（按浏览器持久化） */
+function loadDesktopStartup() {
+    try {
+        var raw = localStorage.getItem('deepshell.desktopStartup');
+        var data = raw ? JSON.parse(raw) : null;
+        return data && typeof data === 'object' ? data : {};
+    } catch (e) { /* ignore */ }
+    return {};
+}
+
 /* AI 可视化桌面：每个资源管理器窗口拥有独立的浏览状态与几何信息 */
 function createDesktopWindow(id) {
     return {
@@ -190,7 +200,13 @@ function createDesktopWindow(id) {
         normal: null,
         z: 0,
         dragging: false,
-        resizing: false
+        resizing: false,
+        /* 任务管理器中的进程视图数据（桌面应用为估算值，随采样刷新） */
+        tmPid: 0,
+        tmCpu: 0,
+        tmMem: 0,
+        tmDisk: 0,
+        tmNet: 0
     };
 }
 
@@ -957,6 +973,7 @@ new Vue({
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
             { id: 'terminal', label: '终端', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+            { id: 'taskmgr', label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' },
             { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
@@ -964,6 +981,31 @@ new Vue({
             { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
             { id: 'control', label: '设置', icon: 'el-icon-setting', color: '#54657e' },
             { id: 'connect', label: '连接管理', icon: 'el-icon-monitor', color: '#2f8fce' }
+        ],
+        tmNavItems: [
+            { id: 'processes', label: '进程', icon: 'el-icon-s-grid' },
+            { id: 'performance', label: '性能', icon: 'el-icon-data-line' },
+            { id: 'history', label: '应用历史记录', icon: 'el-icon-time' },
+            { id: 'startup', label: '启动应用', icon: 'el-icon-s-promotion' },
+            { id: 'users', label: '用户', icon: 'el-icon-user' },
+            { id: 'details', label: '详细信息', icon: 'el-icon-tickets' },
+            { id: 'services', label: '服务', icon: 'el-icon-service' }
+        ],
+        tmPerfItems: [
+            { id: 'cpu', label: 'CPU', icon: 'el-icon-cpu' },
+            { id: 'memory', label: '内存', icon: 'el-icon-coin' },
+            { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart' },
+            { id: 'network', label: '网络', icon: 'el-icon-connection' }
+        ],
+        tmStartupApps: [
+            { id: 'ai', label: 'AI 终端', desc: '进入桌面时自动打开 AI 对话窗口',
+              impact: '中', impactLevel: 'mid', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+            { id: 'terminal', label: '终端', desc: '进入桌面时自动打开一个 SSH 终端窗口',
+              impact: '高', impactLevel: 'high', icon: 'el-icon-monitor', color: '#22a06b' },
+            { id: 'transfers', label: '传输中心', desc: '进入桌面时自动打开传输中心',
+              impact: '低', impactLevel: 'low', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+            { id: 'taskmgr', label: '任务管理器', desc: '进入桌面时自动打开任务管理器',
+              impact: '低', impactLevel: 'low', icon: 'el-icon-cpu', color: '#0f6cbd' }
         ],
         desktopSettingsSections: [
             { id: 'appearance', label: '外观与桌面', icon: 'el-icon-monitor' },
@@ -985,6 +1027,7 @@ new Vue({
             ghost: createDesktopWindow(''),
             wallMenu: { visible: false, x: 0, y: 0 },
             taskMenu: { visible: false, x: 0, y: 0, winId: '' },
+            taskbarMenu: { visible: false, x: 0, y: 0 },
             showDesktopIds: [],
             surface: { dir: '', loading: false, error: '', loaded: false, entries: [] },
             iconLayout: [],
@@ -1025,6 +1068,34 @@ new Vue({
             clockSeconds: loadDesktopClockSeconds(),
             clockShowDate: loadDesktopClockShowDate(),
             idleMinutes: loadDesktopIdleMinutes()
+        },
+        /* 任务管理器（单实例窗口；进程/性能数据均依赖当前桌面连接） */
+        taskmgr: {
+            winId: '',
+            tab: 'processes',
+            selected: '',
+            collapsedApps: false,
+            collapsedBg: false,
+            search: '',
+            procSortBy: 'cpu',
+            procSortDir: 'desc',
+            perfItem: 'cpu',
+            history: { cpu: [], mem: [], disk: [], rx: [], tx: [] },
+            bg: [],
+            detail: {
+                rows: [], loading: false, error: '', loadedAt: 0, filter: '',
+                sortBy: 'cpu', sortDir: 'desc', selectedPid: 0,
+                overlayVisible: false, overlayRow: null, overlayCmd: '', overlayLoading: false
+            },
+            sysInfo: null,
+            sysInfoLoading: false,
+            sysInfoError: '',
+            sysInfoAt: 0,
+            appHistory: {},
+            startup: loadDesktopStartup(),
+            ctxMenu: { visible: false, x: 0, y: 0, kind: '', key: '', title: '' },
+            runVisible: false,
+            runText: ''
         },
         connectDialogVisible: false,
         connFilter: 'all',
@@ -1349,10 +1420,379 @@ new Vue({
             }
             return null;
         },
+        taskmgrWin: function () {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === 'taskmgr') {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
         desktopTaskWindows: function () {
             return this.desktop.windows.filter(function (w) {
-                return w.type === 'explorer' || w.type === 'terminal';
+                return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr';
             });
+        },
+        /* ---------- 任务管理器 ---------- */
+        tmApps: function () {
+            var q = String(this.taskmgr.search || '').trim().toLowerCase();
+            var rows = this.desktop.windows.slice();
+            if (q) {
+                var self = this;
+                rows = rows.filter(function (w) {
+                    var name = (self.desktopWindowTitle(w) + ' '
+                        + self.desktopWindowSubtitle(w) + ' ' + w.type).toLowerCase();
+                    return name.indexOf(q) >= 0;
+                });
+            }
+            return this.tmSortProcessRows(rows);
+        },
+        tmBackground: function () {
+            var q = String(this.taskmgr.search || '').trim().toLowerCase();
+            var rows = this.taskmgr.bg.slice();
+            if (q) {
+                rows = rows.filter(function (p) {
+                    return (p.name + ' ' + p.status).toLowerCase().indexOf(q) >= 0;
+                });
+            }
+            return this.tmSortProcessRows(rows);
+        },
+        tmProcessCount: function () {
+            return this.desktop.windows.length + this.taskmgr.bg.length;
+        },
+        tmSelectedLabel: function () {
+            var sel = this.taskmgr.selected || '';
+            if (sel.indexOf('win:') === 0) {
+                var w = this.desktopWindowById(sel.substring(4));
+                return w ? this.desktopWindowTitle(w) : '';
+            }
+            if (sel.indexOf('bg:') === 0) {
+                var pid = sel.substring(3);
+                for (var i = 0; i < this.taskmgr.bg.length; i++) {
+                    if (String(this.taskmgr.bg[i].pid) === pid) {
+                        return this.taskmgr.bg[i].name;
+                    }
+                }
+            }
+            return '';
+        },
+        tmCanEndSelected: function () {
+            var sel = this.taskmgr.selected || '';
+            return sel.indexOf('win:') === 0 && !!this.desktopWindowById(sel.substring(4));
+        },
+        tmStats: function () {
+            var t = this.desktopTab;
+            return t && t.stats ? t.stats : null;
+        },
+        tmStatsReady: function () {
+            var st = this.tmStats;
+            return !!(st && !st.error && st.cpu != null);
+        },
+        tmStatsError: function () {
+            var st = this.tmStats;
+            return st && st.error ? st.error : '';
+        },
+        tmHostName: function () {
+            var st = this.tmStats;
+            var t = this.desktopTab;
+            return (st && st.host) || (t && t.host) || '当前会话';
+        },
+        tmHostTitle: function () {
+            var t = this.desktopTab;
+            if (!t) {
+                return '未连接';
+            }
+            var conn = null;
+            for (var i = 0; i < this.connections.length; i++) {
+                if (this.connections[i].id === t.connId) {
+                    conn = this.connections[i];
+                    break;
+                }
+            }
+            var user = (conn && conn.username) || '';
+            var host = (conn && conn.host) || t.host || '';
+            return (user ? user + '@' : '') + (host || '未连接');
+        },
+        tmCpuText: function () {
+            var st = this.tmStats;
+            return st && st.cpu != null ? Math.round(st.cpu) + '%' : '--';
+        },
+        tmMemText: function () {
+            var st = this.tmStats;
+            return st && st.memPct != null ? Math.round(st.memPct) + '%' : '--';
+        },
+        tmHistoryRows: function () {
+            var meta = {
+                explorer: { label: '资源管理器', icon: 'el-icon-folder-opened', color: '#e6a23c' },
+                terminal: { label: '终端', icon: 'el-icon-monitor', color: '#22a06b' },
+                ai: { label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+                transfer: { label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+                taskmgr: { label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' }
+            };
+            var out = [];
+            for (var k in this.taskmgr.appHistory) {
+                if (!Object.prototype.hasOwnProperty.call(this.taskmgr.appHistory, k) || !meta[k]) {
+                    continue;
+                }
+                var e = this.taskmgr.appHistory[k];
+                out.push({
+                    type: k,
+                    label: meta[k].label,
+                    icon: meta[k].icon,
+                    color: meta[k].color,
+                    cpuSec: e.cpuSec || 0,
+                    netBytes: e.netBytes || 0,
+                    memPeak: e.memPeak || 0,
+                    opens: e.opens || 0
+                });
+            }
+            out.sort(function (a, b) {
+                return a.label.localeCompare(b.label, 'zh-CN');
+            });
+            return out;
+        },
+        tmUserRows: function () {
+            var self = this;
+            var out = [];
+            this.tabs.forEach(function (t) {
+                if (t.connId == null) {
+                    return;
+                }
+                var conn = null;
+                for (var i = 0; i < self.connections.length; i++) {
+                    if (self.connections[i].id === t.connId) {
+                        conn = self.connections[i];
+                        break;
+                    }
+                }
+                var st = t.stats || null;
+                out.push({
+                    key: t.key,
+                    user: (conn && conn.username) || '—',
+                    host: (conn && conn.host) || t.host || '—',
+                    session: t.title || '',
+                    status: t.status === 'open' ? '正在运行' : self.statusText(t),
+                    online: t.status === 'open',
+                    current: t.key === self.desktop.tabKey,
+                    cpu: st && !st.error ? st.cpu : null,
+                    memPct: st && !st.error ? st.memPct : null
+                });
+            });
+            out.sort(function (a, b) {
+                return (b.current ? 1 : 0) - (a.current ? 1 : 0) || a.user.localeCompare(b.user);
+            });
+            return out;
+        },
+        tmServiceRows: function () {
+            var t = this.desktopTab;
+            var connected = !!(t && t.status === 'open');
+            var st = this.tmStats;
+            var monitoring = !!(st && !st.error);
+            var monitorStatus = st && st.error ? '已停止' : (st ? '正在运行' : '等待中');
+            var busy = this.transferActiveCount;
+            var rows = [
+                { pid: 776, name: '桌面外壳', icon: 'el-icon-monitor', desc: '提供桌面、任务栏、开始菜单与窗口管理', running: true, status: '正在运行', startType: '自动' },
+                { pid: 1088, name: 'SSH 会话服务', icon: 'el-icon-connection', desc: connected ? '安全会话与终端通道已建立' : '等待 SSH 会话连接', running: connected, status: connected ? '正在运行' : '已停止', startType: '自动' },
+                { pid: 2096, name: 'SFTP 文件服务', icon: 'el-icon-folder-opened', desc: '远程文件浏览、上传下载与在线编辑', running: true, status: '正在运行', startType: '自动' },
+                { pid: 3184, name: '传输服务', icon: 'el-icon-s-promotion', desc: busy ? '正在处理 ' + busy + ' 个传输任务' : '文件传输队列空闲', running: true, status: busy ? '正在运行' : '空闲', startType: '手动' },
+                { pid: 2760, name: 'AI 助手服务', icon: 'el-icon-magic-stick', desc: 'AI 对话、命令生成与自动执行', running: true, status: '正在运行', startType: '手动' },
+                { pid: 3520, name: '监控采样服务', icon: 'el-icon-data-line', desc: monitoring ? '采集 CPU / 内存 / 网络指标' : (st && st.error ? st.error : '等待首次采样'), running: monitoring, status: monitorStatus, startType: '自动' }
+            ];
+            return rows;
+        },
+        tmDetailRows: function () {
+            var rows = this.taskmgr.detail.rows.slice();
+            var q = String(this.taskmgr.detail.filter || '').trim().toLowerCase();
+            if (q) {
+                rows = rows.filter(function (r) {
+                    return (String(r.comm || '') + ' ' + String(r.user || '') + ' '
+                        + String(r.pid || '') + ' ' + String(r.args || '')).toLowerCase().indexOf(q) >= 0;
+                });
+            }
+            var by = this.taskmgr.detail.sortBy;
+            var dir = this.taskmgr.detail.sortDir === 'asc' ? 1 : -1;
+            var self = this;
+            rows.sort(function (a, b) {
+                if (by === 'pid') {
+                    return (a.pid - b.pid) * dir;
+                }
+                if (by === 'user') {
+                    return String(a.user || '').localeCompare(String(b.user || '')) * dir;
+                }
+                if (by === 'comm') {
+                    return String(a.comm || '').localeCompare(String(b.comm || ''), 'zh-CN', { numeric: true }) * dir;
+                }
+                var va;
+                var vb;
+                if (by === 'mem') {
+                    va = a.rssMb || 0;
+                    vb = b.rssMb || 0;
+                } else {
+                    va = self.procCpuValue(a);
+                    vb = self.procCpuValue(b);
+                }
+                return (va - vb) * dir;
+            });
+            return rows;
+        },
+        tmDetailSelected: function () {
+            var pid = this.taskmgr.detail.selectedPid;
+            if (!pid) {
+                return null;
+            }
+            for (var i = 0; i < this.taskmgr.detail.rows.length; i++) {
+                if (this.taskmgr.detail.rows[i].pid === pid) {
+                    return this.taskmgr.detail.rows[i];
+                }
+            }
+            return null;
+        },
+        tmChartHasData: function () {
+            var key = this.tmHistoryKey(this.taskmgr.perfItem);
+            return (this.taskmgr.history[key] || []).length > 0;
+        },
+        tmChartAreaPoints: function () {
+            var key = this.tmHistoryKey(this.taskmgr.perfItem);
+            var arr = this.taskmgr.history[key] || [];
+            if (arr.length < 2) {
+                return '';
+            }
+            var pts = this.tmChartPoints(key);
+            return '0,40 ' + pts + ' ' + this.tmChartX(arr.length - 1, arr.length) + ',40';
+        },
+        tmChartMaxLabel: function () {
+            if (this.taskmgr.perfItem === 'network') {
+                return this.fmtRate(this.tmNetChartMax());
+            }
+            return '100%';
+        },
+        tmChartEmptyText: function () {
+            if (!this.desktopTab || !this.desktopTab.sessionId) {
+                return '会话未就绪，无法获取监控数据';
+            }
+            return this.tmStatsError ? ('监控不可用：' + this.tmStatsError) : '正在等待服务器监控数据…';
+        },
+        tmPerfTitle: function () {
+            var map = { cpu: 'CPU', memory: '内存', disk: '磁盘', network: '网络' };
+            return map[this.taskmgr.perfItem] || 'CPU';
+        },
+        tmPerfSubtitle: function () {
+            var host = this.tmHostName;
+            var map = {
+                cpu: '服务器 ' + host + ' 的处理器实时使用率',
+                memory: '服务器 ' + host + ' 的物理内存与交换分区',
+                disk: '服务器 ' + host + ' 的根分区使用情况',
+                network: '服务器 ' + host + ' 的网卡吞吐'
+            };
+            return map[this.taskmgr.perfItem] || '';
+        },
+        tmPerfBigValue: function () {
+            var st = this.tmStats;
+            if (this.taskmgr.perfItem === 'network') {
+                if (!st || st.error) {
+                    return '--';
+                }
+                return this.fmtRate((st.rxRate || 0) + (st.txRate || 0));
+            }
+            if (this.taskmgr.perfItem === 'disk') {
+                var d = this.tmDiskInfo;
+                return d && d.pct != null ? d.pct : '--';
+            }
+            if (this.taskmgr.perfItem === 'memory') {
+                return st && st.memPct != null ? Math.round(st.memPct) : '--';
+            }
+            return st && st.cpu != null ? Math.round(st.cpu) : '--';
+        },
+        tmPerfUnit: function () {
+            return this.taskmgr.perfItem === 'network' ? '' : '%';
+        },
+        tmCpuModel: function () {
+            return this.tmSysValue('cpu', 'CPU 型号') || '—';
+        },
+        tmCpuCores: function () {
+            return this.tmSysValue('cpu', '核心数') || '—';
+        },
+        tmCpuSpeed: function () {
+            return this.tmSysValue('cpu', '主频') || '—';
+        },
+        tmLoad1: function () {
+            var st = this.tmStats;
+            return st && st.load1 ? st.load1 : '—';
+        },
+        tmServerUptime: function () {
+            var st = this.tmStats;
+            return st && st.uptimeSecs != null ? this.fmtUptime(st.uptimeSecs) : '—';
+        },
+        tmMemAvailable: function () {
+            var st = this.tmStats;
+            if (!st || st.memTotalMb == null || st.memUsedMb == null) {
+                return '—';
+            }
+            return this.fmtMb(Math.max(0, st.memTotalMb - st.memUsedMb));
+        },
+        tmSwapUsed: function () {
+            var st = this.tmStats;
+            return st ? this.fmtMb(st.swapUsedMb) : '—';
+        },
+        tmSwapTotal: function () {
+            var st = this.tmStats;
+            return st && st.swapTotalMb ? this.fmtMb(st.swapTotalMb) : '未启用';
+        },
+        tmSwapPct: function () {
+            var st = this.tmStats;
+            return st && st.swapTotalMb ? (st.swapPct != null ? st.swapPct + '%' : '—') : '—';
+        },
+        tmDiskInfo: function () {
+            var info = this.taskmgr.sysInfo;
+            if (!info || !info.disk || !info.disk.length) {
+                return null;
+            }
+            for (var i = 0; i < info.disk.length; i++) {
+                if (info.disk[i].mount === '/') {
+                    return info.disk[i];
+                }
+            }
+            return info.disk[0];
+        },
+        tmDiskTotal: function () {
+            var d = this.tmDiskInfo;
+            return d ? this.fmtSize((d.sizeKb || 0) * 1024) : '—';
+        },
+        tmDiskUsed: function () {
+            var d = this.tmDiskInfo;
+            return d ? this.fmtSize((d.usedKb || 0) * 1024) : '—';
+        },
+        tmDiskFree: function () {
+            var d = this.tmDiskInfo;
+            return d ? this.fmtSize((d.availKb || 0) * 1024) : '—';
+        },
+        tmRxRate: function () {
+            var st = this.tmStats;
+            return st && !st.error ? st.rxRate : null;
+        },
+        tmTxRate: function () {
+            var st = this.tmStats;
+            return st && !st.error ? st.txRate : null;
+        },
+        tmNetAdapter: function () {
+            var info = this.taskmgr.sysInfo;
+            if (!info || !info.net || !info.net.length) {
+                return '—';
+            }
+            return info.net.map(function (n) { return n.name; }).join(', ');
+        },
+        tmNetRxTotal: function () {
+            return this.tmNetTotalBytes('rxBytes');
+        },
+        tmNetTxTotal: function () {
+            return this.tmNetTotalBytes('txBytes');
+        },
+        tmSampleCaption: function () {
+            var st = this.tmStats;
+            if (this.taskmgr.perfItem === 'cpu' && st && st.load1) {
+                return '负载 ' + st.load1;
+            }
+            return '实时采样';
         },
         transferActiveCount: function () {
             return this.transfers.filter(function (t) {
@@ -3097,6 +3537,7 @@ new Vue({
                         return;
                     }
                     self.openDesktopWindow(p, true);
+                    self.applyDesktopStartupApps();
                     if (self.$refs.desktopRoot) {
                         self.$refs.desktopRoot.focus();
                     }
@@ -3112,6 +3553,7 @@ new Vue({
             this.cancelDesktopMarquee();
             this.cancelDesktopIconMarquee();
             this.closeDesktopSubMenus();
+            this.resetTaskmgrState();
             this.cancelDesktopThumbQueue();
             this.disconnectDesktopThumbObserver();
             this.resetSurfaceThumbs();
@@ -3126,6 +3568,7 @@ new Vue({
             this.desktop.explorerId = '';
             this.desktop.zSeq = 0;
             this.desktop.showDesktopIds = [];
+            this.desktop.taskbarMenu.visible = false;
             this.desktop.tabKey = t ? t.key : '';
             this.desktop.surface = { dir: '', loading: false, error: '', loaded: false, entries: [] };
             this.desktop.iconLayout = [];
@@ -3166,6 +3609,7 @@ new Vue({
             this.stopDesktopWindowGestures();
             this.stopDesktopDragScroll();
             this.stopDesktopClock();
+            this.resetTaskmgrState();
             this.cancelDesktopMarquee();
             this.cancelDesktopIconMarquee();
             this.cancelDesktopThumbQueue();
@@ -3187,6 +3631,7 @@ new Vue({
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
+            this.desktop.taskbarMenu.visible = false;
             this.desktop.startOpen = false;
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
@@ -3228,6 +3673,22 @@ new Vue({
             var w = this.desktopWindowById(this.desktop.activeWinId);
             return w && w.type === 'terminal' && w.termTab ? w.termTab : null;
         },
+        desktopWindowIcon: function (w) {
+            var type = (w && w.type) || 'explorer';
+            if (type === 'ai') {
+                return 'el-icon-chat-dot-round';
+            }
+            if (type === 'transfer') {
+                return 'el-icon-s-promotion';
+            }
+            if (type === 'terminal') {
+                return 'el-icon-monitor';
+            }
+            if (type === 'taskmgr') {
+                return 'el-icon-cpu';
+            }
+            return 'el-icon-folder-opened';
+        },
         desktopWindowTitle: function (w) {
             if (w && w.type === 'ai') {
                 return 'AI 终端';
@@ -3237,6 +3698,9 @@ new Vue({
             }
             if (w && w.type === 'transfer') {
                 return '传输中心';
+            }
+            if (w && w.type === 'taskmgr') {
+                return '任务管理器';
             }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
@@ -3259,6 +3723,9 @@ new Vue({
                 var busy = this.transferActiveCount;
                 var text = busy ? '全部会话 · 进行中 ' + busy : '全部会话';
                 return host ? host + ' · ' + text : text;
+            }
+            if (w && w.type === 'taskmgr') {
+                return host ? host + ' · 进程与性能' : '进程与性能';
             }
             if (w && w.type === 'ai') {
                 var t = this.desktopTab;
@@ -3382,7 +3849,9 @@ new Vue({
             this._deskWinSeq = seq;
             var w = createDesktopWindow('dw' + seq);
             w.type = type || 'explorer';
+            w.tmPid = 4200 + seq * 4;
             w.viewMode = loadDesktopView();
+            this.trackTaskmgrAppLaunch(w.type);
             var layouts = null;
             if (w.type === 'explorer') {
                 layouts = this.loadDesktopWinLayouts();
@@ -3578,6 +4047,9 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.taskmgr.ctxMenu.visible = false;
+            this.taskmgr.runVisible = false;
             this.desktop.iconSelected = '';
             this.desktop.iconSelectedKeys = [];
             this.desktop.focusSurface = false;
@@ -3685,6 +4157,16 @@ new Vue({
             }
             if (this.desktop.taskMenu.visible && this.desktop.taskMenu.winId === w.id) {
                 this.desktop.taskMenu.visible = false;
+            }
+            if (w.type === 'taskmgr') {
+                this.stopTaskmgrTimer();
+                this.taskmgr.winId = '';
+                this.taskmgr.ctxMenu.visible = false;
+                this.taskmgr.runVisible = false;
+                this.taskmgr.detail.overlayVisible = false;
+            }
+            if (this.taskmgr.selected === 'win:' + w.id) {
+                this.taskmgr.selected = '';
             }
             this.releaseDesktopWindowThumbs(w);
             var idx = this.desktop.windows.indexOf(w);
@@ -3940,6 +4422,8 @@ new Vue({
             this.desktop.menu.visible = false;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.taskmgr.ctxMenu.visible = false;
             this.desktop.iconSelected = '';
             this.desktop.iconSelectedKeys = [];
             this.desktop.focusSurface = true;
@@ -4023,6 +4507,8 @@ new Vue({
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.calendarOpen = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.taskmgr.ctxMenu.visible = false;
             this.closeDesktopSubMenus();
             this.desktop.taskMenu = {
                 visible: true,
@@ -4050,6 +4536,12 @@ new Vue({
             if (this.desktop.iconMenu.visible) {
                 this.desktop.iconMenu.visible = false;
             }
+            if (this.desktop.taskbarMenu.visible) {
+                this.desktop.taskbarMenu.visible = false;
+            }
+            if (this.taskmgr.ctxMenu.visible) {
+                this.taskmgr.ctxMenu.visible = false;
+            }
         },
         desktopTaskOpenCommon: function (path) {
             this.desktop.taskMenu.visible = false;
@@ -4062,12 +4554,884 @@ new Vue({
             this.desktop.taskMenu.visible = false;
             this.openDesktopWindow((w && w.path) || this.desk.path || this.desktopHomeDir || '/');
         },
+        desktopTaskSwitchWindow: function () {
+            var w = this.desktopTaskMenuWin;
+            this.desktop.taskMenu.visible = false;
+            if (w) {
+                this.restoreDesktopWindow(w);
+            }
+        },
         desktopTaskCloseWindow: function () {
             var w = this.desktopTaskMenuWin;
             this.desktop.taskMenu.visible = false;
             if (w) {
                 this.closeDesktopWindow(w);
             }
+        },
+
+        /* ---------- 任务栏空白右键 / 任务管理器 ---------- */
+        onDesktopTaskbarContextMenu: function (ev) {
+            var target = ev && ev.target;
+            if (target && target.closest
+                    && target.closest('button, .dsk-tray, .dsk-tray-clock, .dsk-menu')) {
+                return;
+            }
+            this.desktop.startOpen = false;
+            this.desktop.calendarOpen = false;
+            this.desktop.taskMenu.visible = false;
+            this.desktop.iconMenu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.menu.visible = false;
+            this.taskmgr.ctxMenu.visible = false;
+            this.closeDesktopSubMenus();
+            this.desktop.taskbarMenu = {
+                visible: true,
+                x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 240)),
+                y: Math.max(8, ev.clientY - 100)
+            };
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.deskTaskbarMenu;
+                if (!el || !self.desktop.taskbarMenu.visible) {
+                    return;
+                }
+                var h = el.offsetHeight || 84;
+                var w = el.offsetWidth || 216;
+                self.desktop.taskbarMenu.x = Math.max(8,
+                    Math.min(ev.clientX, window.innerWidth - w - 8));
+                self.desktop.taskbarMenu.y = Math.max(8, ev.clientY - h - 8);
+            });
+        },
+        desktopTaskbarMenuAction: function (action) {
+            this.desktop.taskbarMenu.visible = false;
+            if (action === 'taskmgr') {
+                this.openTaskManager();
+            } else if (action === 'showDesktop') {
+                this.toggleShowDesktop();
+            }
+        },
+        openTaskManager: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            this.desktop.taskbarMenu.visible = false;
+            this.desktop.startOpen = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
+            this.desktop.iconMenu.visible = false;
+            this.desktop.calendarOpen = false;
+            this.closeDesktopSubMenus();
+            var existing = this.taskmgrWin;
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                if (this.taskmgr.tab === 'details') {
+                    this.loadTaskmgrDetails(true);
+                } else if (this.taskmgr.tab === 'performance') {
+                    this.loadTaskmgrSysInfo(false);
+                }
+                return existing;
+            }
+            var w = this.addDesktopWindow('taskmgr');
+            var area = this.desktopWindowWorkArea();
+            var width = Math.min(area.width - 20, Math.max(560, Math.round(area.width * 0.74)));
+            var height = Math.min(area.height - 20, Math.max(440, Math.round(area.height * 0.86)));
+            this.applyDesktopWindowGeometry(w, {
+                x: Math.round((area.width - width) / 2),
+                y: Math.round((area.height - height) / 2),
+                w: width,
+                h: height
+            });
+            this.taskmgr.winId = w.id;
+            this.taskmgr.tab = 'processes';
+            this.taskmgr.selected = '';
+            this.taskmgr.search = '';
+            this.taskmgr.runVisible = false;
+            this.taskmgr.runText = '';
+            this.taskmgr.ctxMenu.visible = false;
+            this.taskmgr.detail.selectedPid = 0;
+            this.taskmgr.detail.overlayVisible = false;
+            this.taskmgr.history = { cpu: [], mem: [], disk: [], rx: [], tx: [] };
+            this.initTaskmgrBg();
+            this.taskmgrTick(true);
+            this.startTaskmgrTimer();
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        switchTaskmgrTab: function (id) {
+            if (!id) {
+                return;
+            }
+            this.taskmgr.tab = id;
+            this.taskmgr.ctxMenu.visible = false;
+            this.taskmgr.runVisible = false;
+            if (id === 'performance') {
+                this.loadTaskmgrSysInfo(false);
+            } else if (id === 'details') {
+                this.loadTaskmgrDetails(true);
+            }
+        },
+        toggleTaskmgrRun: function () {
+            this.taskmgr.runVisible = !this.taskmgr.runVisible;
+            var self = this;
+            if (this.taskmgr.runVisible) {
+                this.$nextTick(function () {
+                    var r = self.$refs.tmRunInput;
+                    if (r && r.focus) {
+                        r.focus();
+                    }
+                });
+            }
+        },
+        runTaskmgrCommand: function () {
+            var text = String(this.taskmgr.runText || '').trim().toLowerCase();
+            if (!text) {
+                return;
+            }
+            var map = {
+                '任务管理器': 'taskmgr', 'taskmgr': 'taskmgr', 'task manager': 'taskmgr',
+                '资源管理器': 'file', 'explorer': 'file', '文件': 'file', '文件管理器': 'file',
+                '终端': 'terminal', 'terminal': 'terminal', 'ssh': 'terminal',
+                'ai': 'ai', 'ai 终端': 'ai', 'ai终端': 'ai',
+                '传输中心': 'transfers', '传输': 'transfers', 'transfers': 'transfers',
+                '设置': 'control', '控制面板': 'control', 'settings': 'control'
+            };
+            var id = map[text];
+            if (!id) {
+                ELEMENT.Message.warning('找不到应用：' + text
+                    + '。可输入：资源管理器、终端、AI 终端、传输中心、任务管理器、设置');
+                return;
+            }
+            this.taskmgr.runVisible = false;
+            this.taskmgr.runText = '';
+            this.desktopLaunchApp(id);
+        },
+        startTaskmgrTimer: function () {
+            this.stopTaskmgrTimer();
+            var self = this;
+            this._tmTimer = setInterval(function () {
+                self.taskmgrTick();
+            }, 2000);
+        },
+        stopTaskmgrTimer: function () {
+            if (this._tmTimer) {
+                clearInterval(this._tmTimer);
+                this._tmTimer = null;
+            }
+        },
+        taskmgrTick: function (initial) {
+            if (!this.desktop.visible || !this.taskmgrWin) {
+                this.stopTaskmgrTimer();
+                return;
+            }
+            if (!this.taskmgr.bg.length) {
+                this.initTaskmgrBg();
+            }
+            var sec = initial ? 0 : 2;
+            this.sampleTaskmgrApps();
+            this.sampleTaskmgrBg();
+            this.accumulateTaskmgrHistory(sec);
+            this.pushTaskmgrHistory();
+            if (!initial && this.taskmgr.tab === 'details'
+                    && !this.taskmgr.detail.loading
+                    && Date.now() - this.taskmgr.detail.loadedAt > 2900) {
+                this.loadTaskmgrDetails();
+            }
+            if (this.taskmgr.tab === 'performance' && !this.taskmgr.sysInfo
+                    && !this.taskmgr.sysInfoLoading && !this.taskmgr.sysInfoError) {
+                this.loadTaskmgrSysInfo(false);
+            }
+        },
+        initTaskmgrBg: function () {
+            if (this.taskmgr.bg.length) {
+                return;
+            }
+            this.taskmgr.bg = [
+                { pid: 776, name: '桌面外壳', icon: 'el-icon-monitor', color: '#64748b',
+                  desc: '桌面、任务栏与窗口管理', status: '正在运行',
+                  cpu: 0.4, mem: 58.2, disk: 0.1, net: 0, baseCpu: 0.4, baseMem: 58 },
+                { pid: 1088, name: 'SSH 会话服务', icon: 'el-icon-connection', color: '#3b82f6',
+                  desc: '安全会话与终端通道', status: '正在运行',
+                  cpu: 0.3, mem: 36.4, disk: 0.1, net: 0, baseCpu: 0.3, baseMem: 36 },
+                { pid: 2096, name: 'SFTP 文件服务', icon: 'el-icon-folder-opened', color: '#e6a23c',
+                  desc: '远程文件浏览与传输', status: '正在运行',
+                  cpu: 0.2, mem: 42.8, disk: 0.1, net: 0, baseCpu: 0.2, baseMem: 42 },
+                { pid: 3184, name: '传输服务', icon: 'el-icon-s-promotion', color: '#0ea5a4',
+                  desc: '文件传输队列', status: '空闲',
+                  cpu: 0.1, mem: 31.6, disk: 0.1, net: 0, baseCpu: 0.1, baseMem: 31 },
+                { pid: 2760, name: 'AI 助手服务', icon: 'el-icon-magic-stick', color: '#8b5cf6',
+                  desc: 'AI 对话与命令生成', status: '正在运行',
+                  cpu: 0.2, mem: 48.3, disk: 0.1, net: 0, baseCpu: 0.2, baseMem: 48 },
+                { pid: 3520, name: '监控采样服务', icon: 'el-icon-data-line', color: '#0f6cbd',
+                  desc: '采集服务器性能指标', status: '正在运行',
+                  cpu: 0.2, mem: 26.5, disk: 0.1, net: 0, baseCpu: 0.2, baseMem: 26 }
+            ];
+        },
+        sampleTaskmgrApps: function () {
+            var t = this.desktopTab;
+            var aiBusy = t ? !!this.chatAnyBusy(t) : false;
+            var transferBusy = this.transferActiveCount;
+            this.desktop.windows.forEach(function (w) {
+                var baseCpu = 0.3;
+                var baseMem = 120;
+                if (w.type === 'explorer') {
+                    baseCpu = 0.35;
+                    baseMem = 150 + (w.entries ? w.entries.length : 0) * 1.1;
+                } else if (w.type === 'terminal') {
+                    baseCpu = 0.15;
+                    baseMem = 68;
+                } else if (w.type === 'ai') {
+                    baseCpu = aiBusy ? 6 : 0.5;
+                    baseMem = 218;
+                } else if (w.type === 'transfer') {
+                    baseCpu = transferBusy ? 2.6 : 0.25;
+                    baseMem = 62;
+                } else if (w.type === 'taskmgr') {
+                    baseCpu = 1.1;
+                    baseMem = 42;
+                }
+                if (w.min) {
+                    baseCpu *= 0.25;
+                }
+                var cpuTarget = baseCpu + Math.random() * (aiBusy && w.type === 'ai' ? 5 : 0.4);
+                w.tmCpu = Math.round((w.tmCpu ? w.tmCpu * 0.55 + cpuTarget * 0.45 : cpuTarget) * 10) / 10;
+                w.tmMem = Math.round((w.tmMem
+                    ? w.tmMem * 0.82 + baseMem * 0.18
+                    : baseMem + Math.random() * 8) * 10) / 10;
+                w.tmDisk = Math.round((transferBusy && w.type === 'transfer'
+                    ? 1 + Math.random() * 2.4
+                    : Math.random() * 0.2) * 10) / 10;
+                w.tmNet = Math.round((transferBusy && w.type === 'transfer'
+                    ? 8 + Math.random() * 56
+                    : (aiBusy && w.type === 'ai' ? 0.1 + Math.random() * 0.2 : 0)) * 10) / 10;
+            });
+        },
+        sampleTaskmgrBg: function () {
+            var t = this.desktopTab;
+            var connected = !!(t && t.status === 'open');
+            var st = this.tmStats;
+            var aiBusy = t ? !!this.chatAnyBusy(t) : false;
+            var busy = this.transferActiveCount;
+            this.taskmgr.bg.forEach(function (p) {
+                var cpu = p.baseCpu;
+                if (p.pid === 1088) {
+                    cpu = connected ? 0.3 + Math.random() * 0.3 : 0.04;
+                    p.status = connected ? '正在运行' : '已停止';
+                } else if (p.pid === 3184) {
+                    cpu = busy ? 1.4 + Math.random() * 2.2 : 0.1;
+                    p.status = busy ? '正在运行' : '空闲';
+                } else if (p.pid === 2760) {
+                    cpu = aiBusy ? 3 + Math.random() * 4 : 0.2;
+                } else if (p.pid === 3520) {
+                    if (st && st.error) {
+                        cpu = 0.04;
+                        p.status = '已停止';
+                    } else if (st) {
+                        cpu = 0.2 + Math.random() * 0.15;
+                        p.status = '正在运行';
+                    } else {
+                        cpu = 0.1;
+                        p.status = '等待中';
+                    }
+                } else {
+                    cpu = p.baseCpu * (0.7 + Math.random() * 0.6);
+                }
+                p.cpu = Math.round(cpu * 10) / 10;
+                p.mem = Math.round((p.mem * 0.9 + p.baseMem * 0.1
+                    + (Math.random() - 0.5) * 0.8) * 10) / 10;
+                p.disk = Math.round((busy && p.pid === 3184
+                    ? 0.5 + Math.random() * 1.4
+                    : Math.random() * 0.15) * 10) / 10;
+                p.net = busy && p.pid === 3184 ? Math.round((3 + Math.random() * 8) * 10) / 10 : 0;
+            });
+        },
+        trackTaskmgrAppLaunch: function (type) {
+            if (['explorer', 'terminal', 'ai', 'transfer', 'taskmgr'].indexOf(type) < 0) {
+                return;
+            }
+            if (!this.taskmgr.appHistory[type]) {
+                this.$set(this.taskmgr.appHistory, type, {
+                    cpuSec: 0, netBytes: 0, memPeak: 0, opens: 0
+                });
+            }
+            this.taskmgr.appHistory[type].opens =
+                (this.taskmgr.appHistory[type].opens || 0) + 1;
+        },
+        accumulateTaskmgrHistory: function (sec) {
+            var totals = {};
+            this.desktop.windows.forEach(function (w) {
+                var cur = totals[w.type] || { cpu: 0, net: 0, mem: 0 };
+                cur.cpu += w.tmCpu || 0;
+                cur.net += w.tmNet || 0;
+                cur.mem += w.tmMem || 0;
+                totals[w.type] = cur;
+            });
+            var self = this;
+            Object.keys(totals).forEach(function (type) {
+                var e = self.taskmgr.appHistory[type];
+                if (!e) {
+                    self.$set(self.taskmgr.appHistory, type, {
+                        cpuSec: 0, netBytes: 0, memPeak: 0, opens: 0
+                    });
+                    e = self.taskmgr.appHistory[type];
+                }
+                e.cpuSec += totals[type].cpu * sec / 100;
+                e.netBytes += totals[type].net * 1000000 / 8 * sec;
+                e.memPeak = Math.max(e.memPeak || 0, totals[type].mem);
+            });
+        },
+        clearTaskmgrHistory: function () {
+            this.taskmgr.appHistory = {};
+            var self = this;
+            var seen = {};
+            this.desktop.windows.forEach(function (w) {
+                if (!seen[w.type]) {
+                    seen[w.type] = true;
+                    self.trackTaskmgrAppLaunch(w.type);
+                }
+            });
+            this.accumulateTaskmgrHistory(0);
+            ELEMENT.Message.success('应用历史记录已清除');
+        },
+        pushTmSeries: function (key, value) {
+            if (value == null || isNaN(value)) {
+                return;
+            }
+            var arr = this.taskmgr.history[key];
+            if (!arr) {
+                this.$set(this.taskmgr.history, key, []);
+                arr = this.taskmgr.history[key];
+            }
+            arr.push(Number(value));
+            while (arr.length > 60) {
+                arr.shift();
+            }
+        },
+        pushTaskmgrHistory: function () {
+            var st = this.tmStats;
+            if (st && !st.error) {
+                this.pushTmSeries('cpu', st.cpu);
+                this.pushTmSeries('mem', st.memPct);
+                this.pushTmSeries('rx', st.rxRate == null ? 0 : st.rxRate);
+                this.pushTmSeries('tx', st.txRate == null ? 0 : st.txRate);
+            }
+            var d = this.tmDiskInfo;
+            if (d && d.pct != null) {
+                this.pushTmSeries('disk', d.pct);
+            }
+        },
+        tmSortProcessRows: function (rows) {
+            var by = this.taskmgr.procSortBy;
+            var dir = this.taskmgr.procSortDir === 'asc' ? 1 : -1;
+            return rows.slice().sort(function (a, b) {
+                var va = by === 'mem' ? (a.tmMem || 0) : (a.tmCpu != null ? a.tmCpu : (a.cpu || 0));
+                var vb = by === 'mem' ? (b.tmMem || 0) : (b.tmCpu != null ? b.tmCpu : (b.cpu || 0));
+                if (va === vb) {
+                    return 0;
+                }
+                return (va - vb) * dir;
+            });
+        },
+        sortTaskmgrProcesses: function (by) {
+            if (this.taskmgr.procSortBy === by) {
+                this.taskmgr.procSortDir = this.taskmgr.procSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.taskmgr.procSortBy = by;
+                this.taskmgr.procSortDir = 'desc';
+            }
+        },
+        tmProcSortIcon: function (by) {
+            if (this.taskmgr.procSortBy !== by) {
+                return '';
+            }
+            return this.taskmgr.procSortDir === 'asc' ? 'el-icon-sort-up' : 'el-icon-sort-down';
+        },
+        selectTaskmgrRow: function (key) {
+            this.taskmgr.selected = key;
+        },
+        tmWindowIcon: function (w) {
+            return this.desktopWindowIcon(w);
+        },
+        tmWindowColor: function (w) {
+            var map = {
+                explorer: '#e6a23c',
+                terminal: '#22a06b',
+                ai: '#3d7eff',
+                transfer: '#0ea5a4',
+                taskmgr: '#0f6cbd'
+            };
+            return map[(w && w.type) || 'explorer'] || '#64748b';
+        },
+        tmFmtPct: function (v) {
+            if (v == null || isNaN(v)) {
+                return '--';
+            }
+            return (Math.round(v * 10) / 10) + '%';
+        },
+        tmFmtDisk: function (v) {
+            if (v == null || v < 0.05) {
+                return '—';
+            }
+            return (Math.round(v * 10) / 10) + ' MB/s';
+        },
+        tmFmtNet: function (v) {
+            if (v == null || v < 0.05) {
+                return '—';
+            }
+            return v >= 1 ? (Math.round(v * 10) / 10) + ' Mbps'
+                : Math.round(v * 1000) + ' Kbps';
+        },
+        tmFmtCpuTime: function (sec) {
+            var s = Math.max(0, Math.round(sec || 0));
+            var h = Math.floor(s / 3600);
+            var m = Math.floor(s % 3600 / 60);
+            var r = s % 60;
+            var pad = function (x) { return x < 10 ? '0' + x : '' + x; };
+            return h + ':' + pad(m) + ':' + pad(r);
+        },
+        endTaskmgrSelected: function () {
+            var sel = this.taskmgr.selected || '';
+            if (sel.indexOf('win:') !== 0) {
+                return;
+            }
+            this.endTaskmgrWindow(this.desktopWindowById(sel.substring(4)));
+        },
+        endTaskmgrWindow: function (w) {
+            if (!w) {
+                return;
+            }
+            var self = this;
+            var name = this.desktopWindowTitle(w);
+            this.$confirm('结束「' + name + '」？该窗口将被关闭，未保存的输入可能会丢失。',
+                '结束任务', { type: 'warning', confirmButtonText: '结束任务', cancelButtonText: '取消' })
+                .then(function () {
+                    self.taskmgr.ctxMenu.visible = false;
+                    self.closeDesktopWindow(w);
+                })
+                .catch(function () { /* 取消 */ });
+        },
+        activateTaskmgrWindow: function (w) {
+            if (!w || w.type === 'taskmgr') {
+                return;
+            }
+            this.restoreDesktopWindow(w);
+        },
+        openTaskmgrContextMenu: function (ev, kind, key) {
+            this.desktop.taskMenu.visible = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.menu.visible = false;
+            this.desktop.startOpen = false;
+            var title = '';
+            if (kind === 'app') {
+                var w = this.desktopWindowById(String(key || '').substring(4));
+                if (!w) {
+                    return;
+                }
+                this.taskmgr.selected = key;
+                title = this.desktopWindowTitle(w);
+            } else if (kind === 'bg') {
+                this.taskmgr.selected = key;
+                for (var i = 0; i < this.taskmgr.bg.length; i++) {
+                    if ('bg:' + this.taskmgr.bg[i].pid === key) {
+                        title = this.taskmgr.bg[i].name;
+                        break;
+                    }
+                }
+            } else {
+                var pid = Number(String(key || '').substring(4));
+                this.taskmgr.detail.selectedPid = pid;
+                var row = this.tmDetailRowByPid(pid);
+                title = (row ? (row.comm || '') : '') + '（PID ' + pid + '）';
+            }
+            this.taskmgr.ctxMenu = {
+                visible: true,
+                x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 240)),
+                y: Math.max(8, ev.clientY),
+                kind: kind,
+                key: key,
+                title: title
+            };
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.tmCtxMenu;
+                if (!el || !self.taskmgr.ctxMenu.visible) {
+                    return;
+                }
+                var h = el.offsetHeight || 160;
+                var w = el.offsetWidth || 220;
+                self.taskmgr.ctxMenu.x = Math.max(8,
+                    Math.min(ev.clientX, window.innerWidth - w - 8));
+                self.taskmgr.ctxMenu.y = Math.max(8,
+                    Math.min(ev.clientY, window.innerHeight - h - 8));
+            });
+        },
+        tmDetailRowByPid: function (pid) {
+            for (var i = 0; i < this.taskmgr.detail.rows.length; i++) {
+                if (this.taskmgr.detail.rows[i].pid === pid) {
+                    return this.taskmgr.detail.rows[i];
+                }
+            }
+            return null;
+        },
+        tmCtxAction: function (action) {
+            var menu = this.taskmgr.ctxMenu;
+            this.taskmgr.ctxMenu.visible = false;
+            if (menu.kind === 'app') {
+                var w = this.desktopWindowById(String(menu.key || '').substring(4));
+                if (!w) {
+                    return;
+                }
+                if (action === 'switch') {
+                    this.restoreDesktopWindow(w);
+                } else if (action === 'endApp') {
+                    this.endTaskmgrWindow(w);
+                }
+                return;
+            }
+            if (menu.kind === 'detail') {
+                var row = this.tmDetailRowByPid(Number(String(menu.key || '').substring(4)));
+                if (!row) {
+                    return;
+                }
+                if (action === 'viewDetail') {
+                    this.openTaskmgrProcessDetail(row);
+                } else if (action === 'copyCmd') {
+                    var cmd = row.args || row.comm || '';
+                    if (cmd) {
+                        this.copyText(cmd);
+                    }
+                } else if (action === 'end') {
+                    this.killTaskmgrProcess(false, row);
+                } else if (action === 'kill') {
+                    this.killTaskmgrProcess(true, row);
+                }
+            }
+        },
+        loadTaskmgrSysInfo: function (force) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                this.taskmgr.sysInfoError = '当前会话未就绪，无法读取服务器信息';
+                return;
+            }
+            if (!force && this.taskmgr.sysInfo
+                    && Date.now() - this.taskmgr.sysInfoAt < 60000) {
+                return;
+            }
+            if (this.taskmgr.sysInfoLoading) {
+                return;
+            }
+            var self = this;
+            this.taskmgr.sysInfoLoading = true;
+            this.taskmgr.sysInfoError = '';
+            http.get('/api/system/info', {
+                params: { sessionId: t.sessionId },
+                silent: true
+            }).then(function (info) {
+                self.taskmgr.sysInfo = info || null;
+                self.taskmgr.sysInfoAt = Date.now();
+            }).catch(function (e) {
+                self.taskmgr.sysInfoError = '读取服务器信息失败：'
+                    + ((e && e.message) || '未知错误');
+            }).then(function () {
+                self.taskmgr.sysInfoLoading = false;
+            });
+        },
+        tmSysValue: function (section, label) {
+            var info = this.taskmgr.sysInfo;
+            if (!info || !info[section]) {
+                return '';
+            }
+            var rows = info[section];
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].label === label) {
+                    return rows[i].value || '';
+                }
+            }
+            return '';
+        },
+        loadTaskmgrDetails: function (force) {
+            var d = this.taskmgr.detail;
+            if (d.loading) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                d.error = '当前会话未就绪，无法读取服务器进程';
+                return;
+            }
+            if (!force && d.loadedAt && Date.now() - d.loadedAt < 2800) {
+                return;
+            }
+            var self = this;
+            d.loading = true;
+            d.error = '';
+            http.get('/api/process/list', {
+                params: { sessionId: t.sessionId },
+                silent: true
+            }).then(function (list) {
+                d.rows = list || [];
+                d.loadedAt = Date.now();
+                if (d.selectedPid && !self.tmDetailRowByPid(d.selectedPid)) {
+                    d.selectedPid = 0;
+                }
+            }).catch(function (e) {
+                d.error = '读取服务器进程失败：' + ((e && e.message) || '未知错误');
+                d.loadedAt = Date.now();
+            }).then(function () {
+                d.loading = false;
+            });
+        },
+        sortTaskmgrDetails: function (by) {
+            var d = this.taskmgr.detail;
+            if (d.sortBy === by) {
+                d.sortDir = d.sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                d.sortBy = by;
+                d.sortDir = by === 'cpu' || by === 'mem' ? 'desc' : 'asc';
+            }
+        },
+        tmDetailSortIcon: function (by) {
+            if (this.taskmgr.detail.sortBy !== by) {
+                return '';
+            }
+            return this.taskmgr.detail.sortDir === 'asc' ? 'el-icon-sort-up' : 'el-icon-sort-down';
+        },
+        openTaskmgrProcessDetail: function (row) {
+            if (!row) {
+                return;
+            }
+            var d = this.taskmgr.detail;
+            d.selectedPid = row.pid;
+            d.overlayRow = row;
+            d.overlayCmd = row.args || row.comm || '';
+            d.overlayVisible = true;
+            d.overlayLoading = true;
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                d.overlayLoading = false;
+                return;
+            }
+            var self = this;
+            http.get('/api/process/detail', {
+                params: { sessionId: t.sessionId, pid: row.pid },
+                silent: true
+            }).then(function (data) {
+                if (self.taskmgr.detail.overlayRow === row && data && data.command) {
+                    self.taskmgr.detail.overlayCmd = data.command;
+                }
+            }).catch(function () {
+                /* 保留列表中的命令行 */
+            }).then(function () {
+                if (self.taskmgr.detail.overlayRow === row) {
+                    self.taskmgr.detail.overlayLoading = false;
+                }
+            });
+        },
+        closeTaskmgrProcessDetail: function () {
+            this.taskmgr.detail.overlayVisible = false;
+            this.taskmgr.detail.overlayRow = null;
+            this.taskmgr.detail.overlayCmd = '';
+            this.taskmgr.detail.overlayLoading = false;
+        },
+        copyTaskmgrCmd: function () {
+            var d = this.taskmgr.detail;
+            var text = d.overlayCmd || (d.overlayRow ? (d.overlayRow.args || d.overlayRow.comm) : '');
+            if (!text) {
+                ELEMENT.Message.warning('没有可复制的命令行');
+                return;
+            }
+            this.copyText(text);
+        },
+        killTaskmgrProcess: function (force, row) {
+            row = row || this.tmDetailSelected;
+            if (!row) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('当前会话未就绪，无法结束服务器进程');
+                return;
+            }
+            var self = this;
+            var action = force ? '强制结束（SIGKILL）' : '结束（SIGTERM）';
+            this.$confirm(action + ' 进程「' + (row.comm || row.pid) + '」（PID ' + row.pid + '）？',
+                '结束服务器进程', { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' })
+                .then(function () {
+                    return http.post('/api/process/kill', {
+                        sessionId: t.sessionId,
+                        pid: row.pid,
+                        force: !!force
+                    });
+                })
+                .then(function () {
+                    ELEMENT.Message.success('已发送 ' + (force ? 'SIGKILL' : 'SIGTERM'));
+                    if (self.taskmgr.detail.overlayRow
+                            && self.taskmgr.detail.overlayRow.pid === row.pid) {
+                        self.closeTaskmgrProcessDetail();
+                    }
+                    self.taskmgr.detail.loadedAt = 0;
+                    self.loadTaskmgrDetails(true);
+                })
+                .catch(function () { /* 取消或失败（已提示） */ });
+        },
+        tmPerfValue: function (id) {
+            var st = this.tmStats;
+            if (id === 'network') {
+                if (!st || st.error) {
+                    return '--';
+                }
+                return this.fmtRate((st.rxRate || 0) + (st.txRate || 0));
+            }
+            if (id === 'disk') {
+                var d = this.tmDiskInfo;
+                return d && d.pct != null ? d.pct + '%' : '--';
+            }
+            if (id === 'memory') {
+                return st && !st.error && st.memPct != null ? Math.round(st.memPct) + '%' : '--';
+            }
+            return st && !st.error && st.cpu != null ? Math.round(st.cpu) + '%' : '--';
+        },
+        tmHistoryKey: function (id) {
+            if (id === 'memory') {
+                return 'mem';
+            }
+            if (id === 'network') {
+                return 'rx';
+            }
+            return id;
+        },
+        tmChartX: function (i, len) {
+            if (len <= 1) {
+                return 100;
+            }
+            return Math.round(i * 10000 / (len - 1)) / 100;
+        },
+        tmChartPoints: function (key) {
+            key = this.tmHistoryKey(key);
+            var arr = this.taskmgr.history[key] || [];
+            if (!arr.length) {
+                return '';
+            }
+            var max = key === 'rx' || key === 'tx' ? this.tmNetChartMax() : 100;
+            var y = function (v) {
+                return Math.round((38 - Math.min(max, Math.max(0, v)) / max * 36) * 100) / 100;
+            };
+            if (arr.length === 1) {
+                var flat = y(arr[0]);
+                return '0,' + flat + ' 100,' + flat;
+            }
+            var out = [];
+            for (var i = 0; i < arr.length; i++) {
+                out.push(this.tmChartX(i, arr.length) + ',' + y(arr[i]));
+            }
+            return out.join(' ');
+        },
+        tmSparkPoints: function (id) {
+            var arr;
+            if (id === 'network') {
+                var rx = this.taskmgr.history.rx || [];
+                var tx = this.taskmgr.history.tx || [];
+                var n = Math.max(rx.length, tx.length);
+                arr = [];
+                for (var i = 0; i < n; i++) {
+                    arr.push((rx[i] || 0) + (tx[i] || 0));
+                }
+            } else {
+                arr = this.taskmgr.history[this.tmHistoryKey(id)] || [];
+            }
+            if (!arr.length) {
+                return '';
+            }
+            var max = id === 'network' ? this.tmNetChartMax() : 100;
+            var y = function (v) {
+                return Math.round((24 - Math.min(max, Math.max(0, v)) / max * 20) * 100) / 100;
+            };
+            if (arr.length === 1) {
+                var flat = y(arr[0]);
+                return '0,' + flat + ' 100,' + flat;
+            }
+            var out = [];
+            for (var j = 0; j < arr.length; j++) {
+                out.push(this.tmChartX(j, arr.length) + ',' + y(arr[j]));
+            }
+            return out.join(' ');
+        },
+        tmNetChartMax: function () {
+            var max = 0;
+            ['rx', 'tx'].forEach(function (key) {
+                var arr = this.taskmgr.history[key] || [];
+                for (var i = 0; i < arr.length; i++) {
+                    max = Math.max(max, arr[i] || 0);
+                }
+            }, this);
+            return Math.max(1024, max * 1.15);
+        },
+        tmNetTotalBytes: function (field) {
+            var info = this.taskmgr.sysInfo;
+            if (!info || !info.net || !info.net.length) {
+                return '—';
+            }
+            var total = 0;
+            info.net.forEach(function (n) {
+                total += Number(n[field]) || 0;
+            });
+            return this.fmtSize(total);
+        },
+        toggleTaskmgrStartup: function (id) {
+            var on = !this.taskmgr.startup[id];
+            this.$set(this.taskmgr.startup, id, on);
+            try {
+                localStorage.setItem('deepshell.desktopStartup',
+                    JSON.stringify(this.taskmgr.startup));
+            } catch (e) { /* ignore */ }
+        },
+        applyDesktopStartupApps: function () {
+            var cfg = this.taskmgr.startup || {};
+            if (cfg.ai) {
+                this.openAiDesktopWindow();
+            }
+            if (cfg.transfers) {
+                this.openTransferDesktopWindow();
+            }
+            if (cfg.terminal) {
+                this.openDesktopTerminalWindow();
+            }
+            if (cfg.taskmgr) {
+                this.openTaskManager();
+            }
+        },
+        resetTaskmgrState: function () {
+            this.stopTaskmgrTimer();
+            var tm = this.taskmgr;
+            tm.winId = '';
+            tm.tab = 'processes';
+            tm.selected = '';
+            tm.search = '';
+            tm.runVisible = false;
+            tm.runText = '';
+            tm.bg = [];
+            tm.ctxMenu.visible = false;
+            tm.history = { cpu: [], mem: [], disk: [], rx: [], tx: [] };
+            tm.detail.rows = [];
+            tm.detail.loading = false;
+            tm.detail.error = '';
+            tm.detail.loadedAt = 0;
+            tm.detail.filter = '';
+            tm.detail.selectedPid = 0;
+            tm.detail.overlayVisible = false;
+            tm.detail.overlayRow = null;
+            tm.detail.overlayCmd = '';
+            tm.detail.overlayLoading = false;
+            tm.sysInfo = null;
+            tm.sysInfoLoading = false;
+            tm.sysInfoError = '';
+            tm.sysInfoAt = 0;
+            tm.appHistory = {};
         },
 
         /* ---------- 桌面目录 / 桌面图标 ---------- */
@@ -7086,6 +8450,26 @@ new Vue({
                 e.preventDefault();
                 return;
             }
+            if (e.key === 'Escape' && this.taskmgr.detail.overlayVisible) {
+                this.closeTaskmgrProcessDetail();
+                e.preventDefault();
+                return;
+            }
+            if (e.key === 'Escape' && this.taskmgr.runVisible) {
+                this.taskmgr.runVisible = false;
+                e.preventDefault();
+                return;
+            }
+            if (e.key === 'Escape' && this.taskmgr.ctxMenu.visible) {
+                this.taskmgr.ctxMenu.visible = false;
+                e.preventDefault();
+                return;
+            }
+            if (e.key === 'Escape' && this.desktop.taskbarMenu.visible) {
+                this.desktop.taskbarMenu.visible = false;
+                e.preventDefault();
+                return;
+            }
             if (this.desktop.settingsVisible) {
                 if (e.key === 'Escape') {
                     // 有子弹窗时交给 Element 自己关闭，避免连同设置面板一起关掉
@@ -7126,6 +8510,11 @@ new Vue({
                 return;
             }
             if (typing) {
+                return;
+            }
+            // 任务管理器激活时屏蔽桌面文件快捷键，避免误操作资源管理器
+            var focusedWin = this.desktopWindowById(this.desktop.activeWinId);
+            if (focusedWin && focusedWin.type === 'taskmgr') {
                 return;
             }
             // 桌面背景图标与资源管理器窗口各自维护选中项，按键跟随最近一次点击的上下文
@@ -7300,6 +8689,8 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.taskmgr.ctxMenu.visible = false;
             this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             var self = this;
@@ -7363,6 +8754,10 @@ new Vue({
             }
             this.desktop.startOpen = false;
             var self = this;
+            if (id === 'taskmgr') {
+                this.openTaskManager();
+                return;
+            }
             if (id === 'ai') {
                 this.openAiDesktopWindow();
                 return;
@@ -10814,6 +12209,15 @@ new Vue({
             if (self.desktop.calendarOpen) {
                 self.desktop.calendarOpen = false;
             }
+            if (self.desktop.taskbarMenu.visible) {
+                self.desktop.taskbarMenu.visible = false;
+            }
+            if (self.taskmgr.ctxMenu.visible) {
+                self.taskmgr.ctxMenu.visible = false;
+            }
+            if (self.taskmgr.runVisible) {
+                self.taskmgr.runVisible = false;
+            }
             self.closeDesktopSubMenus();
         });
         document.addEventListener('contextmenu', function (e) {
@@ -10824,6 +12228,14 @@ new Vue({
             if (self.folderMenu.visible
                 && !(e.target && e.target.closest && e.target.closest('.conn-row.is-folder'))) {
                 self.folderMenu.visible = false;
+            }
+            var inTaskbar = e.target && e.target.closest && e.target.closest('.dsk-taskbar');
+            if (self.desktop.taskbarMenu.visible && !inTaskbar) {
+                self.desktop.taskbarMenu.visible = false;
+            }
+            if (self.taskmgr.ctxMenu.visible
+                    && !(e.target && e.target.closest && e.target.closest('.dsk-tm-ctx'))) {
+                self.taskmgr.ctxMenu.visible = false;
             }
         });
         // 可视化桌面：鼠标侧键（后退/前进按钮）接管为目录导航，阻止浏览器页面历史跳转
@@ -10873,6 +12285,12 @@ new Vue({
             }
             if (self.desktop.calendarOpen) {
                 self.desktop.calendarOpen = false;
+            }
+            if (self.desktop.taskbarMenu.visible) {
+                self.desktop.taskbarMenu.visible = false;
+            }
+            if (self.taskmgr.ctxMenu.visible) {
+                self.taskmgr.ctxMenu.visible = false;
             }
             self.closeDesktopSubMenus();
         });

@@ -6,6 +6,7 @@
     <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
     <link rel="stylesheet" th:href="@{/vendor/xterm/xterm.css}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
+    <link rel="stylesheet" th:href="@{/css/taskmgr.css}">
 </head>
 <body class="ws-body">
 <div id="app" v-cloak class="ws-root">
@@ -492,9 +493,7 @@
                 <div class="dsk-titlebar" @mousedown="startDesktopWindowDrag($event, w)"
                      @dblclick="toggleDesktopWindowMax(w)">
                     <span class="dsk-titlebar-icon">
-                        <i :class="w.type === 'ai' ? 'el-icon-chat-dot-round'
-                                   : (w.type === 'transfer' ? 'el-icon-s-promotion'
-                                   : (w.type === 'terminal' ? 'el-icon-monitor' : 'el-icon-folder-opened'))"></i>
+                        <i :class="desktopWindowIcon(w)"></i>
                     </span>
                     <span class="dsk-titlebar-text">
                         <span class="dsk-titlebar-title">{{ desktopWindowTitle(w) }}</span>
@@ -539,6 +538,608 @@
                     <div class="dsk-ai-body">
                         <ai-chat-panel v-if="desktopTab" ref="aiChatWinPanel"
                                        :tab="desktopTab" context="window"></ai-chat-panel>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'taskmgr'">
+                    <div class="dsk-tm">
+                        <aside class="tm-side">
+                            <div class="tm-side-head">
+                                <span class="tm-side-logo"><i class="el-icon-cpu"></i></span>
+                                <span class="tm-side-title">任务管理器</span>
+                            </div>
+                            <button v-for="n in tmNavItems" :key="'tmnav' + n.id" type="button"
+                                    class="tm-nav-item" :class="{ active: taskmgr.tab === n.id }"
+                                    @click="switchTaskmgrTab(n.id)">
+                                <i :class="n.icon"></i>
+                                <span class="tm-nav-label">{{ n.label }}</span>
+                                <span class="tm-nav-count" v-if="n.id === 'processes'">{{ tmProcessCount }}</span>
+                            </button>
+                            <span class="spacer"></span>
+                            <div class="tm-side-conn" :title="tmHostTitle">
+                                <span class="tm-dot" :class="{ on: desktopTab && desktopTab.status === 'open' }"></span>
+                                <span class="tm-side-host">{{ tmHostTitle }}</span>
+                            </div>
+                            <div class="tm-side-note">DeepShell 桌面</div>
+                        </aside>
+
+                        <section class="tm-main">
+                            <!-- 进程 -->
+                            <template v-if="taskmgr.tab === 'processes'">
+                                <div class="tm-page tm-page-proc">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>进程</h2>
+                                            <div class="tm-page-sub">
+                                                {{ tmProcessCount }} 个进程 · CPU {{ tmCpuText }} · 内存 {{ tmMemText }}
+                                            </div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <div class="tm-run-wrap">
+                                            <button type="button" class="tm-btn"
+                                                    :class="{ active: taskmgr.runVisible }"
+                                                    @click.stop="toggleTaskmgrRun">
+                                                <i class="el-icon-plus"></i>运行新任务
+                                            </button>
+                                            <div class="tm-run-pop" v-if="taskmgr.runVisible" @click.stop @mousedown.stop>
+                                                <div class="tm-run-title">新建任务</div>
+                                                <el-input ref="tmRunInput" v-model="taskmgr.runText" size="mini"
+                                                          placeholder="如：资源管理器、终端、AI 终端"
+                                                          @keyup.enter.native="runTaskmgrCommand"></el-input>
+                                                <div class="tm-run-hint">
+                                                    支持：资源管理器 / 终端 / AI 终端 / 传输中心 / 任务管理器 / 设置
+                                                </div>
+                                                <div class="tm-run-actions">
+                                                    <button type="button" class="tm-btn"
+                                                            @click="taskmgr.runVisible = false">取消</button>
+                                                    <button type="button" class="tm-btn primary"
+                                                            @click="runTaskmgrCommand">确定</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <el-input v-model="taskmgr.search" size="mini" clearable
+                                                  prefix-icon="el-icon-search" class="tm-search"
+                                                  placeholder="搜索进程"></el-input>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-proc-viewport">
+                                        <div class="tm-proc-head tm-proc-grid">
+                                            <span class="tm-name-cell">名称</span>
+                                            <span>状态</span>
+                                            <span class="tm-th-sort" @click="sortTaskmgrProcesses('cpu')">
+                                                CPU<i :class="tmProcSortIcon('cpu')"></i>
+                                            </span>
+                                            <span class="tm-th-sort" @click="sortTaskmgrProcesses('mem')">
+                                                内存<i :class="tmProcSortIcon('mem')"></i>
+                                            </span>
+                                            <span class="tm-num">磁盘</span>
+                                            <span class="tm-num">网络</span>
+                                        </div>
+                                        <div class="tm-proc-scroll">
+                                            <div class="tm-group-row" @click="taskmgr.collapsedApps = !taskmgr.collapsedApps">
+                                                <i :class="taskmgr.collapsedApps ? 'el-icon-arrow-right' : 'el-icon-arrow-down'"></i>
+                                                <i class="el-icon-files tm-group-icon"></i>
+                                                <span>应用</span>
+                                                <span class="tm-group-count">{{ tmApps.length }}</span>
+                                            </div>
+                                            <template v-if="!taskmgr.collapsedApps">
+                                                <div v-for="win in tmApps" :key="'tmapp' + win.id"
+                                                     class="tm-proc-row tm-proc-grid"
+                                                     :class="{ selected: taskmgr.selected === ('win:' + win.id) }"
+                                                     @click="selectTaskmgrRow('win:' + win.id)"
+                                                     @dblclick="activateTaskmgrWindow(win)"
+                                                     @contextmenu.prevent.stop="openTaskmgrContextMenu($event, 'app', 'win:' + win.id)">
+                                                    <span class="tm-name-cell">
+                                                        <span class="tm-appico" :style="{ background: tmWindowColor(win) }">
+                                                            <i :class="tmWindowIcon(win)"></i>
+                                                        </span>
+                                                        <span class="tm-pname" :title="desktopWindowTitle(win)">{{ desktopWindowTitle(win) }}</span>
+                                                    </span>
+                                                    <span class="tm-state" :class="{ odd: win.min }">
+                                                        {{ win.min ? '已挂起' : '正在运行' }}
+                                                    </span>
+                                                    <span class="tm-num">{{ tmFmtPct(win.tmCpu) }}</span>
+                                                    <span class="tm-num">{{ fmtMb(win.tmMem) }}</span>
+                                                    <span class="tm-num">{{ tmFmtDisk(win.tmDisk) }}</span>
+                                                    <span class="tm-num">{{ tmFmtNet(win.tmNet) }}</span>
+                                                </div>
+                                                <div class="tm-empty small" v-if="!tmApps.length">
+                                                    {{ taskmgr.search ? '没有匹配的应用' : '没有正在运行的应用' }}
+                                                </div>
+                                            </template>
+
+                                            <div class="tm-group-row" @click="taskmgr.collapsedBg = !taskmgr.collapsedBg">
+                                                <i :class="taskmgr.collapsedBg ? 'el-icon-arrow-right' : 'el-icon-arrow-down'"></i>
+                                                <i class="el-icon-s-cooperation tm-group-icon"></i>
+                                                <span>后台进程</span>
+                                                <span class="tm-group-count">{{ tmBackground.length }}</span>
+                                            </div>
+                                            <template v-if="!taskmgr.collapsedBg">
+                                                <div v-for="p in tmBackground" :key="'tmbg' + p.pid"
+                                                     class="tm-proc-row tm-proc-grid"
+                                                     :class="{ selected: taskmgr.selected === ('bg:' + p.pid) }"
+                                                     @click="selectTaskmgrRow('bg:' + p.pid)"
+                                                     @contextmenu.prevent.stop="openTaskmgrContextMenu($event, 'bg', 'bg:' + p.pid)">
+                                                    <span class="tm-name-cell">
+                                                        <span class="tm-appico" :style="{ background: p.color }">
+                                                            <i :class="p.icon"></i>
+                                                        </span>
+                                                        <span class="tm-pname" :title="p.name">{{ p.name }}</span>
+                                                    </span>
+                                                    <span class="tm-state" :class="{ odd: p.status === '已停止' }">{{ p.status }}</span>
+                                                    <span class="tm-num">{{ tmFmtPct(p.cpu) }}</span>
+                                                    <span class="tm-num">{{ fmtMb(p.mem) }}</span>
+                                                    <span class="tm-num">{{ tmFmtDisk(p.disk) }}</span>
+                                                    <span class="tm-num">{{ tmFmtNet(p.net) }}</span>
+                                                </div>
+                                                <div class="tm-empty small" v-if="!tmBackground.length">
+                                                    {{ taskmgr.search ? '没有匹配的后台进程' : '暂无后台进程' }}
+                                                </div>
+                                            </template>
+                                        </div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-proc-foot">
+                                        <span class="tm-foot-hint" v-if="tmSelectedLabel">
+                                            已选择：{{ tmSelectedLabel }}
+                                        </span>
+                                        <span class="tm-foot-hint dim" v-else>双击应用可切换窗口 · 应用占用为估算值</span>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn danger" :disabled="!tmCanEndSelected"
+                                                @click="endTaskmgrSelected">
+                                            <i class="el-icon-close"></i>结束任务
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 性能 -->
+                            <template v-else-if="taskmgr.tab === 'performance'">
+                                <div class="tm-page tm-page-perf">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>性能</h2>
+                                            <div class="tm-page-sub">服务器 {{ tmHostName }} · 每 3 秒采样</div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <span class="tm-live" :class="{ off: !tmStatsReady }">
+                                            <i></i>{{ tmStatsReady ? '实时' : '等待数据' }}
+                                        </span>
+                                    </div>
+                                    <div class="tm-perf-cards">
+                                        <button v-for="p in tmPerfItems" :key="'tmperf' + p.id" type="button"
+                                                class="tm-perf-card" :class="{ active: taskmgr.perfItem === p.id }"
+                                                @click="taskmgr.perfItem = p.id">
+                                            <span class="tm-perf-card-head">
+                                                <i :class="p.icon"></i>{{ p.label }}
+                                            </span>
+                                            <b>{{ tmPerfValue(p.id) }}</b>
+                                            <svg class="tm-spark" viewBox="0 0 100 26" preserveAspectRatio="none">
+                                                <polyline :points="tmSparkPoints(p.id)"
+                                                          :class="'tm-spark-line perf-' + p.id"></polyline>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div class="tm-perf-panel">
+                                        <div class="tm-perf-head">
+                                            <div class="tm-perf-name">
+                                                <h3>{{ tmPerfTitle }}</h3>
+                                                <span>{{ tmPerfSubtitle }}</span>
+                                            </div>
+                                            <span class="spacer"></span>
+                                            <div class="tm-perf-now" v-if="taskmgr.perfItem === 'network'">
+                                                <span class="net-down">↓ {{ fmtRate(tmRxRate) }}</span>
+                                                <span class="net-up">↑ {{ fmtRate(tmTxRate) }}</span>
+                                            </div>
+                                            <div class="tm-perf-now" v-else>
+                                                <b>{{ tmPerfBigValue }}</b><small>{{ tmPerfUnit }}</small>
+                                            </div>
+                                        </div>
+                                        <div class="tm-chart">
+                                            <div class="tm-chart-grid"></div>
+                                            <svg class="tm-chart-svg" viewBox="0 0 100 40" preserveAspectRatio="none">
+                                                <polygon :points="tmChartAreaPoints"
+                                                         :class="'tm-area perf-' + taskmgr.perfItem"></polygon>
+                                                <template v-if="taskmgr.perfItem === 'network'">
+                                                    <polyline :points="tmChartPoints('rx')" class="tm-line net-rx"></polyline>
+                                                    <polyline :points="tmChartPoints('tx')" class="tm-line net-tx"></polyline>
+                                                </template>
+                                                <polyline v-else :points="tmChartPoints(taskmgr.perfItem)"
+                                                          :class="'tm-line perf-' + taskmgr.perfItem"></polyline>
+                                            </svg>
+                                            <div class="tm-chart-y"><span>{{ tmChartMaxLabel }}</span><span>0</span></div>
+                                            <div class="tm-chart-empty" v-if="!tmChartHasData">
+                                                <i :class="tmStatsError ? 'el-icon-warning-outline' : 'el-icon-loading'"></i>
+                                                <span>{{ tmChartEmptyText }}</span>
+                                            </div>
+                                            <div class="tm-chart-foot">
+                                                <span>最近 2 分钟</span>
+                                                <span v-if="taskmgr.perfItem === 'network'" class="tm-legend">
+                                                    <i class="rx"></i>接收<i class="tx"></i>发送
+                                                </span>
+                                                <span v-else>{{ tmSampleCaption }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="tm-sysinfo-tip" v-if="taskmgr.sysInfoLoading">
+                                            <i class="el-icon-loading"></i>正在读取服务器详细信息…
+                                        </div>
+                                        <div class="tm-sysinfo-tip error" v-else-if="taskmgr.sysInfoError">
+                                            <i class="el-icon-warning-outline"></i>{{ taskmgr.sysInfoError }}
+                                            <button type="button" class="tm-link" @click="loadTaskmgrSysInfo(true)">重试</button>
+                                        </div>
+                                        <div class="tm-kv-grid" v-if="taskmgr.perfItem === 'cpu'">
+                                            <div class="tm-kv"><span>利用率</span><b>{{ tmPerfValue('cpu') }}</b></div>
+                                            <div class="tm-kv"><span>进程数</span><b>{{ tmProcessCount }}</b></div>
+                                            <div class="tm-kv"><span>窗口数</span><b>{{ desktop.windows.length }}</b></div>
+                                            <div class="tm-kv"><span>服务器运行时长</span><b>{{ tmServerUptime }}</b></div>
+                                            <div class="tm-kv"><span>型号</span><b>{{ tmCpuModel }}</b></div>
+                                            <div class="tm-kv"><span>核心数</span><b>{{ tmCpuCores }}</b></div>
+                                            <div class="tm-kv"><span>主频</span><b>{{ tmCpuSpeed }}</b></div>
+                                            <div class="tm-kv"><span>负载（1 分钟）</span><b>{{ tmLoad1 }}</b></div>
+                                        </div>
+                                        <div class="tm-kv-grid" v-else-if="taskmgr.perfItem === 'memory'">
+                                            <div class="tm-kv"><span>使用中</span><b>{{ fmtMb(tmStats ? tmStats.memUsedMb : null) }}</b></div>
+                                            <div class="tm-kv"><span>可用</span><b>{{ tmMemAvailable }}</b></div>
+                                            <div class="tm-kv"><span>总计</span><b>{{ fmtMb(tmStats ? tmStats.memTotalMb : null) }}</b></div>
+                                            <div class="tm-kv"><span>使用率</span><b>{{ tmPerfValue('memory') }}</b></div>
+                                            <div class="tm-kv"><span>交换分区已用</span><b>{{ tmSwapUsed }}</b></div>
+                                            <div class="tm-kv"><span>交换分区总计</span><b>{{ tmSwapTotal }}</b></div>
+                                            <div class="tm-kv"><span>交换使用率</span><b>{{ tmSwapPct }}</b></div>
+                                            <div class="tm-kv"><span>监控主机</span><b>{{ tmHostName }}</b></div>
+                                        </div>
+                                        <div class="tm-kv-grid" v-else-if="taskmgr.perfItem === 'disk'">
+                                            <div class="tm-kv"><span>挂载点</span><b>{{ tmDiskInfo ? tmDiskInfo.mount : '—' }}</b></div>
+                                            <div class="tm-kv"><span>文件系统</span><b>{{ tmDiskInfo ? tmDiskInfo.fs : '—' }}</b></div>
+                                            <div class="tm-kv"><span>总容量</span><b>{{ tmDiskTotal }}</b></div>
+                                            <div class="tm-kv"><span>已用</span><b>{{ tmDiskUsed }}</b></div>
+                                            <div class="tm-kv"><span>可用</span><b>{{ tmDiskFree }}</b></div>
+                                            <div class="tm-kv"><span>使用率</span><b>{{ tmPerfValue('disk') }}</b></div>
+                                        </div>
+                                        <div class="tm-kv-grid" v-else>
+                                            <div class="tm-kv"><span>接收速率</span><b>{{ fmtRate(tmRxRate) }}</b></div>
+                                            <div class="tm-kv"><span>发送速率</span><b>{{ fmtRate(tmTxRate) }}</b></div>
+                                            <div class="tm-kv"><span>累计接收</span><b>{{ tmNetRxTotal }}</b></div>
+                                            <div class="tm-kv"><span>累计发送</span><b>{{ tmNetTxTotal }}</b></div>
+                                            <div class="tm-kv"><span>网卡</span><b>{{ tmNetAdapter }}</b></div>
+                                            <div class="tm-kv"><span>连接主机</span><b>{{ tmHostName }}</b></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 应用历史记录 -->
+                            <template v-else-if="taskmgr.tab === 'history'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>应用历史记录</h2>
+                                            <div class="tm-page-sub">本次桌面会话 · CPU 时间与网络为桌面应用估算值</div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn" @click="clearTaskmgrHistory">
+                                            <i class="el-icon-delete"></i>清除历史记录
+                                        </button>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name">名称</th>
+                                                    <th class="num">CPU 时间</th>
+                                                    <th class="num">网络</th>
+                                                    <th class="num">内存峰值</th>
+                                                    <th class="num">打开次数</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="h in tmHistoryRows" :key="'tmh' + h.type">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-appico" :style="{ background: h.color }">
+                                                                <i :class="h.icon"></i>
+                                                            </span>
+                                                            <span class="tm-pname">{{ h.label }}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td class="num">{{ tmFmtCpuTime(h.cpuSec) }}</td>
+                                                    <td class="num">{{ fmtSize(h.netBytes) }}</td>
+                                                    <td class="num">{{ fmtMb(h.memPeak) }}</td>
+                                                    <td class="num">{{ h.opens }} 次</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="tm-empty" v-if="!tmHistoryRows.length">
+                                                <i class="el-icon-time"></i>
+                                                <p>还没有应用使用记录</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 启动应用 -->
+                            <template v-else-if="taskmgr.tab === 'startup'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>启动应用</h2>
+                                            <div class="tm-page-sub">启用后，下次进入 AI 可视化桌面时自动打开</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-startup-list">
+                                        <div v-for="a in tmStartupApps" :key="'tmst' + a.id" class="tm-startup-row">
+                                            <span class="tm-appico big" :style="{ background: a.color }">
+                                                <i :class="a.icon"></i>
+                                            </span>
+                                            <div class="tm-startup-main">
+                                                <b>{{ a.label }}</b>
+                                                <span>{{ a.desc }}</span>
+                                            </div>
+                                            <div class="tm-startup-impact">
+                                                启动影响
+                                                <em :class="'impact-' + a.impactLevel">{{ a.impact }}</em>
+                                            </div>
+                                            <button type="button" class="tm-toggle"
+                                                    :class="{ on: !!(taskmgr.startup[a.id]) }"
+                                                    :title="taskmgr.startup[a.id] ? '禁用启动' : '启用启动'"
+                                                    @click="toggleTaskmgrStartup(a.id)">
+                                                <span></span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note">
+                                        启动应用不会影响当前已经打开的窗口；关闭并重新进入桌面后生效。
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 用户 -->
+                            <template v-else-if="taskmgr.tab === 'users'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>用户</h2>
+                                            <div class="tm-page-sub">当前浏览器中打开的 SSH 登录会话</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name">用户</th>
+                                                    <th>状态</th>
+                                                    <th>主机</th>
+                                                    <th>会话</th>
+                                                    <th class="num">CPU</th>
+                                                    <th class="num">内存</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="u in tmUserRows" :key="'tmu' + u.key">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-user-avatar"><i class="el-icon-user-solid"></i></span>
+                                                            <span class="tm-pname">{{ u.user }}</span>
+                                                            <span class="tm-badge" v-if="u.current">当前桌面</span>
+                                                        </span>
+                                                    </td>
+                                                    <td><span class="tm-state-dot" :class="{ on: u.online }"></span>{{ u.status }}</td>
+                                                    <td>{{ u.host }}</td>
+                                                    <td class="tm-desc" :title="u.session">{{ u.session }}</td>
+                                                    <td class="num">{{ u.cpu == null ? '--' : Math.round(u.cpu) + '%' }}</td>
+                                                    <td class="num">{{ u.memPct == null ? '--' : Math.round(u.memPct) + '%' }}</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="tm-empty" v-if="!tmUserRows.length">
+                                                <i class="el-icon-user"></i><p>没有可显示的登录会话</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note">
+                                        CPU 与内存来自对应 SSH 服务器的整机监控，同一服务器上的多个会话会显示相同的数值。
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 详细信息 -->
+                            <template v-else-if="taskmgr.tab === 'details'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>详细信息</h2>
+                                            <div class="tm-page-sub">
+                                                服务器进程 · {{ tmHostName }} · {{ tmDetailRows.length }} 项
+                                            </div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn" @click="loadTaskmgrDetails(true)">
+                                            <i class="el-icon-refresh" :class="{ 'tm-spin': taskmgr.detail.loading }"></i>刷新
+                                        </button>
+                                        <el-input v-model="taskmgr.detail.filter" size="mini" clearable
+                                                  prefix-icon="el-icon-search" class="tm-search"
+                                                  placeholder="搜索名称 / 用户 / PID"></el-input>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table tm-detail-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name" @click="sortTaskmgrDetails('comm')">
+                                                        名称<i :class="tmDetailSortIcon('comm')"></i>
+                                                    </th>
+                                                    <th @click="sortTaskmgrDetails('pid')">
+                                                        PID<i :class="tmDetailSortIcon('pid')"></i>
+                                                    </th>
+                                                    <th>状态</th>
+                                                    <th @click="sortTaskmgrDetails('user')">
+                                                        用户名<i :class="tmDetailSortIcon('user')"></i>
+                                                    </th>
+                                                    <th class="num" @click="sortTaskmgrDetails('cpu')">
+                                                        CPU<i :class="tmDetailSortIcon('cpu')"></i>
+                                                    </th>
+                                                    <th class="num" @click="sortTaskmgrDetails('mem')">
+                                                        内存<i :class="tmDetailSortIcon('mem')"></i>
+                                                    </th>
+                                                    <th>描述</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="row in tmDetailRows" :key="'tmdp' + row.pid"
+                                                    :class="{ selected: taskmgr.detail.selectedPid === row.pid }"
+                                                    @click="taskmgr.detail.selectedPid = row.pid"
+                                                    @dblclick="openTaskmgrProcessDetail(row)"
+                                                    @contextmenu.prevent.stop="openTaskmgrContextMenu($event, 'detail', 'pid:' + row.pid)">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-proc-ico" :class="{ zombie: row.state === 'Z' }">
+                                                                <i class="el-icon-cpu"></i>
+                                                            </span>
+                                                            <span class="tm-pname" :title="row.comm">{{ row.comm || '—' }}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td>{{ row.pid }}</td>
+                                                    <td>{{ statText(row.state) || '—' }}</td>
+                                                    <td>{{ row.user || '—' }}</td>
+                                                    <td class="num">{{ fmtProcCpu(row) }}</td>
+                                                    <td class="num">{{ fmtMb(row.rssMb) }}</td>
+                                                    <td class="tm-desc" :title="row.args">{{ row.args }}</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="tm-empty" v-if="!taskmgr.detail.rows.length && !taskmgr.detail.loading && !taskmgr.detail.error">
+                                                <i class="el-icon-s-data"></i>
+                                                <p>{{ taskmgr.detail.filter ? '没有匹配的进程' : '暂无服务器进程数据' }}</p>
+                                            </div>
+                                            <div class="tm-error" v-else-if="taskmgr.detail.error && !taskmgr.detail.rows.length">
+                                                <i class="el-icon-warning-outline"></i>
+                                                <p>{{ taskmgr.detail.error }}</p>
+                                                <button type="button" class="tm-btn" @click="loadTaskmgrDetails(true)">重试</button>
+                                            </div>
+                                            <div class="tm-loading" v-if="taskmgr.detail.loading && !taskmgr.detail.rows.length">
+                                                <i class="el-icon-loading"></i>正在读取服务器进程…
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-inline-error" v-if="taskmgr.detail.error && taskmgr.detail.rows.length">
+                                        <i class="el-icon-warning-outline"></i>
+                                        <span>{{ taskmgr.detail.error }}</span>
+                                        <button type="button" class="tm-link" @click="loadTaskmgrDetails(true)">重试</button>
+                                    </div>
+                                    <div class="tm-proc-foot">
+                                        <span class="tm-foot-hint dim">
+                                            数据来自服务器 ps / /proc；瞬时 CPU 由两次快照差分计算
+                                        </span>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn" :disabled="!tmDetailSelected"
+                                                @click="openTaskmgrProcessDetail(tmDetailSelected)">
+                                            <i class="el-icon-view"></i>命令行
+                                        </button>
+                                        <button type="button" class="tm-btn danger" :disabled="!tmDetailSelected"
+                                                @click="killTaskmgrProcess(false)">
+                                            <i class="el-icon-close"></i>结束任务
+                                        </button>
+                                        <button type="button" class="tm-btn danger" :disabled="!tmDetailSelected"
+                                                @click="killTaskmgrProcess(true)">
+                                            <i class="el-icon-warning-outline"></i>强制结束
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 服务 -->
+                            <template v-else-if="taskmgr.tab === 'services'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>服务</h2>
+                                            <div class="tm-page-sub">DeepShell 桌面内置服务 · 只读视图</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name">名称</th>
+                                                    <th>PID</th>
+                                                    <th>描述</th>
+                                                    <th>状态</th>
+                                                    <th>启动类型</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="s in tmServiceRows" :key="'tmsvc' + s.pid">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-proc-ico"><i :class="s.icon"></i></span>
+                                                            <span class="tm-pname">{{ s.name }}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td>{{ s.pid }}</td>
+                                                    <td class="tm-desc">{{ s.desc }}</td>
+                                                    <td>
+                                                        <span class="tm-state-dot" :class="{ on: s.running }"></span>{{ s.status }}
+                                                    </td>
+                                                    <td>{{ s.startType }}</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note">
+                                        当前任务管理器没有服务管理权限，仅展示运行状态；会话断开后相关服务会显示为已停止。
+                                    </div>
+                                </div>
+                            </template>
+                        </section>
+
+                        <!-- 进程详情浮层 -->
+                        <div class="tm-overlay" v-if="taskmgr.detail.overlayVisible"
+                             @click.self="closeTaskmgrProcessDetail">
+                            <div class="tm-overlay-card">
+                                <div class="tm-overlay-head">
+                                    <b>进程详情</b>
+                                    <span class="tm-overlay-pid" v-if="taskmgr.detail.overlayRow">
+                                        PID {{ taskmgr.detail.overlayRow.pid }}
+                                    </span>
+                                    <span class="spacer"></span>
+                                    <button type="button" class="tm-icon-btn" @click="closeTaskmgrProcessDetail">
+                                        <i class="el-icon-close"></i>
+                                    </button>
+                                </div>
+                                <div class="tm-overlay-body" v-if="taskmgr.detail.overlayRow">
+                                    <div class="tm-kv-grid">
+                                        <div class="tm-kv"><span>名称</span><b>{{ taskmgr.detail.overlayRow.comm || '—' }}</b></div>
+                                        <div class="tm-kv"><span>PID</span><b>{{ taskmgr.detail.overlayRow.pid }}</b></div>
+                                        <div class="tm-kv"><span>父进程 PID</span><b>{{ taskmgr.detail.overlayRow.ppid || '—' }}</b></div>
+                                        <div class="tm-kv"><span>用户名</span><b>{{ taskmgr.detail.overlayRow.user || '—' }}</b></div>
+                                        <div class="tm-kv"><span>状态</span><b>{{ statText(taskmgr.detail.overlayRow.state) || '—' }}</b></div>
+                                        <div class="tm-kv"><span>CPU</span><b>{{ fmtProcCpu(taskmgr.detail.overlayRow) }}</b></div>
+                                        <div class="tm-kv"><span>内存</span><b>{{ fmtMb(taskmgr.detail.overlayRow.rssMb) }}</b></div>
+                                        <div class="tm-kv"><span>运行时长</span><b>{{ fmtUptime(taskmgr.detail.overlayRow.elapsedSecs) }}</b></div>
+                                    </div>
+                                    <div class="tm-cmd-head">
+                                        <span>命令行</span>
+                                        <i v-if="taskmgr.detail.overlayLoading" class="el-icon-loading"></i>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn small" @click="copyTaskmgrCmd">
+                                            <i class="el-icon-document-copy"></i>复制
+                                        </button>
+                                    </div>
+                                    <pre class="tm-cmd">{{ taskmgr.detail.overlayCmd || '（无命令行信息）' }}</pre>
+                                </div>
+                                <div class="tm-overlay-foot">
+                                    <button type="button" class="tm-btn" @click="closeTaskmgrProcessDetail">关闭</button>
+                                    <button type="button" class="tm-btn danger"
+                                            :disabled="!taskmgr.detail.overlayRow"
+                                            @click="killTaskmgrProcess(false, taskmgr.detail.overlayRow)">
+                                        结束任务
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </template>
                 <template v-else>
@@ -792,7 +1393,7 @@
 
         <!-- Windows 风格任务栏 -->
         <div class="dsk-taskbar" @mousedown.capture="closeDesktopTaskMenu"
-             @contextmenu.prevent>
+             @contextmenu.prevent="onDesktopTaskbarContextMenu">
             <button class="dsk-start-btn" :class="{ active: desktop.startOpen }"
                     title="开始" @click.stop="toggleDesktopStart">
                 <span class="dsk-win-logo"><i></i><i></i><i></i><i></i></span>
@@ -839,7 +1440,7 @@
                         :title="desktopWindowSubtitle(w)"
                         @click.stop="toggleDesktopTaskbarWindow(w)"
                         @contextmenu.prevent.stop="onDesktopTaskContextMenu($event, w)">
-                    <i :class="w.type === 'terminal' ? 'el-icon-monitor' : 'el-icon-folder-opened'"></i>
+                    <i :class="desktopWindowIcon(w)"></i>
                     <span class="dsk-task-label">{{ desktopWindowTitle(w) }}</span>
                 </button>
             </div>
@@ -1604,22 +2205,75 @@
                 {{ desktopWindowTitle(desktopTaskMenuWin) }}
                 <span class="dsk-task-menu-host">{{ desktopTab ? desktopTab.host : '' }}</span>
             </div>
-            <div class="dsk-menu-title">常用目录</div>
-            <div v-if="!desktopCommonDirs.length" class="dsk-menu-empty">
-                暂无常用目录，可用地址栏左侧星标收藏
-            </div>
-            <div v-for="d in desktopCommonDirs" :key="'tm' + d.id" class="dsk-menu-item"
-                 :title="d.path" @click="desktopTaskOpenCommon(d.path)">
-                <i class="el-icon-star-on"></i>
-                <span class="dsk-task-menu-path">{{ d.path }}</span>
+            <template v-if="desktopTaskMenuWin && desktopTaskMenuWin.type === 'explorer'">
+                <div class="dsk-menu-title">常用目录</div>
+                <div v-if="!desktopCommonDirs.length" class="dsk-menu-empty">
+                    暂无常用目录，可用地址栏左侧星标收藏
+                </div>
+                <div v-for="d in desktopCommonDirs" :key="'tm' + d.id" class="dsk-menu-item"
+                     :title="d.path" @click="desktopTaskOpenCommon(d.path)">
+                    <i class="el-icon-star-on"></i>
+                    <span class="dsk-task-menu-path">{{ d.path }}</span>
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="desktopTaskNewWindow">
+                    <i class="el-icon-folder-add"></i>新建资源管理器窗口
+                </div>
+            </template>
+            <div class="dsk-menu-item" v-else @click="desktopTaskSwitchWindow">
+                <i class="el-icon-full-screen"></i>切换至窗口
             </div>
             <div class="dsk-menu-sep"></div>
-            <div class="dsk-menu-item" @click="desktopTaskNewWindow">
-                <i class="el-icon-folder-add"></i>新建资源管理器窗口
-            </div>
             <div class="dsk-menu-item danger" @click="desktopTaskCloseWindow">
                 <i class="el-icon-close"></i>关闭
             </div>
+        </div>
+
+        <!-- 任务栏空白处右键菜单 -->
+        <div class="dsk-menu dsk-taskbar-menu" ref="deskTaskbarMenu" v-if="desktop.taskbarMenu.visible"
+             :style="{ left: desktop.taskbarMenu.x + 'px', top: desktop.taskbarMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-item" @click="desktopTaskbarMenuAction('taskmgr')">
+                <i class="el-icon-cpu"></i>打开任务管理器
+            </div>
+            <div class="dsk-menu-item" @click="desktopTaskbarMenuAction('showDesktop')">
+                <i class="el-icon-s-fold"></i>显示桌面
+            </div>
+        </div>
+
+        <!-- 任务管理器进程右键菜单 -->
+        <div class="dsk-menu dsk-tm-ctx" ref="tmCtxMenu" v-if="taskmgr.ctxMenu.visible"
+             :style="{ left: taskmgr.ctxMenu.x + 'px', top: taskmgr.ctxMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">{{ taskmgr.ctxMenu.title }}</div>
+            <template v-if="taskmgr.ctxMenu.kind === 'detail'">
+                <div class="dsk-menu-item" @click="tmCtxAction('viewDetail')">
+                    <i class="el-icon-view"></i>查看命令行
+                </div>
+                <div class="dsk-menu-item" @click="tmCtxAction('copyCmd')">
+                    <i class="el-icon-document-copy"></i>复制命令行
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="tmCtxAction('end')">
+                    <i class="el-icon-close"></i>结束任务
+                </div>
+                <div class="dsk-menu-item danger" @click="tmCtxAction('kill')">
+                    <i class="el-icon-warning-outline"></i>强制结束
+                </div>
+            </template>
+            <template v-else-if="taskmgr.ctxMenu.kind === 'app'">
+                <div class="dsk-menu-item" @click="tmCtxAction('switch')">
+                    <i class="el-icon-full-screen"></i>切换至
+                </div>
+                <div class="dsk-menu-item danger" @click="tmCtxAction('endApp')">
+                    <i class="el-icon-close"></i>结束任务
+                </div>
+            </template>
+            <template v-else>
+                <div class="dsk-menu-item disabled">
+                    <i class="el-icon-lock"></i>结束任务（系统保护）
+                </div>
+            </template>
         </div>
     </div>
 
