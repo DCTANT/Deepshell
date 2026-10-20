@@ -66,7 +66,8 @@ public class AiController {
 
     @PostMapping("/config")
     public R<Map<String, Object>> saveConfig(@RequestBody AiConfigForm form) {
-        config.save(form.getProvider(), form.getBaseUrl(), form.getApiKey(), form.getModel());
+        config.save(form.getProvider(), form.getBaseUrl(), form.getApiKey(), form.getModel(),
+                form.getMaxSteps());
         return R.ok(current());
     }
 
@@ -102,6 +103,7 @@ public class AiController {
     /** AI 终端：一轮对话（调用模型，必要时直接执行命令） */
     @PostMapping("/agent/step")
     public R<AiAgentService.AgentResult> agentStep(@RequestBody AgentStepForm form) {
+        checkStepBudget(form);
         return R.ok(agentService.step(form.getSessionId(), form.getCwd(), form.isAuto(), form.getMessages()));
     }
 
@@ -151,6 +153,7 @@ public class AiController {
 
         Thread worker = new Thread(() -> {
             try {
+                checkStepBudget(form);
                 AiAgentService.AgentResult r = agentService.stepStream(
                         form.getSessionId(), form.getCwd(), form.isAuto(), form.getMessages(),
                         new Consumer<String>() {
@@ -161,6 +164,18 @@ public class AiController {
                                 }
                                 Map<String, Object> ev = new LinkedHashMap<>();
                                 ev.put("type", "delta");
+                                ev.put("text", text);
+                                sendEvent(emitter, ev, token);
+                            }
+                        },
+                        new Consumer<String>() {
+                            @Override
+                            public void accept(String text) {
+                                if (token.isCancelled()) {
+                                    throw new AiCancellationToken.CancelledException();
+                                }
+                                Map<String, Object> ev = new LinkedHashMap<>();
+                                ev.put("type", "reasoning");
                                 ev.put("text", text);
                                 sendEvent(emitter, ev, token);
                             }
@@ -259,6 +274,18 @@ public class AiController {
         return R.ok();
     }
 
+    /** 单轮步数上限由设置在服务端兜底校验（前端也会在达到上限时暂停） */
+    private void checkStepBudget(AgentStepForm form) {
+        Integer step = form.getStep();
+        if (step == null || step < 1) {
+            return;
+        }
+        int max = config.maxSteps();
+        if (step > max) {
+            throw new IllegalArgumentException("已达单轮 " + max + " 步上限，如任务未完成请继续发消息说明");
+        }
+    }
+
     private static void sendEvent(SseEmitter emitter, Map<String, Object> event,
                                   AiCancellationToken token) {
         if (token.isCancelled()) {
@@ -294,6 +321,7 @@ public class AiController {
         m.put("baseUrl", config.baseUrl());
         m.put("model", config.model());
         m.put("hasKey", !config.apiKey().isEmpty());
+        m.put("maxSteps", config.maxSteps());
         return m;
     }
 
@@ -303,6 +331,7 @@ public class AiController {
         private String baseUrl;
         private String apiKey;
         private String model;
+        private Integer maxSteps;
     }
 
     @Data
@@ -324,6 +353,8 @@ public class AiController {
         private String cwd;
         private boolean auto;
         private String runId;
+        /** 本轮第几步（1 起），用于服务端校验单轮上限；旧前端不传时不做限制 */
+        private Integer step;
         private List<AiAgentService.AgentMessage> messages;
     }
 

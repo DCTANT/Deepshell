@@ -377,6 +377,39 @@ public class SftpService {
         });
     }
 
+    /**
+     * 按字节区间读取远程文件（视频预览 Range 请求用）。
+     * 单独开一个 SFTP 通道，避免长时间播放占用文件面板的共享通道。
+     */
+    public void streamRange(String sessionId, String path, long offset, long length,
+                            OutputStream out) throws Exception {
+        SshSessionManager.SshSession s = sessions.get(sessionId);
+        ChannelSftp channel = (ChannelSftp) s.getJsch().openChannel("sftp");
+        try {
+            channel.connect(8000);
+            channel.setFilenameEncoding("UTF-8");
+            try (InputStream in = channel.get(path, null, Math.max(0, offset))) {
+                byte[] buf = new byte[64 * 1024];
+                long remaining = length;
+                while (remaining > 0) {
+                    int n = in.read(buf, 0, (int) Math.min(buf.length, remaining));
+                    if (n == -1) {
+                        break;
+                    }
+                    out.write(buf, 0, n);
+                    remaining -= n;
+                }
+                out.flush();
+            }
+        } finally {
+            try {
+                channel.disconnect();
+            } catch (Exception ignore) {
+                // 浏览器取消播放时连接可能已断开
+            }
+        }
+    }
+
     /** 文件大小（下载进度跟踪用） */
     public long fileSize(String sessionId, String path) throws Exception {
         return withSftp(sessionId, c -> c.stat(path).getSize());

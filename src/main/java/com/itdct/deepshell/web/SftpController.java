@@ -15,6 +15,7 @@ import com.itdct.deepshell.service.VscodeEditService;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -321,6 +322,159 @@ public class SftpController {
         resp.setHeader("Cache-Control", "private, max-age=300");
         resp.setHeader("X-Content-Type-Options", "nosniff");
         sftp.download(sessionId, path, resp.getOutputStream());
+    }
+
+    /**
+     * 视频预览：支持 HTTP Range，浏览器可以边下边播，并在拖动进度条时按需读取。
+     * 未带 Range 时返回完整文件；带 Range 时返回 206 + Content-Range。
+     */
+    @GetMapping("/video")
+    public void video(@RequestParam("sessionId") String sessionId,
+                      @RequestParam("path") String path,
+                      HttpServletRequest req,
+                      HttpServletResponse resp) throws Exception {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        String contentType = videoContentType(name);
+        if (contentType == null) {
+            throw new IllegalArgumentException("该文件类型不支持视频预览");
+        }
+        long size = sftp.fileSize(sessionId, path);
+        resp.setContentType(contentType);
+        resp.setHeader("Accept-Ranges", "bytes");
+        resp.setHeader("Content-Disposition", contentDisposition("inline", name));
+        resp.setHeader("Cache-Control", "private, max-age=300");
+        resp.setHeader("X-Content-Type-Options", "nosniff");
+
+        long start = 0;
+        long end = size > 0 ? size - 1 : 0;
+        boolean partial = false;
+        String rangeHeader = req.getHeader("Range");
+        if (rangeHeader != null && !rangeHeader.trim().isEmpty()) {
+            long[] span = parseRange(rangeHeader, size);
+            if (span == null) {
+                resp.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
+                resp.setHeader("Content-Range", "bytes */" + size);
+                resp.setContentLengthLong(0);
+                return;
+            }
+            start = span[0];
+            end = span[1];
+            partial = true;
+        }
+
+        long length = size == 0 ? 0 : end - start + 1;
+        if (partial) {
+            resp.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+            resp.setHeader("Content-Range", "bytes " + start + "-" + end + "/" + size);
+        }
+        resp.setContentLengthLong(length);
+        if (length <= 0 || "HEAD".equalsIgnoreCase(req.getMethod())) {
+            return;
+        }
+        try {
+            sftp.streamRange(sessionId, path, start, length, resp.getOutputStream());
+        } catch (IOException clientGone) {
+            // 浏览器取消播放 / 快速拖动进度条时会主动断开连接
+        }
+    }
+
+    /**
+     * 解析单段 Range：bytes=start-end、bytes=start-、bytes=-suffix。
+     * 不支持多段 Range；返回 null 表示范围非法（应回 416）。
+     */
+    static long[] parseRange(String header, long size) {
+        if (header == null || size <= 0) {
+            return null;
+        }
+        String value = header.trim();
+        if (!value.regionMatches(true, 0, "bytes=", 0, 6)) {
+            return null;
+        }
+        String spec = value.substring(6).trim();
+        if (spec.isEmpty() || spec.indexOf(',') >= 0) {
+            return null;
+        }
+        int dash = spec.indexOf('-');
+        if (dash < 0) {
+            return null;
+        }
+        String startText = spec.substring(0, dash).trim();
+        String endText = spec.substring(dash + 1).trim();
+        try {
+            if (startText.isEmpty()) {
+                long suffix = Long.parseLong(endText);
+                if (suffix <= 0) {
+                    return null;
+                }
+                if (suffix > size) {
+                    suffix = size;
+                }
+                return new long[]{size - suffix, size - 1};
+            }
+            long start = Long.parseLong(startText);
+            if (start < 0 || start >= size) {
+                return null;
+            }
+            long end;
+            if (endText.isEmpty()) {
+                end = size - 1;
+            } else {
+                end = Long.parseLong(endText);
+                if (end < start) {
+                    return null;
+                }
+                if (end >= size) {
+                    end = size - 1;
+                }
+            }
+            return new long[]{start, end};
+        } catch (NumberFormatException badNumber) {
+            return null;
+        }
+    }
+
+    static String videoContentType(String name) {
+        int idx = name.lastIndexOf('.');
+        if (idx < 0 || idx == name.length() - 1) {
+            return null;
+        }
+        String ext = name.substring(idx + 1).toLowerCase(java.util.Locale.ROOT);
+        switch (ext) {
+            case "mp4":
+            case "m4v":
+            case "f4v":
+                return "video/mp4";
+            case "webm":
+                return "video/webm";
+            case "ogv":
+            case "ogg":
+                return "video/ogg";
+            case "mov":
+                return "video/quicktime";
+            case "mkv":
+                return "video/x-matroska";
+            case "avi":
+                return "video/x-msvideo";
+            case "wmv":
+            case "asf":
+                return "video/x-ms-wmv";
+            case "flv":
+                return "video/x-flv";
+            case "ts":
+            case "m2ts":
+            case "mts":
+                return "video/mp2t";
+            case "mpg":
+            case "mpeg":
+                return "video/mpeg";
+            case "3gp":
+                return "video/3gpp";
+            case "rm":
+            case "rmvb":
+                return "application/vnd.rn-realmedia-vbr";
+            default:
+                return null;
+        }
     }
 
     /**

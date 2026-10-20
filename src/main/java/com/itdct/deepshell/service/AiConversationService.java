@@ -22,8 +22,12 @@ import java.util.stream.Collectors;
 public class AiConversationService {
 
     public static final int MAX_CONVS_PER_CONN = 15;
-    public static final int MAX_MSGS = 40;
-    public static final int MAX_CHARS = 3000;
+    /** 单轮 30 步约产生 60 条消息，保留多轮长任务的完整现场 */
+    public static final int MAX_MSGS = 160;
+    public static final int MAX_CHARS = 4000;
+    /** 命令输出与思考过程单独放宽，避免长输出在刷新后只剩开头 */
+    public static final int MAX_OUTPUT_CHARS = 10000;
+    public static final int MAX_REASONING_CHARS = 12000;
     public static final int MAX_TITLE = 60;
 
     private final AiConversationRepository repo;
@@ -183,13 +187,24 @@ public class AiConversationService {
             copy.fieldNames().forEachRemaining(names::add);
             for (String name : names) {
                 JsonNode v = copy.get(name);
-                if (v.isTextual() && v.asText().length() > MAX_CHARS) {
-                    copy.put(name, v.asText().substring(0, MAX_CHARS) + "…（已截断）");
+                int limit = fieldLimit(name);
+                if (v.isTextual() && v.asText().length() > limit) {
+                    copy.put(name, v.asText().substring(0, limit) + "…（已截断）");
                 }
             }
             out.add(copy);
         }
         return out;
+    }
+
+    private static int fieldLimit(String name) {
+        if ("output".equals(name)) {
+            return MAX_OUTPUT_CHARS;
+        }
+        if ("reasoning".equals(name)) {
+            return MAX_REASONING_CHARS;
+        }
+        return MAX_CHARS;
     }
 
     private static String clip(String s, int max) {

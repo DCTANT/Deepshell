@@ -1802,7 +1802,7 @@
                             </div>
                             <div class="dsk-set-note">
                                 固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜
-                                新标签图片预览中 ← → 切换、R 旋转、Esc 关闭标签页
+                                新标签图片预览 ← → 切换、R 旋转；视频预览 空格播放 / 暂停、← → 快进 / 快退；Esc 关闭标签页
                             </div>
                         </template>
 
@@ -1876,7 +1876,11 @@
                                     </span>
                                 </div>
                                 <div class="dsk-set-row">
-                                    <div class="dsk-set-info"><b>AI 设置</b><span>更换厂商、接口地址、模型或 API Key</span></div>
+                                    <div class="dsk-set-info"><b>单轮步数上限</b><span>AI 终端一次任务最多连续执行的步数</span></div>
+                                    <span class="dsk-set-value">{{ aiMaxSteps }} 步</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>AI 设置</b><span>更换厂商、接口地址、模型、步数上限或 API Key</span></div>
                                     <el-button size="mini" type="primary" @click="onMenuCommand('ai')">
                                         打开 AI 设置
                                     </el-button>
@@ -1984,16 +1988,19 @@
                      @click="desktopMenuAction('terminal')">
                     <i class="el-icon-position"></i>在终端中打开
                 </div>
-                <div class="dsk-menu-item" v-if="!desktopMenuMulti && isDesktopImage(desktop.menu.target)"
+                <div class="dsk-menu-item"
+                     v-if="!desktopMenuMulti && (isDesktopImage(desktop.menu.target) || isDesktopVideo(desktop.menu.target))"
                      @click="desktopMenuAction('preview')">
-                    <i class="el-icon-picture-outline"></i>预览
+                    <i :class="isDesktopVideo(desktop.menu.target) ? 'el-icon-video-play' : 'el-icon-picture-outline'"></i>
+                    {{ isDesktopVideo(desktop.menu.target) ? '播放视频' : '预览' }}
                 </div>
                 <div class="dsk-menu-item"
-                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopImage(desktop.menu.target)"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopImage(desktop.menu.target) && !isDesktopVideo(desktop.menu.target)"
                      @click="desktopMenuAction('edit')">
                     <i class="el-icon-edit-outline"></i>在线编辑
                 </div>
-                <div class="dsk-menu-item" v-if="!desktopMenuMulti && !desktop.menu.target.dir"
+                <div class="dsk-menu-item"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopVideo(desktop.menu.target)"
                      @click="desktopMenuAction('vscode')">
                     <i class="el-icon-edit"></i>用 VSCode 编辑
                 </div>
@@ -2176,7 +2183,13 @@
                     <i class="el-icon-folder-add"></i>新建资源管理器窗口
                 </div>
             </template>
-            <div class="dsk-menu-item" v-else @click="desktopTaskSwitchWindow">
+            <template v-else-if="desktopTaskMenuWin && desktopTaskMenuWin.type === 'terminal'">
+                <div class="dsk-menu-item" @click="desktopTaskNewTerminalWindow">
+                    <i class="el-icon-monitor"></i>新建终端窗口
+                </div>
+            </template>
+            <div class="dsk-menu-item" v-if="desktopTaskMenuWin && desktopTaskMenuWin.type !== 'explorer'"
+                 @click="desktopTaskSwitchWindow">
                 <i class="el-icon-full-screen"></i>切换至窗口
             </div>
             <div class="dsk-menu-sep"></div>
@@ -2478,6 +2491,12 @@
             <el-button size="small" icon="el-icon-refresh" :loading="aiModelsLoading" style="margin-left:8px"
                        @click="fetchAiModels()">刷新列表</el-button>
         </div>
+        <div class="set-row">
+            <span class="set-label">单轮步数</span>
+            <el-input-number v-model="aiSetForm.maxSteps" size="small" :min="1" :max="100"
+                             :step="5" controls-position="right" style="width:140px"></el-input-number>
+            <span class="set-hint" style="margin-left:10px;flex:1">一次任务最多连续执行的步数，默认 30（1-100）</span>
+        </div>
         <div class="set-hint" style="line-height:1.9;min-height:19px">
             <span v-if="aiModelsLoading">正在从厂商接口实时获取模型列表…</span>
             <span v-else-if="aiModelsNote">{{ aiModelsNote }}</span>
@@ -2485,7 +2504,8 @@
         <div class="set-hint" style="margin-top:6px;line-height:1.9">
             · 模型列表由厂商接口实时获取（点「刷新列表」随时更新），列表中没有的模型可直接输入<br>
             · <template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">API Key 获取：{{ aiCurrentPreset.keyUrl }}<br></template>
-            · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口
+            · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口<br>
+            · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度
         </div>
         <div slot="footer">
             <el-button size="small" @click="aiSetVisible = false">取消</el-button>
@@ -2900,11 +2920,14 @@
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-chat-dot-round"></i>AI 终端（右侧面板）</div>
                 <ul>
-                    <li>用自然语言描述需求，AI 会以当前会话的<b>登录用户身份</b>在服务器上自动执行命令、读取输出并逐步推进，直到任务完成；命令与输出以卡片形式展示（含退出码，可复制）</li>
+                    <li>用自然语言描述需求，AI 会以当前会话的<b>登录用户身份</b>在服务器上自动执行命令、读取输出并逐步推进，直到任务完成；命令与输出以卡片形式展示（含退出码、耗时，可复制命令 / 输出）</li>
+                    <li><b>输入</b>：Enter 发送、Shift+Enter 换行；<b>↑↓</b> 调出历史输入；输入 <b>/</b> 打开快捷命令（/new、/clear、/auto、/manual、/desktop、/stop、/help）；AI 执行中按 Enter 会把新要求<b>排队</b>，本轮结束后自动发送；中文输入法回车不会误触发送</li>
+                    <li><b>输出</b>：回复支持 Markdown（列表 / 加粗 / 行内代码 / 代码块）；模型返回思考过程时显示可折叠的「思考过程」；长命令输出可展开全部或复制；请求失败可一键重试，达到单轮步数上限可一键继续</li>
+                    <li><b>单轮步数</b>：默认 30 步，可在右上角菜单「AI 设置」中调整为 1-100；达到上限会暂停并给出「继续执行」按钮，不会无限执行消耗额度</li>
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张，关闭标签页即回到原目录</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏可快速打开 AI 终端、终端、传输中心与磁盘分析窗口，右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
                     <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后可等自动重连或手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
                     <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
@@ -3179,7 +3202,7 @@
                                 </div>
                             </div>
                             <div class="aichat-main">
-                                <div class="aichat-list" ref="list">
+                                <div class="aichat-list" ref="list" @scroll="onListScroll">
                                     <div v-if="tab.chatLoading" class="aichat-empty">
                                         <i class="el-icon-loading"></i>
                                         <p>正在加载对话记录…</p>
@@ -3191,14 +3214,36 @@
                                             直接在服务器上执行命令完成它</p>
                                         <div class="aichat-egs">
                                             <span v-for="eg in examples" :key="eg" class="aichat-eg"
-                                                  @click="tab.chatInput = eg">{{ eg }}</span>
+                                                  @click="useExample(eg)">{{ eg }}</span>
                                         </div>
                                         <p class="aichat-hint">自动执行模式下，删除 / 格式化 / 重启等高风险命令会先暂停，
-                                            等你点击确认后才执行</p>
+                                            等你点击确认后才执行；输入 <b>/</b> 可打开快捷命令</p>
                                     </div>
                                     <div v-for="(m, i) in tab.chatMsgs" :key="i" class="aichat-msg"
                                          :class="m.role">
-                                        <div v-if="m.text" class="aichat-bubble">{{ m.text }}</div>
+                                        <div v-if="m.role === 'ai' && m.reasoning" class="aichat-think">
+                                            <div class="aichat-think-head" @click="toggleReason(m)">
+                                                <i :class="m.reasonOpen ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
+                                                <i class="el-icon-cpu"></i>
+                                                <span>思考过程</span>
+                                                <span class="aichat-think-hint">{{ m.reasonOpen ? '收起' : '展开' }}</span>
+                                            </div>
+                                            <pre v-if="m.reasonOpen" class="aichat-think-body">{{ m.reasoning }}</pre>
+                                        </div>
+                                        <div v-if="m.text && m.role === 'ai'" class="aichat-bubble aichat-md"
+                                             v-html="renderMd(m.text)"></div>
+                                        <div v-else-if="m.text" class="aichat-bubble">{{ m.text }}</div>
+                                        <div v-if="m.role === 'ai' && m.text" class="aichat-actions">
+                                            <span @click="copy(m.text)" title="复制这条回复">
+                                                <i class="el-icon-document-copy"></i> 复制
+                                            </span>
+                                        </div>
+                                        <div v-if="m.role === 'note' && m.action" class="aichat-note-actions">
+                                            <el-button v-if="m.action === 'continue'" size="mini" type="primary"
+                                                       @click="continueRun(m)">继续执行</el-button>
+                                            <el-button v-else-if="m.action === 'retry'" size="mini"
+                                                       @click="retryRun(m)">重试</el-button>
+                                        </div>
                                         <div v-if="m.cmd" class="aicard">
                                             <div class="aicard-head">
                                                 <i class="el-icon-caret-right aicard-ico"></i>
@@ -3210,6 +3255,7 @@
                                                 <span v-else-if="m.state === 'confirm'" class="aicard-rc warn">待确认</span>
                                                 <span v-else-if="m.state === 'skipped'" class="aicard-rc dim">已跳过</span>
                                                 <span v-else-if="m.error" class="aicard-rc bad">失败</span>
+                                                <span v-if="m.durationMs" class="aicard-dur">{{ fmtDuration(m.durationMs) }}</span>
                                                 <i class="el-icon-document-copy aicard-copy" title="复制命令"
                                                    @click="copy(m.cmd)"></i>
                                             </div>
@@ -3222,31 +3268,83 @@
                                                 <el-button size="mini"
                                                            @click="confirm(m, false)">跳过</el-button>
                                             </div>
-                                            <pre v-if="m.output" class="aicard-out">{{ m.output }}</pre>
+                                            <pre v-if="m.output" class="aicard-out"
+                                                 :class="{ expanded: m.outOpen }">{{ m.output }}</pre>
+                                            <div v-if="m.output && m.outputLines > 12" class="aicard-out-more"
+                                                 @click="toggleOut(m)">
+                                                <i :class="m.outOpen ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"></i>
+                                                {{ m.outOpen ? '收起输出' : '展开全部（共 ' + m.outputLines + ' 行）' }}
+                                            </div>
                                             <div v-if="m.state === 'done'" class="aicard-meta">
                                                 <span v-if="m.error" class="aicard-warn">{{ m.error }}</span>
                                                 <span v-else-if="m.timedOut" class="aicard-warn">命令超时未结束（可能仍在后台运行）</span>
                                                 <span v-else-if="m.truncated" class="aicard-warn">输出过长，已截断</span>
                                                 <span v-else-if="!m.output" class="dim">（无输出）</span>
+                                                <span v-else class="dim">{{ m.outputLines }} 行输出</span>
+                                                <span class="spacer"></span>
+                                                <span v-if="m.output" class="aicard-act" @click="copyOutput(m)">
+                                                    <i class="el-icon-document-copy"></i> 复制输出
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
-                                    <div v-if="activeRun && activeRun.streamText"
+                                    <div v-if="activeRun && (activeRun.reasonText || activeRun.streamText)"
                                          class="aichat-msg ai aichat-streaming">
-                                        <div class="aichat-bubble">{{ activeRun.streamText }}<i
-                                                class="aichat-cursor"></i></div>
+                                        <div v-if="activeRun.reasonText" class="aichat-think live">
+                                            <div class="aichat-think-head">
+                                                <i class="el-icon-loading"></i>
+                                                <i class="el-icon-cpu"></i>
+                                                <span>思考过程</span>
+                                                <span class="aichat-think-hint">实时</span>
+                                            </div>
+                                            <pre class="aichat-think-body">{{ activeRun.reasonText }}</pre>
+                                        </div>
+                                        <div v-if="activeRun.streamText" class="aichat-bubble aichat-md"
+                                             v-html="renderMd(activeRun.streamText)"></div>
                                     </div>
                                 </div>
-                                <div class="aichat-input">
-                                    <el-input type="textarea" size="mini" v-model="tab.chatInput" :rows="2"
-                                              :placeholder="activeBusy
-                                                  ? 'AI 正在处理…'
-                                                  : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行）'"
-                                              @keydown.native="keydown"></el-input>
-                                    <el-button v-if="!activeBusy" size="mini" type="primary"
-                                               class="aichat-send" @click="send">发送</el-button>
-                                    <el-button v-else size="mini" type="danger" class="aichat-send"
-                                               @click="stop">停止</el-button>
+                                <div v-if="!stick" class="aichat-jump" @click="jumpToBottom">
+                                    <i class="el-icon-bottom"></i> 回到底部
+                                </div>
+                                <div class="aichat-composer">
+                                    <div v-if="queuedText" class="aichat-queue"
+                                         :title="activeBusy ? '本轮结束后自动发送' : '本轮已结束，点击放入输入框'">
+                                        <i class="el-icon-time"></i>
+                                        <span class="aichat-queue-text" @click="restoreQueue">{{ activeBusy ? '已排队：' : '未发送：' }}{{ queuedText }}</span>
+                                        <i class="el-icon-close aichat-queue-x" title="取消" @click="cancelQueue"></i>
+                                    </div>
+                                    <div v-if="slashItems.length" class="aichat-slash">
+                                        <div v-for="(c, i) in slashItems" :key="c.id"
+                                             class="aichat-slash-item" :class="{ active: i === slashIndex }"
+                                             @mousedown.prevent="chooseSlash(c)"
+                                             @mouseenter="slashIndex = i">
+                                            <span class="aichat-slash-label">{{ c.label }}</span>
+                                            <span class="aichat-slash-desc">{{ c.desc }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="aichat-input">
+                                        <el-input ref="chatInput" type="textarea" size="mini" v-model="tab.chatInput"
+                                                  :autosize="{ minRows: 2, maxRows: 6 }"
+                                                  :placeholder="activeBusy
+                                                      ? 'AI 正在执行，Enter 可将新要求排入队列（Shift+Enter 换行）'
+                                                      : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行 ｜ / 命令）'"
+                                                  @keydown.native="keydown" @input="onInput"></el-input>
+                                        <el-button v-if="activeBusy && (tab.chatInput || '').trim()"
+                                                   size="mini" class="aichat-queue-btn"
+                                                   title="在本轮结束后自动发送" @click="send">排队</el-button>
+                                        <el-button v-if="!activeBusy" size="mini" type="primary"
+                                                   class="aichat-send" @click="send">发送</el-button>
+                                        <el-button v-else size="mini" type="danger" class="aichat-send"
+                                                   @click="stop">停止</el-button>
+                                    </div>
+                                    <div class="aichat-foot">
+                                        <span class="aichat-foot-tip">Enter 发送 · Shift+Enter 换行 · ↑ 历史 · / 命令</span>
+                                        <span class="aichat-foot-stat">
+                                            <span v-if="activeBusy" class="aichat-foot-step">{{ stepText }}</span>
+                                            <span v-else class="aichat-foot-step dim">单轮上限 {{ stepLimit }} 步</span>
+                                            <span class="aichat-foot-ctx" title="按对话字符数粗估，仅供参考">上下文 ≈ {{ contextTokensText }} tokens</span>
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                         </div>

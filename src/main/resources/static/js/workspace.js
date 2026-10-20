@@ -241,7 +241,10 @@ function consumeFirstConnect() {
 }
 
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
-var AI_CHAT_MAX = 40;   // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
+var AI_CHAT_MAX = 160;              // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
+var AI_MAX_STEPS_DEFAULT = 30;      // 单轮默认最大步数（可在 AI 设置中调整，1-100）
+var AI_MAX_STEPS_LIMIT = 100;
+var AI_HISTORY_MAX = 50;            // 输入框 ↑↓ 历史条数
 
 /* 读取浏览器里旧存的对话（新格式 deepshell.aiConv / 更早的单对话格式），返回待上传数组或 [] */
 function readStoredAiConvs(connId) {
@@ -375,6 +378,146 @@ function newAiRunId() {
     return 'ai' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 }
 
+/* ---------- AI 回复的轻量 Markdown 渲染（先转义 HTML，模型输出不会注入页面） ---------- */
+function escapeAiHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function aiInlineMarkdown(text) {
+    var codes = [];
+    var s = escapeAiHtml(text);
+    // 行内代码先占位，避免其中的 * [ ] 被继续解析
+    s = s.replace(/`([^`\n]+)`/g, function (_, code) {
+        codes.push(code);
+        return '\u0000' + (codes.length - 1) + '\u0000';
+    });
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    s = s.replace(/\u0000(\d+)\u0000/g, function (_, i) {
+        return '<code>' + codes[Number(i)] + '</code>';
+    });
+    return s;
+}
+
+/* 支持标题、列表、代码块、引用、分隔线与段落；未闭合的代码块也能正常展示（流式输出） */
+function renderAiMarkdown(src) {
+    var text = String(src == null ? '' : src).replace(/\r\n/g, '\n');
+    if (!text) {
+        return '';
+    }
+    var out = [];
+    var para = [];
+    var list = '';
+    var inCode = false;
+    var codeLang = '';
+    var code = [];
+
+    function flushPara() {
+        if (!para.length) {
+            return;
+        }
+        out.push('<p>' + para.map(aiInlineMarkdown).join('<br>') + '</p>');
+        para = [];
+    }
+    function closeList() {
+        if (list) {
+            out.push('</' + list + '>');
+            list = '';
+        }
+    }
+    function openList(type) {
+        if (list === type) {
+            return;
+        }
+        closeList();
+        list = type;
+        out.push('<' + type + '>');
+    }
+    function flushCode() {
+        out.push('<pre class="md-pre">'
+            + (codeLang ? '<span class="md-lang">' + escapeAiHtml(codeLang) + '</span>' : '')
+            + '<code>' + escapeAiHtml(code.join('\n')) + '</code></pre>');
+        code = [];
+        codeLang = '';
+    }
+
+    var lines = text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        if (inCode) {
+            if (/^```/.test(trimmed)) {
+                inCode = false;
+                flushCode();
+            } else {
+                code.push(line);
+            }
+            continue;
+        }
+        var fence = trimmed.match(/^```\s*([A-Za-z0-9_+-]*)\s*$/);
+        if (fence) {
+            flushPara();
+            closeList();
+            inCode = true;
+            codeLang = fence[1] || '';
+            continue;
+        }
+        if (!trimmed) {
+            flushPara();
+            closeList();
+            continue;
+        }
+        var h = trimmed.match(/^(#{1,4})\s+(.+)$/);
+        if (h) {
+            flushPara();
+            closeList();
+            out.push('<div class="md-h md-h' + h[1].length + '">' + aiInlineMarkdown(h[2]) + '</div>');
+            continue;
+        }
+        if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+            flushPara();
+            closeList();
+            out.push('<hr class="md-hr">');
+            continue;
+        }
+        var quote = trimmed.match(/^>\s?(.*)$/);
+        if (quote) {
+            flushPara();
+            closeList();
+            out.push('<blockquote class="md-quote">' + aiInlineMarkdown(quote[1]) + '</blockquote>');
+            continue;
+        }
+        var ul = line.match(/^\s{0,3}[-*+]\s+(.+)$/);
+        if (ul) {
+            flushPara();
+            openList('ul');
+            out.push('<li>' + aiInlineMarkdown(ul[1]) + '</li>');
+            continue;
+        }
+        var ol = line.match(/^\s{0,3}\d+[.)]\s+(.+)$/);
+        if (ol) {
+            flushPara();
+            openList('ol');
+            out.push('<li>' + aiInlineMarkdown(ol[1]) + '</li>');
+            continue;
+        }
+        closeList();
+        para.push(line);
+    }
+    flushPara();
+    closeList();
+    if (inCode) {
+        flushCode();
+    }
+    return out.join('');
+}
+
 /* 每个对话独立的运行态：不同对话可同时生成/执行，互不阻塞 */
 function createAiConvRun() {
     return {
@@ -384,10 +527,19 @@ function createAiConvRun() {
         seq: 0,
         phase: '',
         streamText: '',
+        reasonText: '',
         requestId: '',
         abortController: null,
         execController: null
     };
+}
+
+function clipAiSteps(n) {
+    var v = parseInt(n, 10);
+    if (isNaN(v)) {
+        return AI_MAX_STEPS_DEFAULT;
+    }
+    return Math.max(1, Math.min(AI_MAX_STEPS_LIMIT, v));
 }
 
 /* 自动重连延迟（毫秒），超过次数后停止并提示手动重连 */
@@ -534,6 +686,13 @@ Vue.component('ai-chat-panel', {
         context: { type: String, default: 'panel' }
     },
     template: '#ai-chat-panel-tpl',
+    data: function () {
+        return {
+            stick: true,
+            slashOpen: false,
+            slashIndex: 0
+        };
+    },
     computed: {
         convList: function () {
             var t = this.tab;
@@ -556,27 +715,96 @@ Vue.component('ai-chat-panel', {
         },
         activeBusy: function () {
             return !!(this.activeRun && this.activeRun.busy);
+        },
+        stepLimit: function () {
+            return this.$root.aiMaxSteps || AI_MAX_STEPS_DEFAULT;
+        },
+        stepText: function () {
+            var run = this.activeRun;
+            if (!run || !run.busy) {
+                return '';
+            }
+            return '第 ' + Math.min(run.step || 0, this.stepLimit) + '/' + this.stepLimit + ' 步';
+        },
+        contextChars: function () {
+            var n = 0;
+            var conv = this.activeConv;
+            ((conv && conv.msgs) || []).forEach(function (m) {
+                n += (m.text || '').length + (m.cmd || '').length + (m.output || '').length
+                    + (m.note || '').length + (m.reasoning || '').length;
+            });
+            var run = this.activeRun;
+            if (run) {
+                n += (run.streamText || '').length + (run.reasonText || '').length;
+            }
+            return n;
+        },
+        contextTokensText: function () {
+            // 中英文混合按约 2.5 字符/token 粗估，仅用于提示上下文规模
+            var t = Math.ceil(this.contextChars / 2.5);
+            return t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(t);
+        },
+        queuedText: function () {
+            var c = this.activeConv;
+            return (c && c._queued) || '';
+        },
+        slashItems: function () {
+            if (!this.slashOpen) {
+                return [];
+            }
+            var v = (this.tab.chatInput || '').trim();
+            var m = v.match(/^\/([^\s]*)$/);
+            if (!m) {
+                return [];
+            }
+            var q = m[1].toLowerCase();
+            return (this.$root.aiSlashCommands || []).filter(function (c) {
+                return !q || c.id.indexOf(q) === 0;
+            });
         }
     },
     watch: {
         'tab.chatMsgs': {
             deep: true,
             handler: function () {
-                this.scrollToBottom();
+                this.scrollToBottom(false);
             }
         },
-        'tab.chatLoading': function () {
-            this.scrollToBottom();
+        'tab.chatLoading': function (v) {
+            if (v) {
+                this.stick = true;
+            }
+            this.scrollToBottom(false);
         },
         'tab.chatConvId': function () {
-            this.scrollToBottom();
+            this.stick = true;
+            this.slashOpen = false;
+            this.scrollToBottom(true);
+        },
+        slashItems: function (items) {
+            if (this.slashIndex >= items.length) {
+                this.slashIndex = 0;
+            }
         }
     },
     mounted: function () {
-        this.scrollToBottom();
+        this.scrollToBottom(true);
     },
     methods: {
-        scrollToBottom: function () {
+        onListScroll: function (e) {
+            var el = e.target;
+            if (!el) {
+                return;
+            }
+            this.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 36;
+        },
+        scrollToBottom: function (force) {
+            if (force) {
+                this.stick = true;
+            }
+            if (!this.stick) {
+                return;
+            }
             var self = this;
             this.$nextTick(function () {
                 var el = self.$refs.list;
@@ -584,6 +812,69 @@ Vue.component('ai-chat-panel', {
                     el.scrollTop = el.scrollHeight;
                 }
             });
+        },
+        jumpToBottom: function () {
+            this.stick = true;
+            this.scrollToBottom(true);
+        },
+        onInput: function () {
+            var v = this.tab.chatInput || '';
+            this.slashOpen = /^\/[^\s]*$/.test(v);
+            if (this.slashOpen) {
+                this.slashIndex = 0;
+            }
+        },
+        keydown: function (e) {
+            // 中文输入法组合期间的 Enter / 方向键交给输入法，不触发发送或历史
+            if (e.isComposing || e.keyCode === 229) {
+                return;
+            }
+            if (this.slashOpen && this.slashItems.length) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    this.slashIndex = (this.slashIndex + 1) % this.slashItems.length;
+                    return;
+                }
+                if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    this.slashIndex = (this.slashIndex - 1 + this.slashItems.length) % this.slashItems.length;
+                    return;
+                }
+                if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+                    e.preventDefault();
+                    this.chooseSlash(this.slashItems[this.slashIndex]);
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    this.slashOpen = false;
+                    return;
+                }
+            }
+            var plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+            if (plain && e.key === 'ArrowUp' && e.target && e.target.selectionStart === 0
+                    && this.$root.aiHistoryPrev(this.tab)) {
+                e.preventDefault();
+                this.resizeInput();
+                return;
+            }
+            if (plain && e.key === 'ArrowDown' && this.$root.aiHistoryNext(this.tab)) {
+                e.preventDefault();
+                this.resizeInput();
+                return;
+            }
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.$root.aiChatSend();
+            }
+        },
+        chooseSlash: function (item) {
+            if (!item) {
+                return;
+            }
+            this.slashOpen = false;
+            this.tab.chatInput = '';
+            this.$root.aiRunSlash(item.id, this.tab);
         },
         newConv: function () {
             this.$root.aiConvNew();
@@ -606,14 +897,74 @@ Vue.component('ai-chat-panel', {
         modeChange: function (v) {
             this.$root.onChatModeChange(v);
         },
-        keydown: function (e) {
-            this.$root.onChatKeydown(e);
-        },
         copy: function (text) {
-            this.$root.copyText(text);
+            this.$root.copyText(text || '');
         },
         fmtTime: function (ms) {
             return this.$root.fmtChatTime(ms);
+        },
+        renderMd: function (text) {
+            return renderAiMarkdown(text);
+        },
+        fmtDuration: function (ms) {
+            if (ms == null) {
+                return '';
+            }
+            if (ms < 1000) {
+                return ms + ' ms';
+            }
+            if (ms < 60000) {
+                return (ms / 1000).toFixed(1) + ' s';
+            }
+            var totalSec = Math.round(ms / 1000);
+            return Math.floor(totalSec / 60) + 'm ' + (totalSec % 60) + 's';
+        },
+        toggleReason: function (m) {
+            this.$set(m, 'reasonOpen', !m.reasonOpen);
+        },
+        toggleOut: function (m) {
+            this.$set(m, 'outOpen', !m.outOpen);
+        },
+        copyOutput: function (m) {
+            this.$root.copyText(m.output || '');
+        },
+        cancelQueue: function () {
+            var c = this.activeConv;
+            if (c) {
+                this.$set(c, '_queued', '');
+            }
+        },
+        useExample: function (text) {
+            this.tab.chatInput = text;
+            this.resizeInput();
+        },
+        restoreQueue: function () {
+            var c = this.activeConv;
+            if (!c || this.activeBusy || !c._queued) {
+                return;
+            }
+            this.tab.chatInput = c._queued;
+            this.$set(c, '_queued', '');
+            this.resizeInput();
+        },
+        /* 程序化改写输入框内容后同步高度并聚焦（历史 / 排队恢复） */
+        resizeInput: function () {
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.chatInput;
+                if (el && el.resizeTextarea) {
+                    el.resizeTextarea();
+                }
+                if (el && el.focus) {
+                    el.focus();
+                }
+            });
+        },
+        continueRun: function (m) {
+            this.$root.aiChatContinue(m);
+        },
+        retryRun: function (m) {
+            this.$root.aiChatRetry(m);
         },
         openDesktop: function () {
             this.$root.openDesktopInNewTab(this.tab);
@@ -1295,7 +1646,18 @@ new Vue({
         ],
         aiSetVisible: false,
         aiSetSaving: false,
-        aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false },
+        aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false,
+            maxSteps: AI_MAX_STEPS_DEFAULT },
+        aiMaxSteps: AI_MAX_STEPS_DEFAULT,
+        aiSlashCommands: [
+            { id: 'new', label: '/new', desc: '开始一个新对话' },
+            { id: 'clear', label: '/clear', desc: '清空当前对话记录' },
+            { id: 'auto', label: '/auto', desc: '切换为自动执行' },
+            { id: 'manual', label: '/manual', desc: '切换为每步确认' },
+            { id: 'desktop', label: '/desktop', desc: '打开 AI 可视化桌面' },
+            { id: 'stop', label: '/stop', desc: '停止当前生成或命令' },
+            { id: 'help', label: '/help', desc: '打开帮助' }
+        ],
         aiProviders: [],
         aiModelOptions: [],
         aiModelsLoading: false,
@@ -2732,6 +3094,15 @@ new Vue({
                 self.aiProviders = Array.isArray(list) ? list : [];
             }).catch(function () { /* 忽略 */ });
         },
+        /* 启动时只需单轮步数：避免打开 AI 设置前一直用旧的 15 步上限 */
+        loadAiRuntimeConfig: function () {
+            var self = this;
+            return http.get('/api/ai/config').then(function (d) {
+                if (d) {
+                    self.aiMaxSteps = clipAiSteps(d.maxSteps);
+                }
+            }).catch(function () { /* 未配置或接口不可用时用默认值 */ });
+        },
         loadAiConfig: function () {
             var self = this;
             this.aiModelsNote = '';
@@ -2743,6 +3114,8 @@ new Vue({
                 self.aiSetForm.baseUrl = d.baseUrl || '';
                 self.aiSetForm.model = d.model || '';
                 self.aiSetForm.hasKey = !!d.hasKey;
+                self.aiMaxSteps = clipAiSteps(d.maxSteps);
+                self.aiSetForm.maxSteps = self.aiMaxSteps;
                 self.aiSetForm.apiKey = '';
                 var ready = self.aiProviders.length ? Promise.resolve() : self.loadAiProviders();
                 ready.then(function () {
@@ -2841,11 +3214,13 @@ new Vue({
                 return;
             }
             this.aiSetSaving = true;
+            var maxSteps = clipAiSteps(this.aiSetForm.maxSteps);
             http.post('/api/ai/config', {
                 provider: this.aiSetForm.provider,
                 baseUrl: baseUrl,
                 model: model,
-                apiKey: this.aiSetForm.apiKey
+                apiKey: this.aiSetForm.apiKey,
+                maxSteps: maxSteps
             }).then(function (d) {
                 ELEMENT.Message.success('AI 设置已保存');
                 if (d) {
@@ -2853,6 +3228,8 @@ new Vue({
                     self.aiSetForm.baseUrl = d.baseUrl || baseUrl;
                     self.aiSetForm.model = d.model || model;
                     self.aiSetForm.hasKey = !!d.hasKey;
+                    self.aiMaxSteps = clipAiSteps(d.maxSteps);
+                    self.aiSetForm.maxSteps = self.aiMaxSteps;
                 }
                 self.aiSetForm.apiKey = '';
                 self.aiSetVisible = false;
@@ -2911,10 +3288,116 @@ new Vue({
         onChatModeChange: function (v) {
             try { localStorage.setItem('deepshell.aiChatMode', v); } catch (e) { /* ignore */ }
         },
-        onChatKeydown: function (e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.aiChatSend();
+        /* 输入框 ↑↓ 历史：返回是否消费了按键 */
+        aiHistoryPrev: function (t) {
+            var conv = this.aiActiveConv(t);
+            if (!conv || !conv._hist || !conv._hist.length) {
+                return false;
+            }
+            if (conv._histIdx == null || conv._histIdx < 0) {
+                this.$set(conv, '_histDraft', t.chatInput || '');
+                conv._histIdx = conv._hist.length;
+            }
+            conv._histIdx = Math.max(0, conv._histIdx - 1);
+            t.chatInput = conv._hist[conv._histIdx] || '';
+            return true;
+        },
+        aiHistoryNext: function (t) {
+            var conv = this.aiActiveConv(t);
+            if (!conv || conv._histIdx == null || conv._histIdx < 0 || !conv._hist) {
+                return false;
+            }
+            conv._histIdx++;
+            if (conv._histIdx >= conv._hist.length) {
+                conv._histIdx = -1;
+                t.chatInput = conv._histDraft || '';
+            } else {
+                t.chatInput = conv._hist[conv._histIdx] || '';
+            }
+            return true;
+        },
+        aiPushHistory: function (conv, text) {
+            if (!text) {
+                return;
+            }
+            if (!conv._hist) {
+                this.$set(conv, '_hist', []);
+            }
+            if (conv._hist[conv._hist.length - 1] !== text) {
+                conv._hist.push(text);
+                if (conv._hist.length > AI_HISTORY_MAX) {
+                    conv._hist.splice(0, conv._hist.length - AI_HISTORY_MAX);
+                }
+            }
+            conv._histIdx = -1;
+            conv._histDraft = '';
+        },
+        /* “/” 快捷命令：输入框发起的轻量操作，不占对话上下文 */
+        aiRunSlash: function (id, t) {
+            var conv = this.aiActiveConv(t);
+            if (id === 'new') {
+                this.aiConvNew();
+                return;
+            }
+            if (!conv) {
+                return;
+            }
+            if (id === 'clear') {
+                if (conv._run && conv._run.busy) {
+                    ELEMENT.Message.warning('该对话正在执行中，请先停止再清空');
+                    return;
+                }
+                var self = this;
+                this.$confirm('清空当前对话的全部记录？', '清空对话', { type: 'warning' })
+                    .then(function () {
+                        conv.msgs = [];
+                        conv.title = '新对话';
+                        conv.updatedAt = Date.now();
+                        t.chatMsgs = conv.msgs;
+                        self.saveConv(t, conv);
+                    })
+                    .catch(function () { /* 取消 */ });
+                return;
+            }
+            if (id === 'auto' || id === 'manual') {
+                t.chatMode = id;
+                this.onChatModeChange(id);
+                ELEMENT.Message.success(id === 'auto' ? '已切换为自动执行' : '已切换为每步确认');
+                return;
+            }
+            if (id === 'desktop') {
+                this.openDesktopInNewTab(t);
+                return;
+            }
+            if (id === 'stop') {
+                this.aiChatStop();
+                return;
+            }
+            if (id === 'help') {
+                this.helpVisible = true;
+            }
+        },
+        /* 按消息定位所属对话（跨对话的继续 / 重试按钮使用） */
+        aiConvOfMessage: function (t, m) {
+            var found = null;
+            (t.chatConvs || []).some(function (c) {
+                if (c.msgs && c.msgs.indexOf(m) >= 0) {
+                    found = c;
+                    return true;
+                }
+                return false;
+            });
+            return found;
+        },
+        aiOpenConvForAction: function (t, conv) {
+            if (!conv) {
+                return;
+            }
+            if (t.chatConvId !== conv.id) {
+                t.chatConvId = conv.id;
+                t.chatMsgs = conv.msgs || [];
+                t.chatInput = conv.input || '';
+                this.scrollAiChat(true);
             }
         },
         aiConvById: function (t, id) {
@@ -2936,6 +3419,15 @@ new Vue({
             }
             if (!conv.msgs) {
                 this.$set(conv, 'msgs', []);
+            }
+            if (!conv._hist) {
+                this.$set(conv, '_hist', []);
+            }
+            if (conv._histIdx == null) {
+                this.$set(conv, '_histIdx', -1);
+            }
+            if (conv._queued == null) {
+                this.$set(conv, '_queued', '');
             }
             return conv;
         },
@@ -3064,6 +3556,11 @@ new Vue({
             t.chatConvId = c.id;
             t.chatMsgs = c.msgs || [];
             t.chatInput = c.input || '';
+            // 之前排队但未发出的消息，回到该对话时变成输入框草稿
+            if (c._queued && !(c._run && c._run.busy)) {
+                t.chatInput = c._queued;
+                this.$set(c, '_queued', '');
+            }
             // 服务端记住当前对话（纯切换不刷新时间，失败不影响使用）
             http.put('/api/ai/convs/' + c.id, { active: true }).catch(function () { /* ignore */ });
             this.scrollAiChat();
@@ -3122,10 +3619,18 @@ new Vue({
             }
             this.aiEnsureConvState(conv);
             var run = conv._run;
+            var text = (t.chatInput || '').trim();
             if (run.busy) {
+                // 忙碌时按 Enter 不打断当前任务，而是排队到本轮结束自动发送
+                if (!text) {
+                    return;
+                }
+                this.$set(conv, '_queued', text);
+                conv.input = '';
+                t.chatInput = '';
+                ELEMENT.Message.success('已排队，本轮结束后自动发送');
                 return;
             }
-            var text = (t.chatInput || '').trim();
             if (!text) {
                 return;
             }
@@ -3133,6 +3638,7 @@ new Vue({
             if (!conv.title || conv.title === '新对话') {
                 conv.title = text.slice(0, 20);
             }
+            this.aiPushHistory(conv, text);
             conv.updatedAt = Date.now();
             conv.input = '';
             t.chatInput = '';
@@ -3140,12 +3646,14 @@ new Vue({
             run.step = 0;
             run.phase = '';
             run.streamText = '';
+            run.reasonText = '';
             run.requestId = '';
             run.abortController = null;
             run.execController = null;
             run.seq = (run.seq || 0) + 1;
             run.busy = true;
             this.saveConv(t, conv);
+            this.scrollAiChat(true);
             this.aiChatLoop(t, conv, run, run.seq);
         },
         aiChatStop: function () {
@@ -3201,13 +3709,17 @@ new Vue({
                 this.aiChatFinish(t, conv, '已停止');
                 return;
             }
-            if (run.step >= 15) {
-                this.aiChatFinish(t, conv, '已达单轮 15 步上限，如任务未完成请继续发消息说明');
+            var limit = this.aiMaxSteps || AI_MAX_STEPS_DEFAULT;
+            if (run.step >= limit) {
+                this.aiChatFinish(t, conv,
+                    '已达单轮 ' + limit + ' 步上限。可点击「继续执行」恢复，或到 AI 设置中调整上限（1-100）',
+                    'continue');
                 return;
             }
             run.step++;
-            run.phase = 'AI 正在生成…';
+            run.phase = 'AI 正在生成（第 ' + run.step + '/' + limit + ' 步）…';
             run.streamText = '';
+            run.reasonText = '';
             var requestId = newAiRunId();
             run.requestId = requestId;
             if (t.chatConvId === conv.id) {
@@ -3218,6 +3730,7 @@ new Vue({
                 cwd: conv.cwd || '',
                 auto: t.chatMode !== 'manual',
                 runId: requestId,
+                step: run.step,
                 messages: this.aiBuildHistory(conv)
             }).then(function (r) {
                 if (run.requestId === requestId) {
@@ -3227,19 +3740,23 @@ new Vue({
                 if (seq !== run.seq) {
                     return;
                 }
+                var reasoning = (run.reasonText || '').trim();
+                run.reasonText = '';
                 if (!r || !r.kind) {
-                    self.aiChatFinish(t, conv, 'AI 未返回有效内容');
+                    self.aiChatFinish(t, conv, 'AI 未返回有效内容', 'retry');
                     return;
                 }
                 if (r.kind === 'reply') {
-                    conv.msgs.push({ role: 'ai', text: r.text || '（无内容）' });
+                    conv.msgs.push({ role: 'ai', text: r.text || '（无内容）',
+                        reasoning: reasoning, reasonOpen: false });
                     self.aiChatFinish(t, conv, '');
                     return;
                 }
                 // 字段需一次性建全：Vue 2 对后加的属性不做响应式
                 var m = {
                     role: 'ai', cmd: r.command, note: r.note || '', danger: r.danger || '',
-                    state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: ''
+                    state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: '',
+                    reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0
                 };
                 if (r.needConfirm) {
                     m.state = 'confirm';
@@ -3272,6 +3789,7 @@ new Vue({
                     run.requestId = '';
                 }
                 run.streamText = '';
+                run.reasonText = '';
                 if (seq !== run.seq) {
                     return;
                 }
@@ -3279,8 +3797,8 @@ new Vue({
                     self.aiChatFinish(t, conv, '已停止');
                     return;
                 }
-                conv.msgs.push({ role: 'ai', text: '请求失败：' + ((e && e.message) || '未知错误') });
-                self.aiChatFinish(t, conv, '');
+                self.aiChatFinish(t, conv,
+                    '请求失败：' + ((e && e.message) || '未知错误'), 'retry');
             });
         },
         /* 流式请求一轮 AI 对话：边读 SSE 边更新该对话的预览文本，返回最终结果 */
@@ -3338,6 +3856,19 @@ new Vue({
                         result = ev.result;
                     } else if (ev.type === 'error') {
                         failure = ev.message || 'AI 请求失败';
+                    } else if (ev.type === 'reasoning' && typeof ev.text === 'string') {
+                        if (seq !== run.seq || run.stop) {
+                            return;
+                        }
+                        // 思考过程只做展示，限制最大长度，避免异常服务无限刷屏
+                        if ((run.reasonText || '').length < 30000) {
+                            run.reasonText = (run.reasonText || '') + ev.text;
+                        }
+                        var nowR = Date.now();
+                        if (t.chatConvId === conv.id && nowR - lastScroll > 120) {
+                            lastScroll = nowR;
+                            self.scrollAiChat();
+                        }
                     } else if (ev.type === 'delta' && typeof ev.text === 'string') {
                         if (seq !== run.seq || run.stop) {
                             return;
@@ -3487,6 +4018,59 @@ new Vue({
                 self.aiChatFinish(t, conv, '');
             });
         },
+        /* 步数上限后的「继续执行」：追加一条明确指令，重新获得一整轮步数 */
+        aiChatContinue: function (m) {
+            var t = this.activeTab;
+            if (!t) {
+                return;
+            }
+            var conv = this.aiConvOfMessage(t, m);
+            if (!conv) {
+                return;
+            }
+            this.aiOpenConvForAction(t, conv);
+            var run = this.aiConvRun(conv);
+            if (run && run.busy) {
+                ELEMENT.Message.warning('AI 正在执行，请稍候');
+                return;
+            }
+            this.$set(m, 'action', '');
+            this.saveConv(t, conv);
+            t.chatInput = '（继续）请基于当前进度继续完成任务。';
+            this.aiChatSend();
+        },
+        /* 请求失败后的「重试」：沿用当前历史直接再请求一次，不重复添加用户消息 */
+        aiChatRetry: function (m) {
+            var t = this.activeTab;
+            if (!t) {
+                return;
+            }
+            var conv = this.aiConvOfMessage(t, m);
+            if (!conv) {
+                return;
+            }
+            this.aiOpenConvForAction(t, conv);
+            this.aiEnsureConvState(conv);
+            var run = conv._run;
+            if (run.busy) {
+                return;
+            }
+            this.$set(m, 'action', '');
+            // 极端情况下（错误提示之后又产生了回复）最后一条不是用户消息，补一条再重试
+            var hist = this.aiBuildHistory(conv);
+            if (!hist.length || hist[hist.length - 1].role !== 'user') {
+                conv.msgs.push({ role: 'user', text: '（继续）请重新执行上一步请求。' });
+            }
+            run.stop = false;
+            run.step = 0;
+            run.seq = (run.seq || 0) + 1;
+            run.streamText = '';
+            run.reasonText = '';
+            run.phase = '正在重试…';
+            run.busy = true;
+            this.saveConv(t, conv);
+            this.aiChatLoop(t, conv, run, run.seq);
+        },
         aiFillCard: function (conv, m, r) {
             m.state = 'done';
             m.output = r.output || '';
@@ -3494,6 +4078,8 @@ new Vue({
             m.truncated = !!r.truncated;
             m.timedOut = !!r.timedOut;
             m.error = r.error || '';
+            m.durationMs = r.durationMs == null ? 0 : r.durationMs;
+            m.outputLines = m.output ? m.output.replace(/\n$/, '').split('\n').length : 0;
             if (!m.note && r.note) {
                 m.note = r.note;
             }
@@ -3505,26 +4091,41 @@ new Vue({
                 this.scrollAiChat();
             }
         },
-        aiChatFinish: function (t, conv, note) {
+        aiChatFinish: function (t, conv, note, action) {
             var run = this.aiConvRun(conv);
             if (run) {
                 run.busy = false;
                 run.stop = false;
                 run.phase = '';
                 run.streamText = '';
+                run.reasonText = '';
                 run.requestId = '';
                 run.abortController = null;
                 run.execController = null;
             }
             if (conv) {
                 if (note) {
-                    conv.msgs.push({ role: 'note', text: note });
+                    conv.msgs.push({ role: 'note', text: note, action: action || '' });
                 }
                 conv.updatedAt = Date.now();
             }
             this.saveConv(t, conv);
             if (t && conv && t.chatConvId === conv.id) {
                 this.scrollAiChat();
+            }
+            // 本轮正常结束后自动发送排队消息；停止 / 失败 / 达上限时保留，交给用户决定
+            if (conv && !note && conv._queued && t && t.chatConvId === conv.id
+                    && t.sessionId && run && !run.busy) {
+                var queued = conv._queued;
+                this.$set(conv, '_queued', '');
+                t.chatInput = queued;
+                var self = this;
+                this.$nextTick(function () {
+                    if (t.chatConvId === conv.id && t.chatInput === queued
+                            && conv._run && !conv._run.busy) {
+                        self.aiChatSend();
+                    }
+                });
             }
         },
         /* 把某个对话拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
@@ -3580,7 +4181,7 @@ new Vue({
             }
             return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
         },
-        scrollAiChat: function () {
+        scrollAiChat: function (force) {
             var self = this;
             this.$nextTick(function () {
                 var panels = [];
@@ -3595,7 +4196,7 @@ new Vue({
                 }
                 panels.forEach(function (p) {
                     if (p && p.scrollToBottom) {
-                        p.scrollToBottom();
+                        p.scrollToBottom(force);
                     }
                 });
             });
@@ -4710,6 +5311,13 @@ new Vue({
             var w = this.desktopTaskMenuWin;
             this.desktop.taskMenu.visible = false;
             this.openDesktopWindow((w && w.path) || this.desk.path || this.desktopHomeDir || '/');
+        },
+        desktopTaskNewTerminalWindow: function () {
+            var w = this.desktopTaskMenuWin;
+            this.desktop.taskMenu.visible = false;
+            var tab = w && w.termTab;
+            var dir = (tab && (tab.termCwd || tab.initialDir)) || '';
+            this.openDesktopTerminalWindow(dir);
         },
         desktopTaskSwitchWindow: function () {
             var w = this.desktopTaskMenuWin;
@@ -6211,6 +6819,12 @@ new Vue({
                         sortBy: 'name',
                         sortDir: 'asc'
                     });
+                } else if (this.isDesktopVideo(item.entry)) {
+                    this.openDesktopVideoPreview(item.entry, {
+                        path: this.desktop.surface.dir,
+                        sortBy: 'name',
+                        sortDir: 'asc'
+                    });
                 } else if (this.desktopTab && this.desktopTab.sessionId) {
                     this.openRemoteEdit(this.desktopTab, item.path);
                 }
@@ -6248,6 +6862,12 @@ new Vue({
                 var row = { name: name, dir: false, size: 0, mtime: 0 };
                 if (self.isDesktopImage(row)) {
                     self.openDesktopImagePreview(row, {
+                        path: parent,
+                        sortBy: 'name',
+                        sortDir: 'asc'
+                    });
+                } else if (self.isDesktopVideo(row)) {
+                    self.openDesktopVideoPreview(row, {
                         path: parent,
                         sortBy: 'name',
                         sortDir: 'asc'
@@ -7327,6 +7947,8 @@ new Vue({
                 this.desktopGo(this.pathJoin(d.path, row.name), d);
             } else if (this.isDesktopImage(row)) {
                 this.openDesktopImagePreview(row, d);
+            } else if (this.isDesktopVideo(row)) {
+                this.openDesktopVideoPreview(row, d);
             } else {
                 this.desktopOpenEdit(row, d);
             }
@@ -7348,6 +7970,22 @@ new Vue({
                 + '&sortDir=' + encodeURIComponent(d.sortDir)
                 + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
             if (!window.open('/image-viewer' + query, '_blank')) {
+                ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
+            }
+        },
+        /* 视频同样在新标签页打开；后端按 Range 流式返回，可边下边播和拖动进度条 */
+        openDesktopVideoPreview: function (row, win) {
+            var t = this.desktopTab;
+            var d = win || this.desk;
+            if (!t || !t.sessionId || !this.isDesktopVideo(row)) {
+                return;
+            }
+            var query = '?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d))
+                + '&sortBy=' + encodeURIComponent(d.sortBy)
+                + '&sortDir=' + encodeURIComponent(d.sortDir)
+                + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
+            if (!window.open('/video-viewer' + query, '_blank')) {
                 ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
             }
         },
@@ -7640,6 +8278,8 @@ new Vue({
             } else if (action === 'preview') {
                 if (target && this.isDesktopImage(target)) {
                     this.openDesktopImagePreview(target, ctxWin);
+                } else if (target && this.isDesktopVideo(target)) {
+                    this.openDesktopVideoPreview(target, ctxWin);
                 }
             } else if (action === 'edit') {
                 if (target && !target.dir) {
@@ -8112,6 +8752,9 @@ new Vue({
         isDesktopImage: function (row) {
             return !!row && !row.dir && this.desktopFileKind(row) === 'img';
         },
+        isDesktopVideo: function (row) {
+            return !!row && !row.dir && this.desktopFileKind(row) === 'video';
+        },
         desktopFileKind: function (row) {
             if (row && row.dir) {
                 return 'folder';
@@ -8124,7 +8767,9 @@ new Vue({
                 'tif', 'tiff', 'avif', 'heic', 'heif'].indexOf(e) >= 0) {
                 return 'img';
             }
-            if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'rmvb', 'ts'].indexOf(e) >= 0) {
+            // .ts / .mts 也可能是 TypeScript 源码，不自动归为视频
+            if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'f4v', 'ogv',
+                'rmvb', 'rm', 'm2ts', 'mpg', 'mpeg', '3gp', 'asf'].indexOf(e) >= 0) {
                 return 'video';
             }
             if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'opus'].indexOf(e) >= 0) {
@@ -12268,6 +12913,7 @@ new Vue({
         self.loadAppInfo();
         self.loadLocalDownloadStatus();
         self.loadAuthStatus();
+        self.loadAiRuntimeConfig();
         // 记录用户活跃时间：仅在页面可见且有近期操作时续期 Token，避免后台标签页永久保活
         self._lastUserActivity = Date.now();
         var markUserActivity = function () {

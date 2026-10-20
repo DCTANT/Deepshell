@@ -23,4 +23,10 @@ public class PageController {
     public String imageViewer() {
         return "image-viewer";
     }
+
+    /** 独立视频预览页：AI 可视化桌面双击视频时在新标签页打开 */
+    @GetMapping("/video-viewer")
+    public String videoViewer() {
+        return "video-viewer";
+    }
 }

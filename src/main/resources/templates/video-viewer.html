@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>视频预览 · DeepShell</title>
+    <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #070a0f;
+        }
+
+        .vv-toast {
+            position: fixed;
+            left: 50%;
+            bottom: 64px;
+            z-index: 10;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            border: 1px solid rgba(255, 255, 255, .12);
+            border-radius: 6px;
+            background: rgba(18, 24, 34, .92);
+            color: #dbe6f5;
+            font-size: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+        }
+    </style>
+</head>
+<body>
+<div id="videoViewer" class="dsk-preview" v-cloak @contextmenu.prevent>
+    <div class="dsk-preview-head">
+        <i class="el-icon-video-camera"></i>
+        <span class="dsk-preview-title" :title="path">{{ name || '视频预览' }}</span>
+        <span class="dsk-preview-counter" v-if="videos.length && index >= 0">{{ index + 1 }} / {{ videos.length }}</span>
+        <span class="spacer"></span>
+        <button class="dsk-preview-head-btn" title="下载原视频" @click="download">
+            <i class="el-icon-download"></i><span>下载</span>
+        </button>
+        <button class="dsk-preview-head-btn" title="关闭标签页 (Esc)" @click="closeTab">
+            <i class="el-icon-close"></i><span>关闭</span>
+        </button>
+    </div>
+    <div class="dsk-preview-stage dsk-video-stage">
+        <button class="dsk-preview-nav prev" title="上一个视频 ([)"
+                :disabled="videos.length < 2" @click="step(-1)">
+            <i class="el-icon-arrow-left"></i>
+        </button>
+        <div class="dsk-video-frame">
+            <video v-if="!error" :key="videoKey" ref="video" class="dsk-video"
+                   :src="videoUrl" controls autoplay playsinline preload="metadata"
+                   @loadedmetadata="onLoadedMetadata" @canplay="onCanPlay" @play="onPlay"
+                   @pause="onPause" @volumechange="onVolumeChange" @error="onError"></video>
+            <div class="dsk-preview-loading" v-if="loading">
+                <i class="el-icon-loading"></i> 正在加载视频…
+            </div>
+            <div class="dsk-preview-error" v-if="error">
+                <i class="el-icon-warning-outline"></i>
+                <p>{{ error }}</p>
+                <button class="dsk-preview-head-btn" @click="download">
+                    <i class="el-icon-download"></i><span>下载文件</span>
+                </button>
+            </div>
+        </div>
+        <div class="dsk-video-tip" v-if="formatHint && !error">
+            <i class="el-icon-warning-outline"></i>{{ formatHint }}
+        </div>
+        <button class="dsk-preview-nav next" title="下一个视频 (])"
+                :disabled="videos.length < 2" @click="step(1)">
+            <i class="el-icon-arrow-right"></i>
+        </button>
+    </div>
+    <div class="dsk-preview-tools">
+        <span class="dsk-video-meta" v-if="durationText">
+            <i class="el-icon-time"></i>{{ durationText }}
+        </span>
+        <span class="dsk-video-meta" v-if="resolution">
+            <i class="el-icon-full-screen"></i>{{ resolution }}
+        </span>
+        <span class="dsk-video-meta" v-if="ext">
+            <i class="el-icon-video-play"></i>{{ ext.toUpperCase() }}
+        </span>
+        <span class="dsk-preview-sep"></span>
+        <button class="dsk-preview-tool text" title="播放 / 暂停 (空格)" @click="togglePlay">
+            {{ paused ? '播放' : '暂停' }}
+        </button>
+        <button class="dsk-preview-tool text" title="静音 / 取消静音 (M)" @click="toggleMute">
+            {{ muted ? '取消静音' : '静音' }}
+        </button>
+        <span class="spacer"></span>
+        <span class="dsk-preview-hint">空格播放 / 暂停 · ← → 快退 / 快进 · [ ] 切换 · Esc 关闭标签页</span>
+    </div>
+    <div class="vv-toast" v-if="closeHint">{{ closeHint }}</div>
+</div>
+<script th:src="@{/vendor/vue/vue.min.js}"></script>
+<script th:src="@{/js/video-viewer.js}"></script>
+</body>
+</html>

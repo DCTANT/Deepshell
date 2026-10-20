@@ -25,8 +25,16 @@ public class AiAgentService {
     public static final int EXEC_TIMEOUT_MS = 120_000;
     public static final int MAX_OUTPUT_BYTES = 256 * 1024;
 
-    private static final int MAX_HISTORY = 30;
-    private static final int MAX_CONTENT_CHARS = 16000;
+    /** 一次请求最多携带的历史消息数（30 步约产生 60 条，留足余量） */
+    private static final int MAX_HISTORY = 160;
+    private static final int MAX_CONTENT_CHARS = 12000;
+    /** 单次请求的上下文字符预算：超出的更早消息会被舍弃，但保留当前任务原始描述 */
+    private static final int MAX_TOTAL_CHARS = 180_000;
+    /** 最近若干条消息保留完整内容，更早的工具输出做头尾压缩 */
+    private static final int RECENT_FULL_MESSAGES = 8;
+    private static final int OLD_TOOL_HEAD = 1800;
+    private static final int OLD_TOOL_TAIL = 900;
+    private static final String TOOL_RESULT_PREFIX = "[命令执行结果]";
 
     private final AiChatClient chatClient;
     private final SshSessionManager sessions;
@@ -65,6 +73,8 @@ public class AiAgentService {
         public boolean timedOut;
         /** 执行层失败时的原因（kind=cmd 且 executed=false 时展示） */
         public String error;
+        /** 命令执行耗时（毫秒），用于结果卡片展示 */
+        public Long durationMs;
     }
 
     /** 一轮对话：调用模型并解析；auto=false 时命令不自动执行，auto=true 时高危命令仍需确认 */
@@ -90,6 +100,16 @@ public class AiAgentService {
      */
     public AgentResult stepStream(String sessionId, String cwd, boolean auto, List<AgentMessage> history,
                                   Consumer<String> onTextDelta, AiCancellationToken token) {
+        return stepStream(sessionId, cwd, auto, history, onTextDelta, null, token);
+    }
+
+    /**
+     * 可取消的流式一轮对话（含思考过程）：onReasoning 接收模型的 reasoning_content，
+     * 前端可像 DeepSeek Harness 一样展示可折叠的思考过程。
+     */
+    public AgentResult stepStream(String sessionId, String cwd, boolean auto, List<AgentMessage> history,
+                                  Consumer<String> onTextDelta, Consumer<String> onReasoning,
+                                  AiCancellationToken token) {
         if (token.isCancelled()) {
             throw new AiCancellationToken.CancelledException();
         }
@@ -107,7 +127,7 @@ public class AiAgentService {
                 onTextDelta.accept(visible.substring(shown[0].length()));
                 shown[0] = visible;
             }
-        }, token);
+        }, onReasoning, token);
         if (token.isCancelled()) {
             throw new AiCancellationToken.CancelledException();
         }
@@ -175,10 +195,12 @@ public class AiAgentService {
             audit.record("AI_COMMAND", command, "CANCELLED", "用户停止");
             return;
         }
+        long startedAt = System.nanoTime();
         try {
             SshSessionManager.ExecResult res =
                     sessions.execInShell(s, command, cwd, EXEC_TIMEOUT_MS, MAX_OUTPUT_BYTES,
                             token::isCancelled);
+            r.durationMs = Math.max(0, (System.nanoTime() - startedAt) / 1_000_000);
             r.executed = true;
             r.output = cleanTerminalText(res.output);
             r.exitCode = res.exitCode;
@@ -194,6 +216,7 @@ public class AiAgentService {
                     r.exitCode != null && r.exitCode != 0 ? "FAIL" : "OK",
                     "exit=" + r.exitCode + (r.timedOut ? " timeout" : ""));
         } catch (Exception e) {
+            r.durationMs = Math.max(0, (System.nanoTime() - startedAt) / 1_000_000);
             if (token.isCancelled()) {
                 r.executed = false;
                 r.error = "已停止";
@@ -226,15 +249,20 @@ public class AiAgentService {
                 .append("- 需要执行命令时，只输出一个 JSON 对象：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n")
                 .append("- 任务完成、需要说明结果或需要向用户确认/提问时，输出：{\"reply\":\"展示给用户的内容\"}\n")
                 .append("- 不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n\n")
+                .append("工作方式：\n")
+                .append("- 每次只提交一条命令，等执行结果返回后再决定下一步；不要臆测命令输出。\n")
+                .append("- 先观察再行动：修改、删除或重启前，先用只读命令确认当前状态，优先使用保守写法。\n")
+                .append("- 达到目标后及时收尾，用 reply 简要总结做了什么、结果如何、还需要用户注意什么。\n")
+                .append("- 缺少关键信息时，用 reply 向用户提问并暂停执行，不要盲目尝试。\n\n")
                 .append("环境说明：\n")
                 .append("- 每次都是完整的 Linux 环境，命令以当前登录用户身份执行，非 root 时注意权限。\n")
                 .append("- 每条命令在独立 shell 中执行：cd 切换的目录会被系统自动保留，但 export 的环境变量与别名不会保留；"
                         + "需要时把多条命令用 && 或 ; 连成一条。\n")
                 .append("- 命令必须是非交互的，禁止执行需要人工输入的程序（如 vi、top、不带参数的 passwd）；"
                         + "sudo 通常没有免密，权限不足时如实向用户说明，不要反复重试。\n")
-                .append("- 输出过长会被截断，请用 head/tail/grep 等控制输出量。\n")
-                .append("- 危险操作（删除、覆盖、写配置、重启服务）前先用只读命令确认现状，并优先使用保守写法。\n")
-                .append("- note 与 reply 用简洁中文，不要使用 emoji。");
+                .append("- 输出过长会被截断，请用 head/tail/grep 等控制输出量；命令结果已展示给用户，不要在 reply 里重复大段输出。\n")
+                .append("- note 与 reply 用简洁中文，不要使用 emoji；reply 可以用简短 Markdown（列表、加粗、行内代码、代码块），"
+                        + "让结论更易读。");
         if (cwd != null && !cwd.trim().isEmpty()) {
             sb.append("\n- 当前工作目录：").append(cwd.trim());
         }
@@ -456,13 +484,16 @@ public class AiAgentService {
 
     /* ---------- 杂项 ---------- */
 
+    /**
+     * 把前端传来的完整历史整理成模型请求：限制单条长度与总量，最近的工具输出保留完整内容，
+     * 更早的输出做头尾压缩；即使超预算也会保留「当前任务」的原始用户描述与最后一条消息。
+     */
     private List<Map<String, String>> sanitize(List<AgentMessage> history) {
         if (history == null || history.isEmpty()) {
             throw new IllegalArgumentException("缺少对话内容");
         }
-        List<Map<String, String>> out = new ArrayList<>();
-        int from = Math.max(0, history.size() - MAX_HISTORY);
-        for (int i = from; i < history.size(); i++) {
+        List<Map<String, String>> all = new ArrayList<>();
+        for (int i = 0; i < history.size(); i++) {
             AgentMessage m = history.get(i);
             if (m == null) {
                 continue;
@@ -475,15 +506,64 @@ public class AiAgentService {
             if (c.length() > MAX_CONTENT_CHARS) {
                 c = c.substring(0, MAX_CONTENT_CHARS) + "\n…（已截断）";
             }
+            if (i < history.size() - RECENT_FULL_MESSAGES && isToolMessage(c)
+                    && c.length() > OLD_TOOL_HEAD + OLD_TOOL_TAIL + 200) {
+                c = c.substring(0, OLD_TOOL_HEAD)
+                        + "\n…（较早的命令输出已压缩）…\n"
+                        + c.substring(c.length() - OLD_TOOL_TAIL);
+            }
             Map<String, String> map = new LinkedHashMap<>();
             map.put("role", role);
             map.put("content", c);
-            out.add(map);
+            all.add(map);
+        }
+        if (all.isEmpty() || !"user".equals(all.get(all.size() - 1).get("role"))) {
+            throw new IllegalArgumentException("对话内容不完整");
+        }
+
+        // 当前任务的原始描述（最后一条非「工具结果」的用户消息），超预算时也要保留
+        int taskIdx = -1;
+        for (int i = all.size() - 1; i >= 0; i--) {
+            if ("user".equals(all.get(i).get("role")) && !isToolMessage(all.get(i).get("content"))) {
+                taskIdx = i;
+                break;
+            }
+        }
+
+        int start = Math.max(0, all.size() - MAX_HISTORY);
+        int from = all.size();
+        int total = 0;
+        for (int i = all.size() - 1; i >= start; i--) {
+            int len = all.get(i).get("content").length();
+            if (total > 0 && total + len > MAX_TOTAL_CHARS) {
+                break;
+            }
+            total += len;
+            from = i;
+        }
+        // 避免从一条「命令执行结果」开始：把对应的 assistant 命令一起带上
+        while (from > start && from < all.size() && isToolMessage(all.get(from).get("content"))) {
+            from--;
+        }
+
+        List<Map<String, String>> out = new ArrayList<>(all.subList(from, all.size()));
+        if (taskIdx >= 0 && taskIdx < from) {
+            out.add(0, all.get(taskIdx));
         }
         if (out.isEmpty() || !"user".equals(out.get(out.size() - 1).get("role"))) {
             throw new IllegalArgumentException("对话内容不完整");
         }
         return out;
+    }
+
+    /** 前端生成的「工具结果」消息（命令输出 / 跳过说明 / 继续指令） */
+    private static boolean isToolMessage(String content) {
+        if (content == null) {
+            return false;
+        }
+        return content.startsWith(TOOL_RESULT_PREFIX)
+                || content.startsWith("（用户跳过了这条命令）")
+                || content.startsWith("（继续）");
     }
 
     /** 清理终端控制序列（ANSI 转义、孤立回车），便于展示与回传给模型 */

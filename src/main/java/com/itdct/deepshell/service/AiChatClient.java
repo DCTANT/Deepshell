@@ -75,13 +75,24 @@ public class AiChatClient {
      * 若服务端忽略 stream 参数而返回一次性 JSON，会自动退化为单次回调。
      */
     public String stream(String systemPrompt, List<Map<String, String>> history, Consumer<String> onDelta) {
-        return stream(systemPrompt, history, onDelta, new AiCancellationToken());
+        return stream(systemPrompt, history, onDelta, null, new AiCancellationToken());
     }
 
     /** 可取消的流式调用：前端停止时断开 HTTP 连接并尽快退出读取循环 */
     public String stream(String systemPrompt, List<Map<String, String>> history,
                          Consumer<String> onDelta, AiCancellationToken token) {
+        return stream(systemPrompt, history, onDelta, null, token);
+    }
+
+    /**
+     * 可取消的流式调用（含思考过程）：reasoning_content 逐段回调 onReasoning，
+     * 正文逐段回调 onDelta。兼容把 reasoning 放在 reasoning / reasoning_content 两种字段的服务。
+     */
+    public String stream(String systemPrompt, List<Map<String, String>> history,
+                         Consumer<String> onDelta, Consumer<String> onReasoning,
+                         AiCancellationToken token) {
         final AiCancellationToken cancel = token == null ? new AiCancellationToken() : token;
+        final Consumer<String> reasonSink = onReasoning == null ? s -> { } : onReasoning;
         if (cancel.isCancelled()) {
             throw new AiCancellationToken.CancelledException();
         }
@@ -116,11 +127,16 @@ public class AiChatClient {
             String contentType = conn.getContentType();
             if (contentType == null || !contentType.toLowerCase().contains("event-stream")) {
                 // 部分兼容服务忽略 stream 参数，仍返回普通 JSON
-                String text = extractMessageContent(readAll(conn.getInputStream()));
+                JsonNode message = extractMessageNode(readAll(conn.getInputStream()));
+                String text = message == null ? "" : message.path("content").asText("");
+                String reasoning = message == null ? "" : reasoningText(message);
                 if (cancel.isCancelled()) {
                     throw new AiCancellationToken.CancelledException();
                 }
                 if (!text.isEmpty()) {
+                    if (!reasoning.isEmpty()) {
+                        reasonSink.accept(reasoning);
+                    }
                     onDelta.accept(text);
                     return text;
                 }
@@ -159,8 +175,16 @@ public class AiChatClient {
                         }
                         continue;
                     }
-                    // 只取正式内容，忽略 reasoning_content 等思考过程字段
-                    String delta = choices.get(0).path("delta").path("content").asText("");
+                    // 思考过程（DeepSeek reasoner 等）单独回调，正文仍只取 content
+                    JsonNode deltaNode = choices.get(0).path("delta");
+                    String reasoning = reasoningText(deltaNode);
+                    if (!reasoning.isEmpty()) {
+                        if (cancel.isCancelled()) {
+                            throw new AiCancellationToken.CancelledException();
+                        }
+                        reasonSink.accept(reasoning);
+                    }
+                    String delta = deltaNode.path("content").asText("");
                     if (!delta.isEmpty()) {
                         if (cancel.isCancelled()) {
                             throw new AiCancellationToken.CancelledException();
@@ -231,7 +255,8 @@ public class AiChatClient {
         return body;
     }
 
-    private String extractMessageContent(String resp) {
+    /** 从非流式响应中取出 message 节点（找不到时返回 null） */
+    private JsonNode extractMessageNode(String resp) {
         try {
             JsonNode root = mapper.readTree(resp);
             JsonNode err = root.path("error").path("message");
@@ -240,14 +265,26 @@ public class AiChatClient {
             }
             JsonNode choices = root.path("choices");
             if (!choices.isArray() || choices.size() == 0) {
-                return "";
+                return null;
             }
-            return choices.get(0).path("message").path("content").asText("");
+            return choices.get(0).path("message");
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 兼容 reasoning_content / reasoning 两种思考过程字段 */
+    private static String reasoningText(JsonNode node) {
+        if (node == null || node.isMissingNode()) {
             return "";
         }
+        String s = node.path("reasoning_content").asText("");
+        if (s.isEmpty()) {
+            s = node.path("reasoning").asText("");
+        }
+        return s == null ? "" : s;
     }
 
     private static String readAll(InputStream in) {
