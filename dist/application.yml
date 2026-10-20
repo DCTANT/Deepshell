@@ -1,36 +1,77 @@
 # DeepShell 外置配置
 # 此文件与 deepshell.jar 同级，启动时自动加载并覆盖程序内置默认值；未列出的项保持内置默认。
-# 完整的内置默认配置可在 jar 内的 BOOT-INF/classes/application.yml 查看。
+# 以下为完整默认配置，可直接按需修改。
+# 数据目录默认指向程序目录下的 data/，拷贝该目录即可迁移全部数据。
+
+server:
+  port: 17777
+  # 默认仅本机访问；在应用内开启「局域网访问」并重启后绑定 0.0.0.0
+  address: ${deepshell.lan-address:127.0.0.1}
+  compression:
+    enabled: true
+
+spring:
+  main:
+    # 该属性在 Spring Boot 中绑定得晚于 AWT 初始化，实际生效位置是 DeepShellApplication.main；
+    # 这里保留以声明意图，是否真正有图形界面由 LocalDownloadService 运行时探测
+    headless: false
+  application:
+    name: deepshell
+  datasource:
+    # 数据目录（数据库/密钥/日志等统一存放）：-Ddeepshell.data-dir > 外置 application.yml > 缺省 ~/.deepshell
+    url: jdbc:sqlite:${deepshell.data-dir:${user.home}/.deepshell}/db/deepshell.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1
+      connection-init-sql: PRAGMA journal_mode=WAL
+  jpa:
+    database-platform: org.sqlite.hibernate.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  thymeleaf:
+    cache: false
+  servlet:
+    multipart:
+      max-file-size: 4096MB
+      max-request-size: 4096MB
+
+logging:
+  level:
+    com.itdct.deepshell: info
+  file:
+    name: ${deepshell.data-dir:${user.home}/.deepshell}/logs/deepshell.log
 
 deepshell:
   # 程序数据目录：数据库、加密密钥、AI 配置、局域网开关、日志、背景图等均存放于此。
   # 相对路径基于启动目录解析；默认指向程序目录下的 data/，拷贝该目录即可迁移全部数据。
   data-dir: ./data
 
-  # 登录认证（默认关闭，仅本机使用）。开启局域网访问时必须启用登录并修改默认密码。
-  # Token 默认 6 小时有效，持续使用会自动续期；有效期可在右上角菜单「登录与安全」中修改。
+  # 登录认证：默认关闭（仅本机使用无需登录）。
+  # 开启局域网访问时必须启用登录并修改默认密码，否则应用会拒绝启动或拒绝开启局域网。
+  # 账号密码为明文配置，请务必修改默认值；可通过右上角菜单「登录与安全」调整 Token 有效期。
   auth:
     enabled: false
     username: admin
     password: deepshell
+    # Token 默认有效期（小时），1 - 720；页面持续使用时会自动续期
     token-expire-hours: 6
     # 同一 IP 连续登录失败达到该次数后，后续登录必须输入图形验证码；0 表示关闭
     captcha-fail-times: 2
 
-  # TLS/HTTPS：auto = 局域网访问时自动启用；on = 始终启用；off = 关闭（由反向代理终止 TLS）
+  # TLS/HTTPS：auto = 开启局域网访问时自动启用；on = 始终启用；off = 关闭（如反向代理终止 TLS）
   tls:
     mode: auto
-    # 留空使用数据目录 tls/deepshell.p12 自签证书（首次启动自动生成，浏览器需信任）
+    # 留空使用数据目录 tls/deepshell.p12 自签证书（首次启动自动生成）
     keystore: ""
     keystore-password: ""
     keystore-type: PKCS12
     key-alias: deepshell
     key-password: ""
 
-# ── 常用可调项（去掉行首 # 即生效）────────────────────────────
-# server:
-#   port: 17777              # 服务端口
-# deepshell:
-#   open-browser: true       # 启动后自动打开浏览器
-#   browser-cmd: ""          # 自定义打开命令，{url} 为地址占位符
-#   vscode-command: code     # VSCode 命令行（不在 PATH 时填完整路径）
+  # VSCode 命令行（默认 code；未加入 PATH 时可配完整路径，如 C:\Program Files\Microsoft VS Code\bin\code.cmd）
+  vscode-command: code
+  # 启动完成后自动打开浏览器访问首页（双击 jar 启动的默认体验；-Ddeepshell.open-browser=false 关闭；
+  # 可用 deepshell.browser-cmd 自定义打开命令，{url} 为地址占位符，如指定某浏览器完整路径）
+  open-browser: true
+  browser-cmd: ""
