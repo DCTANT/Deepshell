@@ -798,6 +798,12 @@ Vue.component('ai-chat-panel', {
             }
             this.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 36;
         },
+        noteText: function (m) {
+            if (m && m.code === 'noApiKey' && this.context === 'window') {
+                return '请求失败：尚未配置 API Key。请到左下角开始菜单 →「设置」→「AI 助手」中配置';
+            }
+            return m ? m.text : '';
+        },
         scrollToBottom: function (force) {
             if (force) {
                 this.stick = true;
@@ -4152,7 +4158,11 @@ new Vue({
             }
             if (conv) {
                 if (note) {
-                    conv.msgs.push({ role: 'note', text: note, action: action || '' });
+                    var noteItem = { role: 'note', text: note, action: action || '' };
+                    if (note.indexOf('尚未配置 API Key') >= 0) {
+                        noteItem.code = 'noApiKey';
+                    }
+                    conv.msgs.push(noteItem);
                 }
                 conv.updatedAt = Date.now();
             }
@@ -4904,7 +4914,7 @@ new Vue({
             var tab = createTerminalState(src.connId, conn, newSessionKey());
             tab.desktopOnly = true;
             tab.windowId = w.id;
-            tab.initialDir = startDir || '';
+            tab.initialDir = typeof startDir === 'string' ? startDir : '';
             tab.title = src.title || tab.title;
             tab.host = src.host || tab.host;
             tab.port = src.port || (conn && conn.port) || tab.port;

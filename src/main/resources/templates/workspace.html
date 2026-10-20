@@ -1534,7 +1534,7 @@
                        title="AI 正在执行任务"></i>
                 </button>
                 <button class="dsk-task-app dsk-terminal-app"
-                        title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow">
+                        title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow()">
                     <i class="el-icon-monitor"></i>
                     <span class="dsk-task-label">新建终端</span>
                 </button>
@@ -3424,7 +3424,7 @@
                                         </div>
                                         <div v-if="m.text && m.role === 'ai'" class="aichat-bubble aichat-md"
                                              v-html="renderMd(m.text)"></div>
-                                        <div v-else-if="m.text" class="aichat-bubble">{{ m.text }}</div>
+                                        <div v-else-if="m.text" class="aichat-bubble">{{ m.role === 'note' ? noteText(m) : m.text }}</div>
                                         <div v-if="m.role === 'ai' && m.text" class="aichat-actions">
                                             <span @click="copy(m.text)" title="复制这条回复">
                                                 <i class="el-icon-document-copy"></i> 复制
