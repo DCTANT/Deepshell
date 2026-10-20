@@ -222,7 +222,7 @@ public class SftpService {
         return s;
     }
 
-    /** 复制文件或文件夹到目标目录（同名目标存在时直接报错，避免静默覆盖） */
+    /** 复制文件或文件夹到目标目录（同名目标存在时按 Windows 习惯生成「- 副本」） */
     public void copy(String sessionId, List<String> paths, String destDir) throws Exception {
         if (paths == null || paths.isEmpty()) {
             throw new IllegalArgumentException("没有要复制的文件");
@@ -249,19 +249,57 @@ public class SftpService {
                 if (srcAttrs.isDir() && (dest.equals(src) || dest.startsWith(src + "/"))) {
                     throw new IllegalArgumentException("不能把文件夹复制到自身或其子目录");
                 }
-                String target = join(dest, name);
-                try {
-                    c.stat(target);
-                    throw new IllegalArgumentException("目标已存在：" + name);
-                } catch (SftpException e) {
-                    if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) {
-                        throw e;
-                    }
+                String targetName = uniqueCopyName(c, dest, name, srcAttrs.isDir());
+                if (!targetName.equals(name)) {
+                    log.info("复制目标同名，自动重命名: {} -> {}", name, targetName);
                 }
-                copyRecursive(c, src, target, 0);
+                copyRecursive(c, src, join(dest, targetName), 0);
             }
             return null;
         });
+    }
+
+    /**
+     * 目标已存在时生成 Windows 风格名称：file.txt -> file - 副本.txt，
+     * 再次冲突为 file - 副本 (2).txt；文件夹不拆分扩展名。
+     */
+    private static String uniqueCopyName(ChannelSftp c, String dest, String name, boolean dir)
+            throws Exception {
+        if (!sftpExists(c, join(dest, name))) {
+            return name;
+        }
+        String base = name;
+        String ext = "";
+        if (!dir) {
+            int dot = name.lastIndexOf('.');
+            if (dot > 0 && dot < name.length() - 1) {
+                base = name.substring(0, dot);
+                ext = name.substring(dot);
+            }
+        }
+        String candidate = base + " - 副本" + ext;
+        if (!sftpExists(c, join(dest, candidate))) {
+            return candidate;
+        }
+        for (int i = 2; i <= 1000; i++) {
+            candidate = base + " - 副本 (" + i + ")" + ext;
+            if (!sftpExists(c, join(dest, candidate))) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("同名文件过多，无法生成副本名称：" + name);
+    }
+
+    private static boolean sftpExists(ChannelSftp c, String path) throws SftpException {
+        try {
+            c.stat(path);
+            return true;
+        } catch (SftpException e) {
+            if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+                return false;
+            }
+            throw e;
+        }
     }
 
     private void copyRecursive(ChannelSftp c, String src, String target, int depth) throws Exception {

@@ -1496,6 +1496,7 @@ new Vue({
         desktopResizeDirs: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
         desktop: {
             visible: false,
+            wallDropActive: false,
             tabKey: '',
             windows: [],
             activeWinId: '',
@@ -1631,6 +1632,7 @@ new Vue({
         hostKeyVisible: false,
         hostKeyTrusting: false,
         hostKeyPrompt: null,
+        desktopDropDialog: { visible: false, paths: [], names: [], win: null, dest: '', busy: false },
         pfVisible: false,
         pfTab: null,
         pfLoading: false,
@@ -7288,7 +7290,8 @@ new Vue({
                 var parent = p.substring(0, p.lastIndexOf('/')) || '/';
                 return self.trimSlash(parent) === self.trimSlash(dest);
             });
-            if (parentSame) {
+            // 复制到原目录时允许生成「- 副本」；剪切到原目录仍是原地移动，提示即可
+            if (c.cut && parentSame) {
                 ELEMENT.Message.info('文件已在该目录中');
                 return;
             }
@@ -9350,7 +9353,7 @@ new Vue({
             };
             this.desktop.menu.visible = false;
             if (ev.dataTransfer) {
-                ev.dataTransfer.effectAllowed = 'move';
+                ev.dataTransfer.effectAllowed = 'copyMove';
                 try {
                     ev.dataTransfer.setData('text/plain', paths[0] || '');
                     ev.dataTransfer.setData('application/x-deepshell-paths', JSON.stringify(paths));
@@ -9362,6 +9365,7 @@ new Vue({
                 w.dragNames = [];
                 w.dropTarget = '';
             });
+            this.desktop.wallDropActive = false;
             this._deskFileDrag = null;
             this.stopDesktopDragScroll();
         },
@@ -9472,12 +9476,99 @@ new Vue({
         onDesktopSurfaceDragLeave: function () {
             this.desk.dropTarget = '';
         },
-        desktopMoveTo: function (sources, destDir, win, targetWin) {
+        /* ---------- 从资源管理器拖到桌面 ---------- */
+        onDesktopWallDragOver: function (ev) {
+            if (this.hasFileDrag(ev)) {
+                return;
+            }
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names || !drag.names.length) {
+                return;
+            }
+            ev.preventDefault();
+            if (ev.dataTransfer) {
+                ev.dataTransfer.dropEffect = 'copy';
+            }
+            this.desktop.wallDropActive = true;
+        },
+        onDesktopWallDragLeave: function () {
+            this.desktop.wallDropActive = false;
+        },
+        onDesktopWallDrop: function (ev) {
+            if (this.hasFileDrag(ev)) {
+                // 从本机拖入的文件仍交给全局上传逻辑
+                return;
+            }
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names || !drag.names.length) {
+                return;
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
+            this.desktop.wallDropActive = false;
+            if (drag.win) {
+                drag.win.dragNames = [];
+            }
+            this._deskFileDrag = null;
+            var dest = this.desktop.surface.dir;
+            if (!dest) {
+                ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
+                return;
+            }
+            this.desktopDropDialog = {
+                visible: true,
+                paths: drag.paths.slice(),
+                names: drag.names.slice(),
+                win: drag.win,
+                dest: dest,
+                busy: false
+            };
+        },
+        applyDesktopDrop: function (mode) {
+            var dd = this.desktopDropDialog;
+            if (!dd || !dd.paths || !dd.paths.length || dd.busy) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            dd.busy = true;
+            var finish = function () {
+                dd.busy = false;
+                dd.visible = false;
+                self.loadDesktopSurface();
+                if (dd.win && dd.win.type !== 'surface' && dd.win.path
+                        && self.trimSlash(dd.win.path) === self.trimSlash(dd.dest)) {
+                    self.desktopRefresh(dd.win);
+                }
+            };
+            if (mode === 'cut') {
+                Promise.resolve()
+                    .then(function () {
+                        return self.desktopMoveTo(dd.paths.slice(), dd.dest, dd.win, null, true);
+                    })
+                    .then(finish)
+                    .catch(finish);
+                return;
+            }
+            http.post('/api/sftp/copy', {
+                sessionId: t.sessionId,
+                destDir: dd.dest,
+                paths: dd.paths.slice()
+            }).then(function () {
+                ELEMENT.Message.success('已复制 ' + dd.names.length + ' 项到桌面');
+            }).catch(function () { /* 已提示 */ })
+                .then(finish);
+        },
+        desktopMoveTo: function (sources, destDir, win, targetWin, confirmed) {
             var t = this.desktopTab;
             var d = win || this.desk;
             var target = targetWin || d;
             if (!t || !t.sessionId || !sources.length) {
-                return;
+                return Promise.resolve();
             }
             var self = this;
             var dest = this.trimSlash(destDir);
@@ -9486,24 +9577,20 @@ new Vue({
             });
             if (parentSame) {
                 ELEMENT.Message.info('文件已在该目录中');
-                return;
+                return Promise.resolve();
             }
             var invalid = sources.filter(function (src) {
                 return dest === src || dest.indexOf(src + '/') === 0;
             });
             if (invalid.length) {
                 ELEMENT.Message.warning('不能把文件夹移动到自身或其子目录');
-                return;
+                return Promise.resolve();
             }
             var names = sources.map(function (src) {
                 return src.substring(src.lastIndexOf('/') + 1);
             });
             var label = names.length === 1 ? ('「' + names[0] + '」') : (names.length + ' 个项目');
-            this.$confirm(
-                '即将把' + label + '移动到目录：「' + dest + '」，移动后原位置将不再保留。',
-                '确认移动文件',
-                { type: 'warning', confirmButtonText: '确认移动', cancelButtonText: '取消' }
-            ).then(function () {
+            var perform = function () {
                 var chain = Promise.resolve();
                 var ok = 0;
                 var fail = 0;
@@ -9531,13 +9618,25 @@ new Vue({
                         d.lastSelected = '';
                         self.desktopRefresh(d);
                     }
-                    if (target !== d && self.desktop.windows.indexOf(target) >= 0) {
-                        target.selected = [];
-                        target.lastSelected = '';
-                        self.desktopRefresh(target);
+                    if (target !== d) {
+                        if (self.desktop.windows.indexOf(target) >= 0) {
+                            target.selected = [];
+                            target.lastSelected = '';
+                            self.desktopRefresh(target);
+                        } else if (target && target.type === 'surface') {
+                            self.refreshDesktopSurface();
+                        }
                     }
                 });
-            }).catch(function () { /* 取消或失败（已提示） */ });
+            };
+            if (confirmed) {
+                return perform();
+            }
+            this.$confirm(
+                '即将把' + label + '移动到目录：「' + dest + '」，移动后原位置将不再保留。',
+                '确认移动文件',
+                { type: 'warning', confirmButtonText: '确认移动', cancelButtonText: '取消' }
+            ).then(perform).catch(function () { /* 取消或失败（已提示） */ });
         },
         onDesktopSideButton: function (e) {
             var active = this.desktopWindowById(this.desktop.activeWinId);

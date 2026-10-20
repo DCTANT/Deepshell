@@ -368,14 +368,22 @@
     <div class="ai-desktop" v-if="desktop.visible" ref="desktopRoot" tabindex="-1"
          @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
          @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
-        <div class="dsk-wallpaper" @click="onDesktopSurfaceClick"
+        <div class="dsk-wallpaper" :class="{ 'drop-active': desktop.wallDropActive }"
+             @click="onDesktopSurfaceClick"
              @mousedown="onDesktopIconsMouseDown"
-             @contextmenu.prevent="onDesktopWallContextMenu">
+             @contextmenu.prevent="onDesktopWallContextMenu"
+             @dragover="onDesktopWallDragOver"
+             @dragleave="onDesktopWallDragLeave"
+             @drop="onDesktopWallDrop">
             <div class="dsk-wallpaper-img" v-if="desktopBgSettings.url"
                  :style="{ backgroundImage: 'url(' + desktopBgSettings.url + ')',
                            opacity: desktopBgSettings.opacity,
                            filter: desktopBgSettings.blur
                                ? ('blur(' + desktopBgSettings.blur + 'px)') : 'none' }"></div>
+            <div class="dsk-wall-drop-hint" v-if="desktop.wallDropActive">
+                <i class="el-icon-download"></i>
+                <span>松开后选择复制或剪切到桌面</span>
+            </div>
         </div>
 
         <div class="dsk-marquee" v-if="desktop.iconMarquee.visible"
@@ -2803,6 +2811,27 @@
                 <el-button v-if="pfEditId" @click="resetPfForm">取消编辑</el-button>
             </el-form-item>
         </el-form>
+    </el-dialog>
+
+    <!-- 拖放到桌面 -->
+    <el-dialog title="放到桌面" :visible.sync="desktopDropDialog.visible" width="440px" append-to-body
+               :close-on-click-modal="false" :close-on-press-escape="false"
+               :show-close="!desktopDropDialog.busy">
+        <div class="desk-drop-dialog">
+            <p>将 <b>{{ desktopDropDialog.names.length === 1
+                ? ('「' + desktopDropDialog.names[0] + '」')
+                : (desktopDropDialog.names.length + ' 个项目') }}</b> 放到桌面？</p>
+            <div class="desk-drop-path">{{ desktopDropDialog.dest }}</div>
+            <p class="desk-drop-hint">复制：保留原文件，在桌面生成副本；剪切：将原文件移动到桌面。</p>
+        </div>
+        <div slot="footer">
+            <el-button size="small" :disabled="desktopDropDialog.busy"
+                       @click="desktopDropDialog.visible = false">取消</el-button>
+            <el-button size="small" :loading="desktopDropDialog.busy"
+                       @click="applyDesktopDrop('cut')">剪切到桌面</el-button>
+            <el-button size="small" type="primary" :loading="desktopDropDialog.busy"
+                       @click="applyDesktopDrop('copy')">复制到桌面</el-button>
+        </div>
     </el-dialog>
 
     <!-- 编辑快捷命令 -->
