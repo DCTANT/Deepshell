@@ -1,5 +1,6 @@
 package com.itdct.deepshell.config;
 
+import com.itdct.deepshell.service.TlsService;
 import org.apache.catalina.connector.Connector;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
@@ -27,8 +28,18 @@ public class LoopbackDualStackConfig implements WebServerFactoryCustomizer<Tomca
     @Value("${server.port:18080}")
     private int bindPort;
 
+    private final TlsService tls;
+
+    public LoopbackDualStackConfig(TlsService tls) {
+        this.tls = tls;
+    }
+
     @Override
     public void customize(TomcatServletWebServerFactory factory) {
+        // HTTPS 模式不追加明文 ::1 连接器，避免同端口出现 HTTP 旁路
+        if (tls.isEnabled()) {
+            return;
+        }
         InetAddress address = factory.getAddress();
         if (address == null) {
             try {

@@ -1,5 +1,6 @@
 package com.itdct.deepshell.config;
 
+import com.itdct.deepshell.service.TlsService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -23,12 +24,18 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
     @Value("${deepshell.browser-cmd:}")
     private String browserCmd;
 
+    private final TlsService tls;
+
+    public BrowserLauncher(TlsService tls) {
+        this.tls = tls;
+    }
+
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
         if (!openBrowser) {
             return;
         }
-        final String url = "http://127.0.0.1:" + port + "/";
+        final String url = tls.localUrl() + "/";
         Thread t = new Thread(() -> {
             try {
                 Thread.sleep(600);

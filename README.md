@@ -49,8 +49,9 @@
 - **磁盘分析**（WizTree 式）：右侧面板「磁盘」标签——对指定目录执行 `du` 列出每个子目录 / 文件的大小与占比（按大小降序、占比条展示），**点击文件夹逐层下钻**定位最占空间的目录，「↑」返回上级；SFTP 工具栏可一键「分析当前目录」直达；不跨文件系统挂载点统计
 - **审计日志**：记录登录成功/失败、AI 终端执行的命令、文件上传/下载/删除/重命名/移动/改权限/压缩、连接新建/编辑/删除/导入/导出、主机指纹信任/更新、端口转发增删启停、Token 有效期调整；右上角菜单「审计日志」支持按操作和关键字筛选、分页查看并导出 CSV；默认保留最近 5 万条，避免数据库无限增长
 
-- **登录认证（可选）**：`application.yml` 中开启后，访问工作台与 API 需先登录；账号密码可配置（默认 `admin` / `deepshell`），JWT 以 HttpOnly Cookie 保存，默认 6 小时过期；右上角菜单「登录与安全」可调整 Token 有效期，页面持续使用时会自动续期。默认关闭，本机使用无需登录。**同一 IP 密码连续错误 2 次后，第三次登录起必须输入图形验证码**（验证码 2 分钟有效、一次性使用，点击图片可刷新；登录成功后失败计数自动清零）
-- **工作台菜单**（右上角汉堡按钮）：连接导入（支持一次框选多个文件，可导入 FinalShell 连接文件）/ 连接导出（弹窗勾选要导出的连接）、终端字体设置（即时生效并记忆）、快捷键设置（双击 Ctrl / Tab 补全 / Esc 关闭可开关）、终端背景设置（本地上传或 URL，透明度与模糊可调；终端背景自动透明透出；AI 桌面背景在桌面设置中单独配置，且按连接分别保存）、**AI 设置**（DeepSeek / 通义千问 / 智谱 GLM / MiniMax / Kimi / OpenAI 等厂商，兼容任意 OpenAI 接口，模型列表实时获取、下拉选择，用于命令翻译与 AI 终端，可调整单轮步数上限）、**局域网访问开关**（默认仅本机 127.0.0.1，开放并重启后局域网可访问，弹窗内提供访问地址复制与安全提示）
+- **登录认证（可选）**：`application.yml` 中开启后，访问工作台与 API 需先登录；账号密码可配置（默认 `admin` / `deepshell`），JWT 以 HttpOnly Cookie 保存，默认 6 小时过期；右上角菜单「登录与安全」可调整 Token 有效期，页面持续使用时会自动续期。默认关闭，仅本机使用无需登录；**开启局域网访问时必须启用登录并修改默认密码**，否则无法开启局域网，已手工开启时应用会拒绝启动。**同一 IP 密码连续错误 2 次后，第三次登录起必须输入图形验证码**（验证码 2 分钟有效、一次性使用，点击图片可刷新；登录成功后失败计数自动清零）
+- **HTTPS（TLS）**：局域网模式默认自动启用 HTTPS；未配置证书时首次启动自动在数据目录 `tls/` 生成自签 PKCS12 证书（包含 localhost、127.0.0.1 和当前局域网 IP），浏览器首次访问需信任一次（局域网 IP 变化后会自动重签，需要重新信任）；TLS 启用后页面与 WebSocket 自动使用 https / wss。正式证书可在 `application.yml` 配置 `deepshell.tls.keystore` / `keystore-password` / `keystore-type` / `key-alias`；由 Nginx 等反向代理终止 TLS 时可设 `deepshell.tls.mode: off`
+- **工作台菜单**（右上角汉堡按钮）：连接导入（支持一次框选多个文件，可导入 FinalShell 连接文件）/ 连接导出（弹窗勾选要导出的连接）、终端字体设置（即时生效并记忆）、快捷键设置（双击 Ctrl / Tab 补全 / Esc 关闭可开关）、终端背景设置（本地上传或 URL，透明度与模糊可调；终端背景自动透明透出；AI 桌面背景在桌面设置中单独配置，且按连接分别保存）、**AI 设置**（DeepSeek / 通义千问 / 智谱 GLM / MiniMax / Kimi / OpenAI 等厂商，兼容任意 OpenAI 接口，模型列表实时获取、下拉选择，用于命令翻译与 AI 终端，可调整单轮步数上限）、**局域网访问开关**（默认仅本机 127.0.0.1；开启前必须启用登录并修改默认密码，开放并重启后局域网可访问，默认自动切换 HTTPS，弹窗内提供访问地址复制与安全提示）
 
 > 按需精简：不含多用户注册、配置云端同步等非核心功能；端口转发按连接保存；单账号登录可在配置中按需开启。
 
@@ -66,7 +67,7 @@
 前置要求：JDK 8+、Maven。
 
 ```bash
-# 构建（同时生成分发包 target/deepshell-1.0.0.zip）
+# 构建（同时生成分发包 target/deepshell-1.2.0.zip）
 mvn -DskipTests package
 
 # 或直接运行 jar（开发调试）
@@ -75,10 +76,10 @@ java -jar target/deepshell.jar
 
 ### 分发包（推荐）
 
-解压 `target/deepshell-1.0.0.zip` 后的目录结构：
+解压 `target/deepshell-1.2.0.zip` 后的目录结构：
 
 ```
-deepshell-1.0.0/
+deepshell-1.2.0/
 ├─ deepshell.jar      主程序
 ├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
 ├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）
@@ -114,6 +115,7 @@ deepshell-1.0.0/
 | 登录签名密钥 | `auth.key`（首次启动自动生成；删除后所有登录 Token 失效） |
 | 登录 Token 有效期 | `auth.properties`（在右上角「登录与安全」中修改后写入） |
 | AI 接口配置 | `ai.properties`（厂商 / API 地址 / Key / 模型） |
+| HTTPS 自签证书 | `tls/deepshell.p12` 与 `tls/keystore.pass`（首次启用 TLS 时自动生成；也可在配置中改用外部证书） |
 | 终端背景图片 | `bg/` |
 | AI 桌面背景图片 | `bg/desktop/<连接 ID>/`（旧版全局背景保留在 `bg/desktop/`，未单独设置的连接沿用） |
 | 桌面图标布局 | `db/deepshell.db` 的 `desktop_icon_layout` 表（按连接保存顺序与隐藏状态） |
@@ -125,7 +127,7 @@ deepshell-1.0.0/
 > 数据目录：分发包默认为程序目录下的 `data/`（可在同级 `application.yml` 中修改）；开发模式为 `~/.deepshell`。拷贝该目录即可迁移全部数据（含密钥与数据库）。
 
 - 密码/私钥口令经 AES-GCM 加密后落库，明文仅在提交与建立连接时短暂存在于内存
-- 本工具设计为**本机使用**；请勿直接暴露到公网（SSH 连接代理无鉴权）
+- 默认仅监听 127.0.0.1；开启局域网必须启用登录并修改默认密码，且默认自动启用 HTTPS。仍不建议直接把服务暴露到公网，公网场景建议放在带正式证书的反向代理之后
 
 ## 目录结构
 
@@ -166,6 +168,14 @@ deepshell.auth.username: admin
 deepshell.auth.password: deepshell
 deepshell.auth.token-expire-hours: 6
 deepshell.auth.captcha-fail-times: 2   # 同一 IP 连续失败多少次后要求验证码；0 表示关闭
+
+# TLS/HTTPS（auto：局域网访问时自动启用；on：始终启用；off：关闭，由反向代理终止 TLS）
+deepshell.tls.mode: auto
+deepshell.tls.keystore: ""             # 留空自动生成数据目录 tls/deepshell.p12 自签证书
+deepshell.tls.keystore-password: ""
+deepshell.tls.keystore-type: PKCS12
+deepshell.tls.key-alias: deepshell
+deepshell.tls.key-password: ""
 ```
 
 > 登录账号密码在配置文件中为明文，请务必修改默认密码；开启登录后建议不要将服务直接暴露到公网。Token 有效期还可在右上角菜单「登录与安全」中在线调整（1 - 720 小时），设置保存在数据目录的 `auth.properties` 中。验证码按 TCP 连接的对端 IP 计数，不信任 `X-Forwarded-For`，避免伪造请求头绕过阈值。

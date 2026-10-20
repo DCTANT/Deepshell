@@ -13,6 +13,21 @@ import java.util.Properties;
 public class DeepShellApplication {
 
     public static void main(String[] args) throws Exception {
+        // 让 --deepshell.data-dir=... 与 -Ddeepshell.data-dir=... 一样在数据目录解析前生效，
+        // 避免数据库走 CLI 参数、密钥/证书/日志却落到 ~/.deepshell
+        if (System.getProperty("deepshell.data-dir") == null) {
+            for (int i = 0; i < args.length; i++) {
+                String arg = args[i];
+                if (arg != null && arg.startsWith("--deepshell.data-dir=")) {
+                    System.setProperty("deepshell.data-dir", arg.substring("--deepshell.data-dir=".length()));
+                    break;
+                }
+                if ("--deepshell.data-dir".equals(arg) && i + 1 < args.length) {
+                    System.setProperty("deepshell.data-dir", args[i + 1]);
+                    break;
+                }
+            }
+        }
         Path dataDir = DataDir.root();
         // SQLite 不会自动创建缺失的父目录，需在数据源初始化前准备好
         Files.createDirectories(dataDir.resolve("db"));

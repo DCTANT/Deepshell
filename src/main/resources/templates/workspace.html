@@ -2063,6 +2063,7 @@
                                     <div class="dsk-set-info">
                                         <b>局域网访问</b>
                                         <span>当前：{{ lanSettings.effectiveLan ? '已开放' : '仅本机' }} ·
+                                            {{ lanSettings.tlsEnabled ? 'HTTPS' : 'HTTP' }} ·
                                             端口 {{ lanSettings.port || 18080 }}</span>
                                     </div>
                                     <el-switch v-model="lanSettings.lanEnabled" size="mini"
@@ -2086,7 +2087,7 @@
                                 </div>
                             </div>
                             <div class="dsk-set-note">
-                                本工具无登录鉴权，请仅在可信局域网中开放访问；开放后需要重启应用生效。
+                                开放局域网需先启用登录认证并修改默认密码；生效后默认自动使用 HTTPS，重启应用后生效。
                             </div>
                         </template>
 
@@ -3107,7 +3108,11 @@
 
     <!-- 局域网访问 -->
     <el-dialog title="局域网访问" :visible.sync="lanVisible" width="560px" append-to-body>
-        <div class="set-row">
+        <el-alert v-if="!lanSettings.authEnabled" type="warning" :closable="false" show-icon
+                  title="开放局域网前必须先启用登录认证并修改默认密码（application.yml → deepshell.auth）"></el-alert>
+        <el-alert v-else-if="lanSettings.defaultPassword" type="error" :closable="false" show-icon
+                  title="当前仍在使用默认密码 deepshell，必须修改后才能开放局域网"></el-alert>
+        <div class="set-row" style="margin-top:12px">
             <span class="set-label" style="width:auto;flex:1">开放局域网访问（切换需重启应用生效）</span>
             <el-switch v-model="lanSettings.lanEnabled" @change="saveLan"></el-switch>
         </div>
@@ -3119,6 +3124,17 @@
                 设置与运行状态不一致，请重启应用后生效
             </span>
         </div>
+        <div class="set-row">
+            <span class="set-hint">
+                传输加密：{{ lanSettings.tlsEnabled ? 'HTTPS（TLS 已启用）' : 'HTTP（未加密）' }}
+                <template v-if="!lanSettings.tlsEnabled && lanSettings.tlsNextEnabled">
+                    ；开启局域网并重启后自动启用 HTTPS
+                </template>
+                <template v-else-if="!lanSettings.tlsEnabled && lanSettings.tlsMode === 'off'">
+                    ；当前配置关闭了 TLS（deepshell.tls.mode=off）
+                </template>
+            </span>
+        </div>
         <el-divider></el-divider>
         <div class="set-hint" style="margin-bottom:6px">访问地址：</div>
         <div class="lan-url" v-for="u in lanSettings.urls" :key="u">
@@ -3128,15 +3144,19 @@
         </div>
         <div class="set-hint" style="margin-top:10px;line-height:1.9">
             · 默认仅本机（127.0.0.1）可访问；开放并重启后，局域网内电脑可通过上方 IP 地址访问<br>
-            · 首次开放如弹出 Windows 防火墙提示，请选择「允许访问」<br>
-            · 本工具默认无登录鉴权；开放局域网前，建议在 application.yml 中开启登录认证
+            · 开放局域网必须启用登录认证并修改默认密码，否则后端会拒绝开启（已手工开启时应用会拒绝启动）<br>
+            · 局域网模式默认自动启用 HTTPS：首次启动会生成自签证书（数据目录 tls/），浏览器需信任一次<br>
+            · 正式证书可配置 deepshell.tls.keystore / keystore-password；由反向代理终止 TLS 时设 deepshell.tls.mode: off<br>
+            · 首次开放如弹出 Windows 防火墙提示，请选择「允许访问」
         </div>
     </el-dialog>
 
     <!-- 登录与安全 -->
     <el-dialog title="登录与安全" :visible.sync="authSetVisible" width="520px" append-to-body>
         <template v-if="authStatus.enabled">
-            <div class="set-row">
+            <el-alert v-if="authStatus.defaultPassword" type="error" :closable="false" show-icon
+                      title="仍在使用默认密码 deepshell，开放局域网访问前必须修改"></el-alert>
+            <div class="set-row" style="margin-top:12px">
                 <span class="set-label" style="width: 88px">当前用户</span>
                 <span class="set-value">{{ authStatus.username }}</span>
             </div>

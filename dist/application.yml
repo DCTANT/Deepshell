@@ -7,8 +7,8 @@ deepshell:
   # 相对路径基于启动目录解析；默认指向程序目录下的 data/，拷贝该目录即可迁移全部数据。
   data-dir: ./data
 
-  # 登录认证（默认关闭）。开启后访问工作台需登录，Token 默认 6 小时有效，
-  # 持续使用会自动续期；有效期也可在右上角菜单「登录与安全」中修改。
+  # 登录认证（默认关闭，仅本机使用）。开启局域网访问时必须启用登录并修改默认密码。
+  # Token 默认 6 小时有效，持续使用会自动续期；有效期可在右上角菜单「登录与安全」中修改。
   auth:
     enabled: false
     username: admin
@@ -16,6 +16,16 @@ deepshell:
     token-expire-hours: 6
     # 同一 IP 连续登录失败达到该次数后，后续登录必须输入图形验证码；0 表示关闭
     captcha-fail-times: 2
+
+  # TLS/HTTPS：auto = 局域网访问时自动启用；on = 始终启用；off = 关闭（由反向代理终止 TLS）
+  tls:
+    mode: auto
+    # 留空使用数据目录 tls/deepshell.p12 自签证书（首次启动自动生成，浏览器需信任）
+    keystore: ""
+    keystore-password: ""
+    keystore-type: PKCS12
+    key-alias: deepshell
+    key-password: ""
 
 # ── 常用可调项（去掉行首 # 即生效）────────────────────────────
 # server:

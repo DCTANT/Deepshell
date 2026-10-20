@@ -63,6 +63,9 @@ public class AuthService {
     @Value("${deepshell.auth.token-expire-hours:6}")
     private int defaultExpireHours;
 
+    @Value("${server.address:127.0.0.1}")
+    private String bindAddress;
+
     private volatile byte[] secret;
     private volatile int expireHours;
     /** 账号密码摘要：修改密码后旧 Token 自动失效 */
@@ -77,6 +80,18 @@ public class AuthService {
         }
         if (password == null) {
             password = "deepshell";
+        }
+        // 安全底线：监听局域网时不允许无鉴权或默认密码
+        if (isLanBinding(bindAddress)) {
+            if (!enabled) {
+                throw new IllegalStateException("已开启局域网访问，但登录认证未启用。"
+                        + "请设置 deepshell.auth.enabled=true 并修改 deepshell.auth.password 后重启；"
+                        + "或删除数据目录下的 network.properties 恢复仅本机访问。");
+            }
+            if ("deepshell".equals(password)) {
+                throw new IllegalStateException("已开启局域网访问，但仍在使用默认密码 deepshell。"
+                        + "请修改 deepshell.auth.password 后重启。");
+            }
         }
         try {
             secret = loadOrCreateSecret();
@@ -93,6 +108,14 @@ public class AuthService {
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    public boolean isDefaultPassword() {
+        return "deepshell".equals(password);
+    }
+
+    private static boolean isLanBinding(String address) {
+        return "0.0.0.0".equals(address) || "::".equals(address) || "[::]".equals(address);
     }
 
     public String getUsername() {
@@ -254,6 +277,7 @@ public class AuthService {
         long now = Instant.now().getEpochSecond();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("enabled", enabled);
+        m.put("defaultPassword", isDefaultPassword());
         m.put("loggedIn", !enabled || info != null);
         m.put("username", (!enabled || info != null) ? username : "");
         m.put("tokenExpireHours", expireHours);

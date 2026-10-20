@@ -1657,6 +1657,7 @@ new Vue({
         authSetHours: 6,
         authStatus: {
             enabled: false,
+            defaultPassword: false,
             loggedIn: true,
             username: '',
             tokenExpireHours: 6,
@@ -1723,8 +1724,12 @@ new Vue({
         procDetail: null,
         procDetailVisible: false,
         procDetailCmd: null,
-        lanSettings: { lanEnabled: false, effectiveLan: false, restartRequired: false, port: 0, urls: [] },
-        appInfo: { version: '1.0.0', java: '', os: '', dataDir: '' },
+        lanSettings: {
+            lanEnabled: false, effectiveLan: false, restartRequired: false, port: 0, urls: [],
+            authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
+            tlsSelfSigned: false, tlsNextEnabled: false
+        },
+        appInfo: { version: '1.2.0', java: '', os: '', dataDir: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
@@ -10442,15 +10447,36 @@ new Vue({
                 self.lanSettings.effectiveLan = !!d.effectiveLan;
                 self.lanSettings.restartRequired = !!d.restartRequired;
                 self.lanSettings.port = d.port;
+                self.lanSettings.authEnabled = !!d.authEnabled;
+                self.lanSettings.defaultPassword = !!d.defaultPassword;
+                self.lanSettings.tlsEnabled = !!d.tlsEnabled;
+                self.lanSettings.tlsMode = d.tlsMode || 'auto';
+                self.lanSettings.tlsSelfSigned = !!d.tlsSelfSigned;
+                self.lanSettings.tlsNextEnabled = !!d.tlsNextEnabled;
                 self.lanSettings.urls = [d.localUrl].concat(d.lanUrls || []);
             }).catch(function () { /* 忽略 */ });
         },
         saveLan: function () {
             var self = this;
+            if (this.lanSettings.lanEnabled) {
+                if (!this.authStatus.enabled) {
+                    ELEMENT.Message.warning('开放局域网前请先启用登录认证并修改默认密码（application.yml → deepshell.auth）');
+                    this.loadLan();
+                    return;
+                }
+                if (this.authStatus.defaultPassword) {
+                    ELEMENT.Message.warning('开放局域网前请先修改默认密码 deepshell.auth.password');
+                    this.loadLan();
+                    return;
+                }
+            }
             http.post('/api/network', { lanEnabled: this.lanSettings.lanEnabled }).then(function (r) {
                 ELEMENT.Message.success(r && r.message ? r.message : '已保存');
                 self.loadLan();
-            }).catch(function () { /* 已由拦截器提示 */ });
+            }).catch(function () {
+                // 被拒绝时把开关恢复为服务端当前值
+                self.loadLan();
+            });
         },
         /* ---------- 登录与 Token 设置 ---------- */
         loadAuthStatus: function () {

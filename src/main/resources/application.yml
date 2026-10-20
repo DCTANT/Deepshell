@@ -37,7 +37,8 @@ logging:
     name: ${deepshell.data-dir:${user.home}/.deepshell}/logs/deepshell.log
 
 deepshell:
-  # 登录认证：默认关闭（本机使用无需登录）。开启后访问工作台与 API 需先登录。
+  # 登录认证：默认关闭（仅本机使用无需登录）。
+  # 开启局域网访问时必须启用登录并修改默认密码，否则应用会拒绝启动或拒绝开启局域网。
   # 账号密码为明文配置，请务必修改默认值；可通过右上角菜单「登录与安全」调整 Token 有效期。
   auth:
     enabled: false
@@ -47,6 +48,15 @@ deepshell:
     token-expire-hours: 6
     # 同一 IP 连续登录失败达到该次数后，后续登录必须输入图形验证码；0 表示关闭
     captcha-fail-times: 2
+  # TLS/HTTPS：auto = 开启局域网访问时自动启用；on = 始终启用；off = 关闭（如反向代理终止 TLS）
+  tls:
+    mode: auto
+    # 留空使用数据目录 tls/deepshell.p12 自签证书（首次启动自动生成）
+    keystore: ""
+    keystore-password: ""
+    keystore-type: PKCS12
+    key-alias: deepshell
+    key-password: ""
   # VSCode 命令行（默认 code；未加入 PATH 时可配完整路径，如 C:\Program Files\Microsoft VS Code\bin\code.cmd）
   vscode-command: code
   # 启动完成后自动打开浏览器访问首页（双击 jar 启动的默认体验；-Ddeepshell.open-browser=false 关闭；
