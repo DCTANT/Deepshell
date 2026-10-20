@@ -187,6 +187,7 @@ function createDesktopWindow(id) {
         dragNames: [],
         dropTarget: '',
         fileDragOver: false,
+        winDragOver: false,
         pendingSelect: '',
         pendingOpen: false,
         thumbSrc: {},
@@ -1632,7 +1633,10 @@ new Vue({
         hostKeyVisible: false,
         hostKeyTrusting: false,
         hostKeyPrompt: null,
-        desktopDropDialog: { visible: false, paths: [], names: [], win: null, dest: '', busy: false },
+        desktopDropDialog: {
+            visible: false, paths: [], names: [], win: null, targetWin: null,
+            dest: '', title: '', isDesktop: false, busy: false
+        },
         pfVisible: false,
         pfTab: null,
         pfLoading: false,
@@ -9299,8 +9303,8 @@ new Vue({
                 self.desktopRefresh(d);
             });
         },
-        desktopAutoScroll: function (ev) {
-            var el = this.deskFilesEl(this.desk);
+        desktopAutoScroll: function (ev, win) {
+            var el = this.deskFilesEl(win || this.desk);
             if (!el || !ev) {
                 return;
             }
@@ -9315,8 +9319,9 @@ new Vue({
             this._deskScrollSpeed = Math.max(-18, Math.min(18, sp));
             if (sp && !this._deskScrollTimer) {
                 var self = this;
+                var scrollWin = win || this.desk;
                 this._deskScrollTimer = setInterval(function () {
-                    var sc = self.deskFilesEl(self.desk);
+                    var sc = self.deskFilesEl(scrollWin);
                     if (!sc || !self._deskScrollSpeed) {
                         clearInterval(self._deskScrollTimer);
                         self._deskScrollTimer = null;
@@ -9369,27 +9374,32 @@ new Vue({
             this.desktop.windows.forEach(function (w) {
                 w.dragNames = [];
                 w.dropTarget = '';
+                w.winDragOver = false;
+                w.fileDragOver = false;
             });
             this.desktop.wallDropActive = false;
             this._deskFileDrag = null;
             this.stopDesktopDragScroll();
         },
-        onDesktopDragOver: function (ev, row) {
-            var d = this.desk;
+        onDesktopDragOver: function (ev, row, win) {
+            var d = win || this.desk;
             var extFiles = this.hasFileDrag(ev);
             if (extFiles) {
                 if (ev.dataTransfer) {
                     ev.dataTransfer.dropEffect = 'copy';
                 }
                 d.dropTarget = row && row.dir ? row.name : '';
+                d.winDragOver = false;
                 d.fileDragOver = true;
-                this.desktopAutoScroll(ev);
+                this.desktopAutoScroll(ev, d);
                 return;
             }
             var drag = this._deskFileDrag;
             if (!drag || !drag.names.length) {
                 return;
             }
+            // 悬停在文件夹上时只高亮该文件夹，隐藏整窗提示
+            d.winDragOver = false;
             if (!row || !row.dir || drag.names.indexOf(row.name) >= 0) {
                 d.dropTarget = '';
                 return;
@@ -9398,19 +9408,33 @@ new Vue({
             var invalid = drag.paths.some(function (src) {
                 return destPath === src || destPath.indexOf(src + '/') === 0;
             });
-            d.dropTarget = invalid ? '' : row.name;
-            this.desktopAutoScroll(ev);
-        },
-        onDesktopDragLeave: function (row) {
-            if (row && this.desk.dropTarget === row.name) {
-                this.desk.dropTarget = '';
+            if (invalid) {
+                d.dropTarget = '';
+                if (ev.dataTransfer) {
+                    ev.dataTransfer.dropEffect = 'none';
+                }
+                return;
             }
-            if (row && this.desk.fileDragOver) {
-                this.desk.fileDragOver = false;
+            d.dropTarget = row.name;
+            if (ev.dataTransfer) {
+                ev.dataTransfer.dropEffect = 'copy';
+            }
+            this.desktopAutoScroll(ev, d);
+        },
+        onDesktopDragLeave: function (row, win) {
+            var d = win || this.desk;
+            if (row && d.dropTarget === row.name) {
+                d.dropTarget = '';
+            }
+            if (row && d.fileDragOver) {
+                d.fileDragOver = false;
+            }
+            if (row) {
+                d.winDragOver = false;
             }
         },
-        onDesktopDrop: function (ev, row) {
-            var d = this.desk;
+        onDesktopDrop: function (ev, row, win) {
+            var d = win || this.desk;
             var files = [];
             if (ev.dataTransfer && ev.dataTransfer.files) {
                 for (var i = 0; i < ev.dataTransfer.files.length; i++) {
@@ -9419,6 +9443,7 @@ new Vue({
             }
             var destDir = row && row.dir ? this.desktopEntryPath(row, d) : d.path;
             d.dropTarget = '';
+            d.winDragOver = false;
             d.fileDragOver = false;
             this._deskDragDepth = 0;
             this.stopDesktopDragScroll();
@@ -9440,17 +9465,56 @@ new Vue({
             ev.stopPropagation();
             drag.win.dragNames = [];
             this._deskFileDrag = null;
-            this.desktopMoveTo(drag.paths, destDir, drag.win, d);
+            if (!destDir) {
+                ELEMENT.Message.warning('目标目录尚未就绪，请稍后再试');
+                return;
+            }
+            // 拖回原窗口的原目录：没有可执行的操作
+            if (drag.win === d && this.trimSlash(destDir) === this.trimSlash(d.path)) {
+                return;
+            }
+            var invalid = drag.paths.some(function (src) {
+                return destDir === src || destDir.indexOf(src + '/') === 0;
+            });
+            if (invalid) {
+                ELEMENT.Message.warning('不能把文件夹复制或移动到自身或其子目录');
+                return;
+            }
+            this.openDesktopDropDialog({
+                paths: drag.paths.slice(),
+                names: drag.names.slice(),
+                win: drag.win,
+                targetWin: d,
+                dest: destDir,
+                title: '复制或剪切文件'
+            });
         },
-        onDesktopSurfaceDragOver: function (ev) {
+        onDesktopSurfaceDragOver: function (ev, win) {
+            var d = win || this.desk;
             if (this.hasFileDrag(ev)) {
                 ev.preventDefault();
-                this.desk.dropTarget = '';
-                this.desktopAutoScroll(ev);
+                d.dropTarget = '';
+                d.winDragOver = false;
+                d.fileDragOver = true;
+                this.desktopAutoScroll(ev, d);
+                return;
             }
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names.length) {
+                return;
+            }
+            // 允许把窗口内的文件拖到另一个窗口的空白处
+            ev.preventDefault();
+            if (ev.dataTransfer) {
+                ev.dataTransfer.dropEffect = 'copy';
+            }
+            d.dropTarget = '';
+            d.fileDragOver = false;
+            d.winDragOver = drag.win !== d;
+            this.desktopAutoScroll(ev, d);
         },
-        onDesktopSurfaceDrop: function (ev) {
-            var d = this.desk;
+        onDesktopSurfaceDrop: function (ev, win) {
+            var d = win || this.desk;
             var files = [];
             if (ev.dataTransfer && ev.dataTransfer.files) {
                 for (var i = 0; i < ev.dataTransfer.files.length; i++) {
@@ -9458,6 +9522,7 @@ new Vue({
                 }
             }
             d.dropTarget = '';
+            d.winDragOver = false;
             d.fileDragOver = false;
             this._deskDragDepth = 0;
             this.stopDesktopDragScroll();
@@ -9468,18 +9533,99 @@ new Vue({
                 return;
             }
             var drag = this._deskFileDrag;
-            if (drag) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                drag.win.dragNames = [];
-                this._deskFileDrag = null;
-                if (drag.win !== d) {
-                    this.desktopMoveTo(drag.paths, d.path, drag.win, d);
-                }
+            if (!drag || !drag.names.length) {
+                return;
             }
+            ev.preventDefault();
+            ev.stopPropagation();
+            drag.win.dragNames = [];
+            this._deskFileDrag = null;
+            // 同窗口空白处松开：保持原状
+            if (drag.win === d || !d.path) {
+                return;
+            }
+            var invalid = drag.paths.some(function (src) {
+                return d.path === src || d.path.indexOf(src + '/') === 0;
+            });
+            if (invalid) {
+                ELEMENT.Message.warning('不能把文件夹复制或移动到自身或其子目录');
+                return;
+            }
+            this.openDesktopDropDialog({
+                paths: drag.paths.slice(),
+                names: drag.names.slice(),
+                win: drag.win,
+                targetWin: d,
+                dest: d.path,
+                title: '复制或剪切文件'
+            });
         },
-        onDesktopSurfaceDragLeave: function () {
-            this.desk.dropTarget = '';
+        onDesktopSurfaceDragLeave: function (ev, win) {
+            var d = win || this.desk;
+            var el = ev && ev.currentTarget;
+            // 在子元素之间移动不算离开窗口
+            if (el && ev.relatedTarget && el.contains(ev.relatedTarget)) {
+                return;
+            }
+            d.dropTarget = '';
+            d.winDragOver = false;
+            d.fileDragOver = false;
+            this.stopDesktopDragScroll();
+        },
+        /* 窗口级拖放：工具栏、侧栏、状态栏等文件区之外的位置也接收窗口内拖拽 */
+        onDesktopWindowDragOver: function (ev, win) {
+            if (win.type !== 'explorer' || this.hasFileDrag(ev)) {
+                return;
+            }
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names.length) {
+                return;
+            }
+            ev.preventDefault();
+            if (ev.dataTransfer) {
+                ev.dataTransfer.dropEffect = 'copy';
+            }
+            win.winDragOver = drag.win !== win;
+        },
+        onDesktopWindowDragLeave: function (ev, win) {
+            var el = ev && ev.currentTarget;
+            if (el && ev.relatedTarget && el.contains(ev.relatedTarget)) {
+                return;
+            }
+            win.winDragOver = false;
+        },
+        onDesktopWindowDrop: function (ev, win) {
+            if (win.type !== 'explorer' || this.hasFileDrag(ev)) {
+                // 本机文件：由文件区的上传逻辑处理
+                return;
+            }
+            var drag = this._deskFileDrag;
+            if (!drag || !drag.names.length) {
+                return;
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
+            drag.win.dragNames = [];
+            this._deskFileDrag = null;
+            win.winDragOver = false;
+            if (drag.win === win || !win.path) {
+                return;
+            }
+            var invalid = drag.paths.some(function (src) {
+                return win.path === src || win.path.indexOf(src + '/') === 0;
+            });
+            if (invalid) {
+                ELEMENT.Message.warning('不能把文件夹复制或移动到自身或其子目录');
+                return;
+            }
+            this.openDesktopDropDialog({
+                paths: drag.paths.slice(),
+                names: drag.names.slice(),
+                win: drag.win,
+                targetWin: win,
+                dest: win.path,
+                title: '复制或剪切文件'
+            });
         },
         /* ---------- 从资源管理器拖到桌面 ---------- */
         onDesktopWallDragOver: function (ev) {
@@ -9520,12 +9666,26 @@ new Vue({
                 ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
                 return;
             }
-            this.desktopDropDialog = {
-                visible: true,
+            this.openDesktopDropDialog({
                 paths: drag.paths.slice(),
                 names: drag.names.slice(),
                 win: drag.win,
+                targetWin: null,
                 dest: dest,
+                title: '放到桌面',
+                isDesktop: true
+            });
+        },
+        openDesktopDropDialog: function (opts) {
+            this.desktopDropDialog = {
+                visible: true,
+                paths: (opts.paths || []).slice(),
+                names: (opts.names || []).slice(),
+                win: opts.win || null,
+                targetWin: opts.targetWin || null,
+                dest: opts.dest || '',
+                title: opts.title || '复制或剪切文件',
+                isDesktop: !!opts.isDesktop,
                 busy: false
             };
         },
@@ -9544,16 +9704,16 @@ new Vue({
             var finish = function () {
                 dd.busy = false;
                 dd.visible = false;
-                self.loadDesktopSurface();
-                if (dd.win && dd.win.type !== 'surface' && dd.win.path
-                        && self.trimSlash(dd.win.path) === self.trimSlash(dd.dest)) {
-                    self.desktopRefresh(dd.win);
-                }
             };
             if (mode === 'cut') {
                 Promise.resolve()
                     .then(function () {
-                        return self.desktopMoveTo(dd.paths.slice(), dd.dest, dd.win, null, true);
+                        return self.desktopMoveTo(dd.paths.slice(), dd.dest, dd.win, dd.targetWin, true);
+                    })
+                    .then(function () {
+                        if (dd.isDesktop) {
+                            self.loadDesktopSurface();
+                        }
                     })
                     .then(finish)
                     .catch(finish);
@@ -9564,7 +9724,13 @@ new Vue({
                 destDir: dd.dest,
                 paths: dd.paths.slice()
             }).then(function () {
-                ELEMENT.Message.success('已复制 ' + dd.names.length + ' 项到桌面');
+                ELEMENT.Message.success('已复制 ' + dd.names.length + ' 项到 '
+                    + (dd.isDesktop ? '桌面' : dd.dest));
+                if (dd.targetWin && self.desktop.windows.indexOf(dd.targetWin) >= 0) {
+                    self.desktopRefresh(dd.targetWin);
+                } else if (dd.isDesktop) {
+                    self.loadDesktopSurface();
+                }
             }).catch(function () { /* 已提示 */ })
                 .then(finish);
         },

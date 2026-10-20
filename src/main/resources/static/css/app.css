@@ -4162,6 +4162,13 @@ body.resizing .term-host {
     font-size: 38px;
 }
 
+/* 窗口间拖动：松开后弹出复制/剪切选择 */
+.dsk-drop-hint.win-drop {
+    border-color: #22a06b;
+    background: rgba(34, 160, 107, .07);
+    color: #1b7f55;
+}
+
 .dsk-drop-hint-tip {
     color: #7e93b3;
     font-size: 11px;

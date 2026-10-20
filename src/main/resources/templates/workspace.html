@@ -439,7 +439,10 @@
                            dragging: w.dragging, resizing: w.resizing }"
                  :style="desktopWindowStyle(w)" :data-win-id="w.id" v-show="!w.min"
                  @mousedown.capture="activateDesktopWindow(w.id)"
-                 @dragenter.capture="activateDesktopWindow(w.id)">
+                 @dragenter.capture="activateDesktopWindow(w.id)"
+                 @dragover="onDesktopWindowDragOver($event, w)"
+                 @dragleave="onDesktopWindowDragLeave($event, w)"
+                 @drop="onDesktopWindowDrop($event, w)">
                 <div class="dsk-titlebar" @mousedown="startDesktopWindowDrag($event, w)"
                      @dblclick="toggleDesktopWindowMax(w)">
                     <span class="dsk-titlebar-icon">
@@ -1378,8 +1381,8 @@
                      @click="onDesktopFilesClick"
                      @mousedown="onDesktopFilesMouseDown"
                      @contextmenu.prevent="desktopBlankContextMenu($event)"
-                     @dragover="onDesktopSurfaceDragOver" @drop="onDesktopSurfaceDrop"
-                     @dragleave="onDesktopSurfaceDragLeave">
+                     @dragover="onDesktopSurfaceDragOver($event, w)" @drop="onDesktopSurfaceDrop($event, w)"
+                     @dragleave="onDesktopSurfaceDragLeave($event, w)">
                     <div class="dsk-marquee" v-if="w.marquee.visible"
                          :style="{ left: w.marquee.left + 'px', top: w.marquee.top + 'px',
                                    width: w.marquee.width + 'px', height: w.marquee.height + 'px' }"></div>
@@ -1415,9 +1418,9 @@
                              @contextmenu.prevent.stop="desktopEntryContextMenu($event, row)"
                              @dragstart.stop="onDesktopDragStart($event, row)"
                              @dragend.stop="onDesktopDragEnd"
-                             @dragover.stop.prevent="onDesktopDragOver($event, row)"
-                             @dragleave.stop="onDesktopDragLeave(row)"
-                             @drop.stop.prevent="onDesktopDrop($event, row)">
+                             @dragover.stop.prevent="onDesktopDragOver($event, row, w)"
+                             @dragleave.stop="onDesktopDragLeave(row, w)"
+                             @drop.stop.prevent="onDesktopDrop($event, row, w)">
                             <span class="dsk-ico" :class="{ folder: row.dir }">
                                 <svg v-if="row.dir" class="dsk-folder-svg" viewBox="0 0 64 52" aria-hidden="true">
                                     <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
@@ -1461,9 +1464,9 @@
                                  @contextmenu.prevent.stop="desktopEntryContextMenu($event, row)"
                                  @dragstart.stop="onDesktopDragStart($event, row)"
                                  @dragend.stop="onDesktopDragEnd"
-                                 @dragover.stop.prevent="onDesktopDragOver($event, row)"
-                                 @dragleave.stop="onDesktopDragLeave(row)"
-                                 @drop.stop.prevent="onDesktopDrop($event, row)">
+                                 @dragover.stop.prevent="onDesktopDragOver($event, row, w)"
+                                 @dragleave.stop="onDesktopDragLeave(row, w)"
+                                 @drop.stop.prevent="onDesktopDrop($event, row, w)">
                                 <span class="dsk-row-name">
                                     <span class="dsk-ico small" :class="{ folder: row.dir }">
                                         <svg v-if="row.dir" class="dsk-folder-svg" viewBox="0 0 64 52" aria-hidden="true">
@@ -1488,6 +1491,11 @@
                         <i class="el-icon-upload"></i>
                         <div>松开鼠标上传到 {{ w.path }}</div>
                         <div class="dsk-drop-hint-tip">拖到文件夹图标上可上传到该文件夹</div>
+                    </div>
+                    <div class="dsk-drop-hint win-drop" v-if="w.winDragOver">
+                        <i class="el-icon-copy-document"></i>
+                        <div>松开后选择复制或剪切到</div>
+                        <div class="dsk-drop-hint-tip">{{ w.path }}</div>
                     </div>
                 </div>
 
@@ -2814,24 +2822,27 @@
         </el-form>
     </el-dialog>
 
-    <!-- 拖放到桌面 -->
-    <el-dialog title="放到桌面" :visible.sync="desktopDropDialog.visible" width="440px" append-to-body
+    <!-- 拖放/拖拽：复制或剪切到目标目录 -->
+    <el-dialog :title="desktopDropDialog.title || '复制或剪切文件'"
+               :visible.sync="desktopDropDialog.visible" width="460px" append-to-body
                :close-on-click-modal="false" :close-on-press-escape="false"
                :show-close="!desktopDropDialog.busy">
         <div class="desk-drop-dialog">
             <p>将 <b>{{ desktopDropDialog.names.length === 1
                 ? ('「' + desktopDropDialog.names[0] + '」')
-                : (desktopDropDialog.names.length + ' 个项目') }}</b> 放到桌面？</p>
+                : (desktopDropDialog.names.length + ' 个项目') }}</b>
+                <template v-if="desktopDropDialog.isDesktop">放到桌面</template>
+                <template v-else>复制或剪切到以下目录</template>？</p>
             <div class="desk-drop-path">{{ desktopDropDialog.dest }}</div>
-            <p class="desk-drop-hint">复制：保留原文件，在桌面生成副本；剪切：将原文件移动到桌面。</p>
+            <p class="desk-drop-hint">复制：保留原文件，在目标位置生成副本；剪切：将原文件移动到目标位置。</p>
         </div>
         <div slot="footer">
             <el-button size="small" :disabled="desktopDropDialog.busy"
                        @click="desktopDropDialog.visible = false">取消</el-button>
             <el-button size="small" :loading="desktopDropDialog.busy"
-                       @click="applyDesktopDrop('cut')">剪切到桌面</el-button>
+                       @click="applyDesktopDrop('cut')">{{ desktopDropDialog.isDesktop ? '剪切到桌面' : '剪切到此处' }}</el-button>
             <el-button size="small" type="primary" :loading="desktopDropDialog.busy"
-                       @click="applyDesktopDrop('copy')">复制到桌面</el-button>
+                       @click="applyDesktopDrop('copy')">{{ desktopDropDialog.isDesktop ? '复制到桌面' : '复制到此处' }}</el-button>
         </div>
     </el-dialog>
 
