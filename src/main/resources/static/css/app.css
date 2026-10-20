@@ -1876,6 +1876,46 @@ body.resizing .term-host {
     color: #ffffff;
 }
 
+.cmd-pop .cmd-snip-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.cmd-pop .cmd-snip-item:hover {
+    background: rgba(76, 141, 255, .15);
+}
+
+.cmd-pop .cmd-snip-name {
+    flex: 0 0 auto;
+    color: #dbe4f3;
+    font-size: 12px;
+}
+
+.cmd-pop .cmd-snip-text {
+    flex: 1;
+    min-width: 0;
+    color: #8b98ad;
+    font-family: Consolas, monospace;
+    font-size: 11.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cmd-pop .cmd-snip-fill {
+    flex: 0 0 auto;
+    color: #6b7891;
+    padding: 2px;
+}
+
+.cmd-pop .cmd-snip-fill:hover {
+    color: #7fb0ff;
+}
+
 .cmd-pop .cmd-opt-row {
     display: flex;
     justify-content: space-between;
@@ -6451,8 +6491,7 @@ body.resizing .term-host {
 }
 
 .dsk-tool-body > .dirs,
-.dsk-tool-body > .cmds,
-.dsk-tool-body > .procs {
+.dsk-tool-body > .cmds {
     flex: 1;
     min-height: 0;
     height: auto;
@@ -6471,8 +6510,14 @@ body.resizing .term-host {
     border-top-color: #edf0f5;
 }
 
-.dsk-procs-body .procs {
-    padding: 0 6px 6px;
+.dsk-cmd-target-note {
+    flex: 0 0 auto;
+    margin: 0 4px 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #f3f7ff;
+    color: #56657a;
+    font-size: 12px;
 }
 
 .dsk-tool-hint {

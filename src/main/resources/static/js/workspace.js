@@ -1173,6 +1173,7 @@ Vue.component('term-cmd-bar', {
             histVisible: false,
             optsVisible: false,
             sendToVisible: false,
+            snippetsVisible: false,
             searchVisible: false,
             searchText: '',
             _histIdx: undefined,
@@ -1183,6 +1184,9 @@ Vue.component('term-cmd-bar', {
     computed: {
         targets: function () {
             return this.$root.tabs || [];
+        },
+        snippets: function () {
+            return this.$root.snippets || [];
         }
     },
     watch: {
@@ -1196,6 +1200,7 @@ Vue.component('term-cmd-bar', {
             this.histVisible = false;
             this.optsVisible = false;
             this.sendToVisible = false;
+            this.snippetsVisible = false;
             this.searchVisible = false;
             this.searchText = '';
             this._histIdx = undefined;
@@ -1254,6 +1259,23 @@ Vue.component('term-cmd-bar', {
         },
         toggleTarget: function (key, checked) {
             this.$root.toggleTarget(key, checked, this.tab);
+        },
+        runSnippet: function (c) {
+            var t = this.tab;
+            if (!t || !t.ws || t.ws.readyState !== 1 || t.status !== 'open') {
+                ELEMENT.Message.warning('当前终端未连接');
+                return;
+            }
+            t.ws.send(JSON.stringify({ type: 'data', data: c.command + '\r' }));
+            if (this.$root.pushHistory) {
+                this.$root.pushHistory(t, c.command);
+            }
+            this.snippetsVisible = false;
+        },
+        fillSnippet: function (c) {
+            this.tab.cmdText = c.command;
+            this.snippetsVisible = false;
+            this.focus();
         },
         clearHistory: function () {
             this.$root.clearHistory(this.tab);
@@ -1413,10 +1435,9 @@ new Vue({
             { id: 'terminal', label: '新建终端', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'taskmgr', label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' },
-            { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { id: 'file', label: '资源管理器', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
-            { id: 'process', label: '进程', icon: 'el-icon-s-grid', color: '#e06c75' },
             { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
             { id: 'control', label: '设置', icon: 'el-icon-setting', color: '#54657e' },
             { id: 'connect', label: '连接管理', icon: 'el-icon-connection', color: '#2f8fce' }
@@ -1834,22 +1855,6 @@ new Vue({
         uiTab: function () {
             return (this.desktop.visible ? this.desktopTab : null) || this.activeTab;
         },
-        uiSessionTabs: function () {
-            if (!this.desktop.visible) {
-                return this.tabs;
-            }
-            var out = [];
-            var t = this.desktopTab;
-            if (t) {
-                out.push(t);
-            }
-            this.desktop.windows.forEach(function (w) {
-                if (w.type === 'terminal' && w.termTab && out.indexOf(w.termTab) < 0) {
-                    out.push(w.termTab);
-                }
-            });
-            return out;
-        },
         uiCurrentDir: function () {
             if (this.desktop.visible) {
                 return this.desk.path || this.desktopHomeDir || '';
@@ -1927,7 +1932,7 @@ new Vue({
             return this.desktop.windows.filter(function (w) {
                 return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr'
                     || w.type === 'transfer' || w.type === 'disk' || w.type === 'connect'
-                    || w.type === 'dirs' || w.type === 'cmd' || w.type === 'process';
+                    || w.type === 'dirs' || w.type === 'cmd';
             });
         },
         /* ---------- 任务管理器 ---------- */
@@ -2563,7 +2568,7 @@ new Vue({
             return cells;
         },
         filteredProcRows: function () {
-            var t = this.uiTab;
+            var t = this.activeTab;
             if (!t || !t.procList) {
                 return [];
             }
@@ -4442,9 +4447,6 @@ new Vue({
             if (type === 'cmd') {
                 return 'el-icon-caret-right';
             }
-            if (type === 'process') {
-                return 'el-icon-s-grid';
-            }
             return 'el-icon-folder-opened';
         },
         desktopWindowTitle: function (w) {
@@ -4471,9 +4473,6 @@ new Vue({
             }
             if (w && w.type === 'cmd') {
                 return '快捷命令';
-            }
-            if (w && w.type === 'process') {
-                return '进程';
             }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
@@ -4516,11 +4515,6 @@ new Vue({
             }
             if (w && w.type === 'cmd') {
                 return this.snippets.length + ' 条命令' + (host ? ' · ' + host : '');
-            }
-            if (w && w.type === 'process') {
-                var pt = this.uiTab;
-                return (pt && pt.procList ? pt.procList.length : 0) + ' 个进程'
-                    + (host ? ' · ' + host : '');
             }
             if (w && w.type === 'ai') {
                 var t = this.desktopTab;
@@ -4851,33 +4845,6 @@ new Vue({
             var area = this.desktopWindowWorkArea();
             var w = this.addDesktopWindow('cmd');
             this.centerDesktopWindow(w, 620, Math.max(420, Math.round(area.height * 0.72)));
-            var self = this;
-            this.$nextTick(function () {
-                if (self.$refs.desktopRoot) {
-                    self.$refs.desktopRoot.focus();
-                }
-            });
-            return w;
-        },
-        openDesktopProcessWindow: function () {
-            if (!this.desktop.visible) {
-                return null;
-            }
-            var t = this.desktopTab;
-            var existing = this.desktopWindowOfType('process');
-            if (existing) {
-                this.restoreDesktopWindow(existing);
-                if (t && t.sessionId) {
-                    this.loadProcesses(t);
-                }
-                return existing;
-            }
-            var area = this.desktopWindowWorkArea();
-            var w = this.addDesktopWindow('process');
-            this.centerDesktopWindow(w, 900, Math.max(460, Math.round(area.height * 0.84)));
-            if (t && t.sessionId) {
-                this.loadProcesses(t);
-            }
             var self = this;
             this.$nextTick(function () {
                 if (self.$refs.desktopRoot) {
@@ -9858,10 +9825,6 @@ new Vue({
                 this.openDesktopCommandsWindow();
                 return;
             }
-            if (id === 'process') {
-                this.openDesktopProcessWindow();
-                return;
-            }
             if (id === 'sysinfo') {
                 this.openDesktopSysInfo();
                 return;
@@ -10195,7 +10158,7 @@ new Vue({
             // 先用列表里的（可能被截断）命令行立即展示，再异步取完整命令行替换
             this.procDetailCmd = row.args || row.comm || '';
             this.procDetailVisible = true;
-            var t = this.uiTab;
+            var t = this.activeTab;
             if (!t || !t.sessionId) {
                 return;
             }
@@ -12593,7 +12556,7 @@ new Vue({
             });
         },
         killProcess: function (row, force) {
-            var t = this.uiTab;
+            var t = this.activeTab;
             if (!t || !t.sessionId) {
                 return;
             }
@@ -13069,12 +13032,17 @@ new Vue({
             var alive = function (x) {
                 return x.ws && x.ws.readyState === 1 && x.status === 'open';
             };
+            // 桌面里的快捷命令固定发送到当前桌面连接
+            if (this.desktop.visible) {
+                var dt = this.uiTab;
+                return dt && alive(dt) ? [dt] : [];
+            }
             if (this.snippetTarget === 'all') {
-                return this.uiSessionTabs.filter(alive);
+                return this.tabs.filter(alive);
             }
             if (this.snippetTarget === 'custom') {
                 var keys = this.snippetTargets;
-                return this.uiSessionTabs.filter(function (x) {
+                return this.tabs.filter(function (x) {
                     return keys.indexOf(x.key) >= 0 && alive(x);
                 });
             }
@@ -13427,10 +13395,8 @@ new Vue({
             self.closeDesktopSubMenus();
         });
         setInterval(function () {
-            var t = self.uiTab;
-            var needPanel = self.panelVisible && self.panelTab === 'process';
-            var needWin = self.desktop.visible && !!self.desktopWindowOfType('process');
-            if ((needPanel || needWin) && t && t.sessionId
+            var t = self.activeTab;
+            if (self.panelVisible && self.panelTab === 'process' && t && t.sessionId
                 && t.procAuto && !t.procLoading) {
                 self.loadProcesses(t);
             }
