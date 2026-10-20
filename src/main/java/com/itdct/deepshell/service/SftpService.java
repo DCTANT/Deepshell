@@ -455,7 +455,17 @@ public class SftpService {
 
     /** 多选打包下载预检：校验目录 / 路径关系，并确认顶层文件或文件夹可访问 */
     public int checkBundle(String sessionId, String dir, List<String> paths) throws Exception {
-        BundleSelection sel = validateBundle(dir, paths);
+        return checkSources(sessionId, dir, paths, MAX_BUNDLE_SOURCES);
+    }
+
+    /** 本机直写下载预检：顶层选中项不设数量上限（整目录照片备份可能一次几千项） */
+    public int checkLocalDownload(String sessionId, String dir, List<String> paths) throws Exception {
+        return checkSources(sessionId, dir, paths, 0);
+    }
+
+    private int checkSources(String sessionId, String dir, List<String> paths, int maxSources)
+            throws Exception {
+        BundleSelection sel = validateBundle(dir, paths, maxSources);
         withSftp(sessionId, c -> {
             for (String name : sel.names) {
                 try {
@@ -601,6 +611,11 @@ public class SftpService {
     }
 
     private static BundleSelection validateBundle(String dir, List<String> paths) {
+        return validateBundle(dir, paths, MAX_BUNDLE_SOURCES);
+    }
+
+    /** maxSources 为 0 表示不限顶层项数 */
+    private static BundleSelection validateBundle(String dir, List<String> paths, int maxSources) {
         String d = dir == null ? "" : dir.trim();
         while (d.length() > 1 && d.endsWith("/")) {
             d = d.substring(0, d.length() - 1);
@@ -635,8 +650,8 @@ public class SftpService {
         if (names.isEmpty()) {
             throw new IllegalArgumentException("请选择要下载的文件或文件夹");
         }
-        if (names.size() > MAX_BUNDLE_SOURCES) {
-            throw new IllegalArgumentException("一次最多下载 " + MAX_BUNDLE_SOURCES + " 项");
+        if (maxSources > 0 && names.size() > maxSources) {
+            throw new IllegalArgumentException("一次最多下载 " + maxSources + " 项");
         }
         return new BundleSelection(d, new ArrayList<>(names));
     }
@@ -723,7 +738,7 @@ public class SftpService {
     }
 
     static LocalDownloadPlan planLocalDownloadTo(ChannelSftp c, String dir, List<String> paths) {
-        BundleSelection sel = validateBundle(dir, paths);
+        BundleSelection sel = validateBundle(dir, paths, 0);
         List<LocalDownloadEntry> entries = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         Set<String> visitedDirs = new HashSet<>();

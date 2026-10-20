@@ -136,7 +136,7 @@ public class LocalDownloadService {
             throw new IllegalArgumentException("目录不合法");
         }
         // 先校验远端路径，避免创建了本地目录才发现选择无效
-        sftp.checkBundle(req.getSessionId(), remoteDir, req.getPaths());
+        sftp.checkLocalDownload(req.getSessionId(), remoteDir, req.getPaths());
         cleanup();
         String subDir = subDirName(remoteDir);
         Path target = createTargetDir(picked.dir, subDir);
