@@ -18,6 +18,17 @@ public class ConnectionForm {
     /** 私钥口令：同上 */
     private String passphrase;
     private String remark;
+    /** NONE / HTTP / SOCKS5 */
+    private String proxyType;
+    private String proxyHost;
+    private Integer proxyPort;
+    private String proxyUsername;
+    /** 明文代理密码：仅提交时传输，服务端加密存储；为空表示不修改 */
+    private String proxyPassword;
+    /** 跳板机连接 id（必须是另一条已保存连接） */
+    private Long jumpConnectionId;
+    /** 持久会话（tmux） */
+    private Boolean persistSession;
     private Integer sortOrder;
     /** 仅「测试连接」使用：编辑态据此回退已保存的密码 / 私钥口令；保存接口忽略 */
     private Long id;

@@ -5,6 +5,7 @@ import com.itdct.deepshell.entity.SshConnection;
 import com.itdct.deepshell.repo.AiConversationRepository;
 import com.itdct.deepshell.repo.CommonDirRepository;
 import com.itdct.deepshell.repo.ConnFolderRepository;
+import com.itdct.deepshell.repo.PortForwardRuleRepository;
 import com.itdct.deepshell.repo.SshConnectionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,15 +21,17 @@ public class ConnectionService {
     private final ConnFolderRepository folderRepo;
     private final AiConversationRepository aiConvRepo;
     private final CommonDirRepository commonDirRepo;
+    private final PortForwardRuleRepository portForwardRepo;
     private final CryptoService cryptoService;
 
     public ConnectionService(SshConnectionRepository repo, ConnFolderRepository folderRepo,
                              AiConversationRepository aiConvRepo, CommonDirRepository commonDirRepo,
-                             CryptoService cryptoService) {
+                             PortForwardRuleRepository portForwardRepo, CryptoService cryptoService) {
         this.repo = repo;
         this.folderRepo = folderRepo;
         this.aiConvRepo = aiConvRepo;
         this.commonDirRepo = commonDirRepo;
+        this.portForwardRepo = portForwardRepo;
         this.cryptoService = cryptoService;
     }
 
@@ -66,6 +69,13 @@ public class ConnectionService {
         c.setKeyPath(src.getKeyPath());
         c.setPassphraseEnc(src.getPassphraseEnc());
         c.setRemark(src.getRemark());
+        c.setProxyType(src.getProxyType());
+        c.setProxyHost(src.getProxyHost());
+        c.setProxyPort(src.getProxyPort());
+        c.setProxyUsername(src.getProxyUsername());
+        c.setProxyPasswordEnc(src.getProxyPasswordEnc());
+        c.setJumpConnectionId(src.getJumpConnectionId());
+        c.setPersistSession(src.getPersistSession());
         c.setFolderId(src.getFolderId());
         c.setSortOrder(src.getSortOrder());
         return repo.save(c);
@@ -94,9 +104,17 @@ public class ConnectionService {
     }
 
     public void delete(Long id) {
-        // 一并清理该连接的 AI 终端对话与常用目录
+        List<SshConnection> dependents = repo.findByJumpConnectionId(id);
+        if (!dependents.isEmpty()) {
+            String names = dependents.size() > 3
+                    ? dependents.get(0).getName() + " 等 " + dependents.size() + " 条连接"
+                    : dependents.stream().map(SshConnection::getName).reduce((a, b) -> a + "、" + b).orElse("");
+            throw new IllegalArgumentException("该连接正被 " + names + " 用作跳板机，请先调整这些连接");
+        }
+        // 一并清理该连接的 AI 终端对话、常用目录与端口转发规则
         aiConvRepo.deleteAll(aiConvRepo.findByConnectionId(id));
         commonDirRepo.deleteAll(commonDirRepo.findByConnectionIdOrderByIdAsc(id));
+        portForwardRepo.deleteByConnectionId(id);
         repo.deleteById(id);
     }
 
@@ -173,6 +191,68 @@ public class ConnectionService {
         }
         if (!isBlank(f.getPassphrase())) {
             c.setPassphraseEnc(cryptoService.encrypt(f.getPassphrase()));
+        }
+
+        String proxyType = isBlank(f.getProxyType()) ? "NONE" : f.getProxyType().trim().toUpperCase();
+        if (!"NONE".equals(proxyType) && !"HTTP".equals(proxyType) && !"SOCKS5".equals(proxyType)) {
+            throw new IllegalArgumentException("代理类型仅支持 HTTP / SOCKS5");
+        }
+        c.setProxyType(proxyType);
+        if ("NONE".equals(proxyType)) {
+            c.setProxyHost(null);
+            c.setProxyPort(null);
+            c.setProxyUsername(null);
+            c.setProxyPasswordEnc(null);
+        } else {
+            if (isBlank(f.getProxyHost())) {
+                throw new IllegalArgumentException("请填写代理地址");
+            }
+            int proxyPort = f.getProxyPort() == null
+                    ? ("SOCKS5".equals(proxyType) ? 1080 : 8080) : f.getProxyPort();
+            if (proxyPort < 1 || proxyPort > 65535) {
+                throw new IllegalArgumentException("代理端口范围不正确");
+            }
+            c.setProxyHost(f.getProxyHost().trim());
+            c.setProxyPort(proxyPort);
+            c.setProxyUsername(trimOrNull(f.getProxyUsername()));
+            if (!isBlank(f.getProxyPassword())) {
+                c.setProxyPasswordEnc(cryptoService.encrypt(f.getProxyPassword()));
+            }
+        }
+
+        Long selfId = c.getId();
+        Long jumpId = f.getJumpConnectionId();
+        if (jumpId != null) {
+            if (selfId != null && jumpId.equals(selfId)) {
+                throw new IllegalArgumentException("跳板机不能选择当前连接自身");
+            }
+            validateJumpChain(jumpId, selfId);
+        }
+        c.setJumpConnectionId(jumpId);
+        if (f.getPersistSession() != null) {
+            c.setPersistSession(f.getPersistSession());
+        } else if (c.getPersistSession() == null) {
+            c.setPersistSession(Boolean.TRUE);
+        }
+    }
+
+    /** 校验跳板机链路：必须存在、不能包含自身、不能循环、层级不超过 10 */
+    private void validateJumpChain(Long startId, Long selfId) {
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        Long cur = startId;
+        int depth = 0;
+        while (cur != null) {
+            if (selfId != null && cur.equals(selfId)) {
+                throw new IllegalArgumentException("跳板机链路不能包含当前连接自身");
+            }
+            if (!seen.add(cur)) {
+                throw new IllegalArgumentException("跳板机链路存在循环引用");
+            }
+            if (++depth > 10) {
+                throw new IllegalArgumentException("跳板机层级过深（最多 10 级）");
+            }
+            SshConnection next = get(cur);
+            cur = next.getJumpConnectionId();
         }
     }
 

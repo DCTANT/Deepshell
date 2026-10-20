@@ -3,6 +3,7 @@ package com.itdct.deepshell.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.itdct.deepshell.service.HostKeyCheckException;
 import com.itdct.deepshell.service.SshSessionManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -88,9 +89,19 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             open.put("sessionId", s.getId());
             open.put("name", s.getName());
             open.put("reattached", opened.reattached);
+            open.put("persistent", s.isTmux());
+            if (!opened.reattached && s.getNotice() != null) {
+                open.put("notice", s.getNotice());
+            }
             sendText(ws, open.toString());
             // 先发 open，再回放最近输出；客户端收到 open 后会重置终端再写入快照
             s.attach(data -> sendBinary(ws, data), snapshot -> sendBinary(ws, snapshot));
+        } catch (HostKeyCheckException e) {
+            ObjectNode n = om.createObjectNode();
+            n.put("type", "hostkey");
+            n.set("hostKey", om.valueToTree(e.getInfo()));
+            sendText(ws, n.toString());
+            closeQuietly(ws);
         } catch (Exception e) {
             log.warn("SSH 连接失败: {}", e.toString());
             sendError(ws, friendly(e));

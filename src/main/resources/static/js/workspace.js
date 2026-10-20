@@ -298,6 +298,14 @@ function loadAiChatMode() {
     return 'auto';
 }
 
+/* 端口转发表单默认值 */
+function emptyPfForm() {
+    return {
+        connectionId: null, direction: 'LOCAL', bindHost: '127.0.0.1', bindPort: 8080,
+        destHost: '127.0.0.1', destPort: 80, autoStart: true
+    };
+}
+
 /* 浏览器侧会话键：F5 后带同一个键重连，服务端可复用仍未断开的 SSH 会话 */
 function newSessionKey() {
     try {
@@ -329,6 +337,7 @@ function createTerminalState(connId, conn, clientKey) {
         reconnectTimer: null,
         explicitClose: false,
         serverClosed: false,
+        hostKeyPending: false,
         fit: null,
         sftpPath: '',
         sftpEntries: [],
@@ -573,7 +582,7 @@ function clearReconnectTimer(tab) {
 
 /* WebSocket 非主动关闭时按退避间隔自动重连；服务端保留会话时会直接附着并回放输出 */
 function scheduleReconnect(app, tab) {
-    if (!tab || tab.explicitClose || tab.serverClosed) {
+    if (!tab || tab.explicitClose || tab.serverClosed || tab.hostKeyPending) {
         return;
     }
     clearReconnectTimer(tab);
@@ -1619,6 +1628,16 @@ new Vue({
         snippetTarget: loadSnippetTarget(),
         snippetTargets: [],
         tabMenu: { visible: false, x: 0, y: 0, tab: null },
+        hostKeyVisible: false,
+        hostKeyTrusting: false,
+        hostKeyPrompt: null,
+        pfVisible: false,
+        pfTab: null,
+        pfLoading: false,
+        pfSaving: false,
+        pfRules: [],
+        pfEditId: null,
+        pfForm: emptyPfForm(),
         folderMenu: { visible: false, x: 0, y: 0, row: null },
         topMenuVisible: false,
         topMenuPos: { top: 48, right: 10 },
@@ -1670,6 +1689,8 @@ new Vue({
             ['CONNECTION_DELETE', '删除连接'],
             ['CONNECTION_IMPORT', '导入连接'],
             ['CONNECTION_EXPORT', '导出连接'],
+            ['HOST_KEY', '主机指纹'],
+            ['PORT_FORWARD', '端口转发'],
             ['AUTH_SETTINGS', '认证设置']
         ],
         aiSetVisible: false,
@@ -1852,6 +1873,15 @@ new Vue({
         },
         localDownloadReady: function () {
             return !!(this.localDownloadStatus.local && this.localDownloadStatus.available);
+        },
+        pfFirstError: function () {
+            var list = this.pfRules || [];
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].error) {
+                    return list[i].error;
+                }
+            }
+            return '';
         },
         activeTab: function () {
             return this.tabs.find(function (t) { return t.key === this.activeKey; }, this) || null;
@@ -10704,8 +10734,12 @@ new Vue({
                         tab.status = 'open';
                         tab.serverClosed = false;
                         tab.explicitClose = false;
+                        tab.hostKeyPending = false;
                         tab.reconnectAttempts = 0;
                         clearReconnectTimer(tab);
+                        if (msg.notice) {
+                            term.write('\r\n\x1b[33m● ' + msg.notice + '\x1b[0m\r\n');
+                        }
                         if (tab.desktopOnly && tab.initialDir && !msg.reattached) {
                             try {
                                 ws.send(JSON.stringify({
@@ -10733,6 +10767,11 @@ new Vue({
                         if (self.desktop.visible && tab.key === self.desktop.tabKey) {
                             self.refreshDesktopAfterReconnect(tab, dirReady);
                         }
+                    } else if (msg.type === 'hostkey') {
+                        tab.status = 'error';
+                        tab.serverClosed = true;
+                        clearReconnectTimer(tab);
+                        self.showHostKeyPrompt(tab, msg.hostKey);
                     } else if (msg.type === 'error') {
                         tab.status = 'error';
                         tab.serverClosed = true;
@@ -10909,6 +10948,8 @@ new Vue({
                 } else {
                     ELEMENT.Message.warning('未找到该连接的地址信息');
                 }
+            } else if (mode === 'portfwd') {
+                this.openPortForwards(tab);
             } else if (mode === 'sysinfo') {
                 if (!tab.sessionId) {
                     ELEMENT.Message.warning('该标签尚未连接，无法获取系统信息');
@@ -10965,6 +11006,7 @@ new Vue({
             tab.status = silent ? 'reconnecting' : 'connecting';
             tab.explicitClose = false;
             tab.serverClosed = false;
+            tab.hostKeyPending = false;
             if (!silent) {
                 tab.reconnectAttempts = 0;
                 tab.sftpEntries = [];
@@ -10987,6 +11029,172 @@ new Vue({
                 self.initTerminal(tab);
                 self.fitTab(tab);
             });
+        },
+        /* ---------- 主机指纹确认 ---------- */
+        showHostKeyPrompt: function (tab, info) {
+            if (tab) {
+                tab.hostKeyPending = true;
+                clearReconnectTimer(tab);
+            }
+            this.hostKeyPrompt = { tab: tab, info: info || {} };
+            this.hostKeyVisible = true;
+        },
+        cancelHostKeyPrompt: function () {
+            var p = this.hostKeyPrompt;
+            if (p && p.tab) {
+                p.tab.hostKeyPending = false;
+                p.tab.status = 'error';
+                p.tab.serverClosed = true;
+                if (p.tab.term) {
+                    p.tab.term.write('\r\n\x1b[33m● 已取消：主机指纹未信任，连接未建立\x1b[0m\r\n');
+                }
+            }
+            this.hostKeyVisible = false;
+            this.hostKeyPrompt = null;
+        },
+        trustHostKey: function () {
+            var p = this.hostKeyPrompt;
+            if (!p || !p.info) {
+                return;
+            }
+            var info = p.info;
+            var self = this;
+            this.hostKeyTrusting = true;
+            http.post('/api/known-hosts/trust', {
+                host: info.host, port: info.port, keyType: info.keyType,
+                keyBase64: info.keyBase64, replace: !!info.changed,
+                role: info.role, roleLabel: info.roleLabel
+            }).then(function () {
+                self.hostKeyTrusting = false;
+                self.hostKeyVisible = false;
+                self.hostKeyPrompt = null;
+                if (p.tab) {
+                    p.tab.hostKeyPending = false;
+                    self.reconnectTab(p.tab, false);
+                }
+            }).catch(function () {
+                self.hostKeyTrusting = false;
+            });
+        },
+        /* ---------- 端口转发 ---------- */
+        openPortForwards: function (tab) {
+            if (!tab || tab.connId == null) {
+                ELEMENT.Message.warning('当前会话没有连接信息');
+                return;
+            }
+            this.pfTab = tab;
+            this.pfEditId = null;
+            this.pfForm = emptyPfForm();
+            this.pfForm.connectionId = tab.connId;
+            this.pfVisible = true;
+            this.loadPortForwards();
+        },
+        loadPortForwards: function () {
+            var t = this.pfTab;
+            if (!t || t.connId == null) {
+                return;
+            }
+            var self = this;
+            var qs = '?connectionId=' + encodeURIComponent(t.connId)
+                + (t.sessionId ? '&sessionId=' + encodeURIComponent(t.sessionId) : '');
+            this.pfLoading = true;
+            http.get('/api/port-forwards' + qs).then(function (d) {
+                self.pfRules = d || [];
+            }).catch(function () { /* 已提示 */ })
+                .then(function () { self.pfLoading = false; });
+        },
+        resetPfForm: function () {
+            var connId = this.pfTab ? this.pfTab.connId : null;
+            this.pfEditId = null;
+            this.pfForm = emptyPfForm();
+            this.pfForm.connectionId = connId;
+        },
+        editPf: function (row) {
+            this.pfEditId = row.id;
+            this.pfForm = {
+                connectionId: row.connectionId, direction: row.direction,
+                bindHost: row.bindHost, bindPort: row.bindPort,
+                destHost: row.destHost, destPort: row.destPort,
+                autoStart: !!row.autoStart
+            };
+        },
+        savePf: function () {
+            var f = this.pfForm;
+            var t = this.pfTab;
+            if (!t) {
+                return;
+            }
+            if (!f.destHost || !f.destHost.trim()) {
+                ELEMENT.Message.warning('请填写目标地址');
+                return;
+            }
+            if (!f.bindPort || !f.destPort) {
+                ELEMENT.Message.warning('请填写监听端口和目标端口');
+                return;
+            }
+            var self = this;
+            var body = {
+                connectionId: t.connId, direction: f.direction, bindHost: f.bindHost,
+                bindPort: f.bindPort, destHost: f.destHost, destPort: f.destPort,
+                autoStart: f.autoStart
+            };
+            var qs = t.sessionId ? '?sessionId=' + encodeURIComponent(t.sessionId) : '';
+            var req = this.pfEditId
+                ? http.put('/api/port-forwards/' + this.pfEditId + qs, body)
+                : http.post('/api/port-forwards' + qs, body);
+            this.pfSaving = true;
+            req.then(function () {
+                ELEMENT.Message.success('转发规则已保存');
+                self.resetPfForm();
+                self.loadPortForwards();
+            }).catch(function () { /* 已提示 */ })
+                .then(function () { self.pfSaving = false; });
+        },
+        startPf: function (row) {
+            var t = this.pfTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('请等待当前连接建立后再启动');
+                return;
+            }
+            var self = this;
+            http.post('/api/port-forwards/' + row.id + '/start?sessionId='
+                + encodeURIComponent(t.sessionId)).then(function (rt) {
+                if (rt && rt.error) {
+                    ELEMENT.Message.error(rt.error);
+                } else {
+                    ELEMENT.Message.success('端口转发已启动');
+                }
+                self.loadPortForwards();
+            }).catch(function () { /* 已提示 */ });
+        },
+        stopPf: function (row) {
+            var t = this.pfTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var self = this;
+            http.post('/api/port-forwards/' + row.id + '/stop?sessionId='
+                + encodeURIComponent(t.sessionId)).then(function () {
+                ELEMENT.Message.success('端口转发已停止');
+                self.loadPortForwards();
+            }).catch(function () { /* 已提示 */ });
+        },
+        deletePf: function (row) {
+            var t = this.pfTab;
+            var self = this;
+            this.$confirm('删除转发规则「' + row.bindHost + ':' + row.bindPort + ' → '
+                + row.destHost + ':' + row.destPort + '」？', '删除转发规则',
+                { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+                .then(function () {
+                    var qs = t && t.sessionId ? '?sessionId=' + encodeURIComponent(t.sessionId) : '';
+                    return http.delete('/api/port-forwards/' + row.id + qs);
+                }).then(function () {
+                    ELEMENT.Message.success('已删除');
+                    if (self.pfEditId === row.id) {
+                        self.resetPfForm();
+                    }
+                    self.loadPortForwards();
+                }).catch(function () { /* 取消或已提示 */ });
         },
         disconnectTab: function (tab) {
             this.cancelTransfersForTab(tab);

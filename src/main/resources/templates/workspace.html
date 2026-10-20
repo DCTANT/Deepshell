@@ -2703,6 +2703,115 @@
         </div>
     </el-dialog>
 
+    <!-- 主机指纹确认 -->
+    <el-dialog :title="hostKeyPrompt && hostKeyPrompt.info.changed ? '主机密钥已变更' : '确认主机指纹'"
+               :visible.sync="hostKeyVisible" width="560px" append-to-body :show-close="false"
+               custom-class="host-key-dialog"
+               :close-on-click-modal="false" :close-on-press-escape="false">
+        <div v-if="hostKeyPrompt">
+            <el-alert v-if="hostKeyPrompt.info.changed" type="error" :closable="false" show-icon
+                      title="主机密钥与已保存的不一致，可能存在中间人攻击"></el-alert>
+            <el-alert v-else type="warning" :closable="false" show-icon
+                      title="首次连接该主机，请与服务器管理员核对指纹"></el-alert>
+            <div class="hk-box">
+                <div class="hk-row"><span>目标</span><b>{{ hostKeyPrompt.info.roleLabel
+                    || (hostKeyPrompt.info.role === 'jump' ? '跳板机' : '目标主机') }}</b></div>
+                <div class="hk-row"><span>地址</span><b>{{ hostKeyPrompt.info.host }}:{{ hostKeyPrompt.info.port }}</b></div>
+                <div class="hk-row"><span>类型</span><b>{{ hostKeyPrompt.info.keyType }}</b></div>
+                <div class="hk-row"><span>指纹</span><b class="hk-fp">{{ hostKeyPrompt.info.fingerprint }}</b></div>
+                <div class="hk-row" v-if="hostKeyPrompt.info.knownFingerprint">
+                    <span>原指纹</span><b class="hk-fp hk-old">{{ hostKeyPrompt.info.knownFingerprint }}</b></div>
+            </div>
+            <p class="hk-tip">
+                指纹不一致时请不要直接信任，先在服务器上执行
+                <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> 核对。
+            </p>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="cancelHostKeyPrompt">取消连接</el-button>
+            <el-button size="small" :type="hostKeyPrompt && hostKeyPrompt.info.changed ? 'danger' : 'primary'"
+                       :loading="hostKeyTrusting" @click="trustHostKey">
+                {{ hostKeyPrompt && hostKeyPrompt.info.changed ? '更新并信任' : '信任并连接' }}
+            </el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 端口转发 -->
+    <el-dialog title="端口转发" :visible.sync="pfVisible" width="780px" append-to-body
+               custom-class="pf-dialog">
+        <div class="pf-head">
+            <span class="pf-desc">规则按连接保存；勾选自动启动的规则会在连接建立后恢复。
+                本机监听 = 本机端口经服务器转发；服务器监听 = 服务器端口经本机转发。</span>
+        </div>
+        <el-table :data="pfRules" size="mini" v-loading="pfLoading" empty-text="暂无转发规则">
+            <el-table-column label="方向" width="64">
+                <template slot-scope="scope">{{ scope.row.direction === 'REMOTE' ? '服务器' : '本机' }}</template>
+            </el-table-column>
+            <el-table-column label="监听地址" min-width="145">
+                <template slot-scope="scope"><span class="portfwd-target">{{ scope.row.bindHost }}:{{
+                    scope.row.actualPort || scope.row.bindPort }}</span></template>
+            </el-table-column>
+            <el-table-column label="目标地址" min-width="145">
+                <template slot-scope="scope"><span class="portfwd-target">{{ scope.row.destHost }}:{{
+                    scope.row.destPort }}</span></template>
+            </el-table-column>
+            <el-table-column label="自动启动" width="72">
+                <template slot-scope="scope">{{ scope.row.autoStart ? '是' : '否' }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="88">
+                <template slot-scope="scope">
+                    <span v-if="scope.row.running" class="pf-badge pf-running">运行中</span>
+                    <span v-else-if="scope.row.error" class="portfwd-error" :title="scope.row.error">启动失败</span>
+                    <span v-else class="pf-badge">未启动</span>
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" width="188">
+                <template slot-scope="scope">
+                    <el-button size="mini" type="text" :disabled="scope.row.running || !pfTab || !pfTab.sessionId"
+                               @click="startPf(scope.row)">启动</el-button>
+                    <el-button size="mini" type="text" :disabled="!scope.row.running"
+                               @click="stopPf(scope.row)">停止</el-button>
+                    <el-button size="mini" type="text" @click="editPf(scope.row)">编辑</el-button>
+                    <el-button size="mini" type="text" style="color:#f56c6c"
+                               @click="deletePf(scope.row)">删除</el-button>
+                </template>
+            </el-table-column>
+        </el-table>
+        <div v-if="pfFirstError" class="portfwd-error" style="margin-top:6px">{{ pfFirstError }}</div>
+        <div v-if="!pfTab || !pfTab.sessionId" class="panel-tip" style="margin-top:6px">
+            当前连接尚未建立：规则可以保存，连接建立后自动启动的规则会生效。
+        </div>
+        <div class="pf-hint">监听地址填 127.0.0.1 仅本机可访问；填 0.0.0.0 会对外开放，请谨慎使用。</div>
+        <el-divider content-position="left">{{ pfEditId ? '编辑规则' : '新增规则' }}</el-divider>
+        <el-form :inline="true" size="mini" label-width="70px" class="pf-form">
+            <el-form-item label="方向">
+                <el-select v-model="pfForm.direction" style="width:110px">
+                    <el-option label="本机监听" value="LOCAL"></el-option>
+                    <el-option label="服务器监听" value="REMOTE"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="监听地址">
+                <el-input v-model="pfForm.bindHost" style="width:120px"></el-input>
+                <el-input-number v-model="pfForm.bindPort" :min="1" :max="65535" :controls="false"
+                                 style="width:86px;margin-left:6px"></el-input-number>
+            </el-form-item>
+            <el-form-item label="目标地址">
+                <el-input v-model="pfForm.destHost" style="width:120px"></el-input>
+                <el-input-number v-model="pfForm.destPort" :min="1" :max="65535" :controls="false"
+                                 style="width:86px;margin-left:6px"></el-input-number>
+            </el-form-item>
+            <el-form-item label="自动启动">
+                <el-switch v-model="pfForm.autoStart"></el-switch>
+            </el-form-item>
+            <el-form-item>
+                <el-button type="primary" :loading="pfSaving" @click="savePf">
+                    {{ pfEditId ? '保存修改' : '添加规则' }}
+                </el-button>
+                <el-button v-if="pfEditId" @click="resetPfForm">取消编辑</el-button>
+            </el-form-item>
+        </el-form>
+    </el-dialog>
+
     <!-- 编辑快捷命令 -->
     <el-dialog title="编辑快捷命令" :visible.sync="cmdEditDialog" width="520px" append-to-body
                :close-on-click-modal="false" :close-on-press-escape="false">
@@ -3336,6 +3445,9 @@
         <div class="tab-menu-item" @click="menuAction('sysinfo')">
             <i class="el-icon-cpu"></i>系统信息
         </div>
+        <div class="tab-menu-item" @click="menuAction('portfwd')">
+            <i class="el-icon-connection"></i>端口转发
+        </div>
         <div class="tab-menu-item" @click="menuAction('aiDesktop')">
             <i class="el-icon-monitor"></i>进入 AI 可视化桌面
         </div>
@@ -3662,6 +3774,7 @@
         <span class="cmd-tools">
             <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
                :class="{ 'cmd-tool-active': tab.aiVisible }" @click="toggleAi"></i>
+            <i class="el-icon-connection cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
             <el-popover v-if="context === 'window'" placement="top-end" width="320" trigger="click"
                         v-model="snippetsVisible" popper-class="cmd-pop">
                 <div class="cmd-hist">

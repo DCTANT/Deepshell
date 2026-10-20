@@ -7307,3 +7307,98 @@ body.resizing .term-host {
 .audit-confirm { background: #fff5e6; color: #b7791f; }
 
 .audit-cancelled { background: #f4f4f5; color: #909399; }
+
+.conn-form-hint {
+    font-size: 12px;
+    color: #909399;
+    line-height: 18px;
+}
+
+.host-key-dialog,
+.pf-dialog,
+.conn-form-dialog {
+    max-width: calc(100vw - 24px);
+}
+
+.portfwd-target {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+}
+
+.portfwd-error {
+    color: #d64545;
+    font-size: 12px;
+}
+
+.hk-box {
+    margin: 14px 0 6px;
+    padding: 12px 14px;
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+    background: #fafbfc;
+}
+
+.hk-row {
+    display: flex;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: 13px;
+}
+
+.hk-row > span {
+    flex: 0 0 54px;
+    color: #909399;
+}
+
+.hk-row > b {
+    flex: 1;
+    font-weight: 500;
+    word-break: break-all;
+}
+
+.hk-fp {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    color: #303133;
+}
+
+.hk-old {
+    color: #d64545;
+    text-decoration: line-through;
+}
+
+.hk-tip {
+    margin: 8px 0 0;
+    color: #909399;
+    font-size: 12px;
+    line-height: 1.8;
+}
+
+.pf-head {
+    margin-bottom: 8px;
+}
+
+.pf-desc,
+.pf-hint {
+    color: #909399;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.pf-hint {
+    margin-top: 6px;
+}
+
+.pf-badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 9px;
+    background: #f0f2f5;
+    color: #909399;
+    font-size: 11px;
+}
+
+.pf-badge.pf-running {
+    background: #e8f7ee;
+    color: #1f9d55;
+}

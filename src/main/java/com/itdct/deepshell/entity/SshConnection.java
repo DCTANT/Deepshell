@@ -50,6 +50,28 @@ public class SshConnection {
     @Column(length = 500)
     private String remark;
 
+    /** 出口代理：NONE / HTTP / SOCKS5；仅作用于链路最外层连接 */
+    @Column(length = 20)
+    private String proxyType = "NONE";
+
+    @Column(length = 255)
+    private String proxyHost;
+
+    private Integer proxyPort;
+
+    @Column(length = 100)
+    private String proxyUsername;
+
+    @JsonIgnore
+    @Column(length = 2000)
+    private String proxyPasswordEnc;
+
+    /** 通过哪个已保存连接作为跳板机（可递归成链） */
+    private Long jumpConnectionId;
+
+    /** 持久会话：可用时自动以 tmux 新建/附着，程序重启后仍可恢复 */
+    private Boolean persistSession = Boolean.TRUE;
+
     /** 所属文件夹，null 表示根目录 */
     private Long folderId;
 

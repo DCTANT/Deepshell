@@ -3,14 +3,18 @@ package com.itdct.deepshell.service;
 import com.itdct.deepshell.dto.ConnectionForm;
 import com.itdct.deepshell.dto.StatsSnapshot;
 import com.itdct.deepshell.entity.SshConnection;
+import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.ChannelSftp;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
+import com.jcraft.jsch.ProxyHTTP;
+import com.jcraft.jsch.ProxySOCKS5;
 import com.jcraft.jsch.Session;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
@@ -21,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,13 +58,19 @@ public class SshSessionManager {
 
     private final ConnectionService connectionService;
     private final CryptoService cryptoService;
+    private final HostKeyService hostKeyService;
+    private final ObjectProvider<PortForwardService> portForwardProvider;
     private final Map<String, SshSession> sessions = new ConcurrentHashMap<>();
     /** 浏览器侧会话键 -> 服务端会话 id，用于 F5 / 断网后重新附着 */
     private final Map<String, String> bindings = new ConcurrentHashMap<>();
 
-    public SshSessionManager(ConnectionService connectionService, CryptoService cryptoService) {
+    public SshSessionManager(ConnectionService connectionService, CryptoService cryptoService,
+                             HostKeyService hostKeyService,
+                             ObjectProvider<PortForwardService> portForwardProvider) {
         this.connectionService = connectionService;
         this.cryptoService = cryptoService;
+        this.hostKeyService = hostKeyService;
+        this.portForwardProvider = portForwardProvider;
     }
 
     public static class SshSession {
@@ -74,7 +85,16 @@ public class SshSessionManager {
         @Getter
         private final Session jsch;
         @Getter
-        private final ChannelShell shell;
+        private final Channel channel;
+        /** 非空表示当前交互 shell 运行在 tmux 会话中 */
+        @Getter
+        private final String tmuxName;
+        /** 建连时的提示（如未安装 tmux 回退为普通会话） */
+        @Getter
+        private final String notice;
+        /** 包含跳板机在内的全部 SSH 传输会话（目标在最后） */
+        @Getter
+        private final List<Session> transportSessions;
         private final OutputStream stdin;
         private final InputStream stdout;
         @Getter
@@ -105,20 +125,29 @@ public class SshSessionManager {
         volatile Long shellPid;
         volatile String lastCwd;
         int cwdFail;
+        volatile boolean cwdTrackingOff;
 
         private volatile ChannelSftp sftp;
         private volatile boolean closed;
         public final Object sftpLock = new Object();
 
         SshSession(Long connectionId, String name, String clientKey,
-                   Session jsch, ChannelShell shell) throws Exception {
+                   Session jsch, Channel channel, String tmuxName, String notice,
+                   List<Session> transportSessions) throws Exception {
             this.connectionId = connectionId;
             this.name = name;
             this.clientKey = clientKey;
             this.jsch = jsch;
-            this.shell = shell;
-            this.stdin = shell.getOutputStream();
-            this.stdout = shell.getInputStream();
+            this.channel = channel;
+            this.tmuxName = tmuxName;
+            this.notice = notice;
+            this.transportSessions = transportSessions;
+            this.stdin = channel.getOutputStream();
+            this.stdout = channel.getInputStream();
+        }
+
+        public boolean isTmux() {
+            return tmuxName != null;
         }
 
         public boolean isAttached() {
@@ -237,7 +266,13 @@ public class SshSessionManager {
 
         public void resize(int cols, int rows) {
             try {
-                shell.setPtySize(clamp(cols, 20, 1000), clamp(rows, 5, 300), 0, 0);
+                int c = clamp(cols, 20, 1000);
+                int r = clamp(rows, 5, 300);
+                if (channel instanceof ChannelExec) {
+                    ((ChannelExec) channel).setPtySize(c, r, 0, 0);
+                } else if (channel instanceof ChannelShell) {
+                    ((ChannelShell) channel).setPtySize(c, r, 0, 0);
+                }
             } catch (Exception ignore) {
             }
         }
@@ -289,7 +324,7 @@ public class SshSessionManager {
                     existing.markAttached(attachmentId);
                     existing.resize(cols, rows);
                     existing.getLastActive().set(System.currentTimeMillis());
-                    if (existing.shellPid == null) {
+                    if (existing.shellPid == null && !existing.isTmux()) {
                         scheduleShellDiscovery(existing);
                     }
                     log.info("SSH 会话重新附着: {} -> {}", existing.getId(), key);
@@ -309,8 +344,9 @@ public class SshSessionManager {
     }
 
     /**
-     * 测试连接参数：只建立一次 SSH 会话随即断开，不进入会话管理。
-     * 编辑态留空的密码 / 私钥口令沿用已保存连接中的值。
+     * 测试连接参数：按完整链路（代理 / 跳板机）建立一次连接随即断开，不进入会话管理。
+     * 编辑态留空的密码、私钥口令、代理密码沿用已保存连接中的值。
+     * 主机指纹未信任时返回 needTrust + hostKey，由前端确认后再测一次。
      */
     public Map<String, Object> test(ConnectionForm f) {
         String host = trimToNull(f.getHost());
@@ -325,49 +361,13 @@ public class SshSessionManager {
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException("端口范围不正确");
         }
-        String authType = trimToNull(f.getAuthType());
-        authType = authType == null ? "PASSWORD" : authType.toUpperCase(Locale.ROOT);
-
         SshConnection saved = f.getId() == null ? null : connectionService.get(f.getId());
 
-        String password = f.getPassword();
-        if (password == null || password.isEmpty()) {
-            password = saved == null ? null : cryptoService.decrypt(saved.getPasswordEnc());
-        }
-        String keyPath = trimToNull(f.getKeyPath());
-        if (keyPath == null && saved != null) {
-            keyPath = saved.getKeyPath();
-        }
-        String passphrase = f.getPassphrase();
-        if (passphrase == null || passphrase.isEmpty()) {
-            passphrase = saved == null ? null : cryptoService.decrypt(saved.getPassphraseEnc());
-        }
-
-        Session session = null;
         long start = System.currentTimeMillis();
+        Transport transport = null;
         try {
-            JSch jsch = new JSch();
-            if ("KEY".equals(authType)) {
-                if (keyPath == null) {
-                    throw new IllegalArgumentException("未配置私钥文件路径");
-                }
-                jsch.addIdentity(keyPath, passphrase == null || passphrase.isEmpty()
-                        ? null : passphrase.getBytes(StandardCharsets.UTF_8));
-            }
-            session = jsch.getSession(username, host, port);
-            if (!"KEY".equals(authType)) {
-                if (password == null || password.isEmpty()) {
-                    throw new IllegalArgumentException("未配置密码");
-                }
-                session.setPassword(password);
-            }
-            Properties config = new Properties();
-            config.put("StrictHostKeyChecking", "no");
-            config.put("PreferredAuthentications",
-                    "KEY".equals(authType) ? "publickey" : "password,keyboard-interactive");
-            session.setConfig(config);
-            session.connect(10000);
-
+            transport = connectHops(hopsForForm(f, saved));
+            Session session = transport.target;
             long elapsed = System.currentTimeMillis() - start;
             String version = session.getServerVersion();
             if (version != null && version.startsWith("SSH-2.0-")) {
@@ -383,13 +383,271 @@ public class SshSessionManager {
             result.put("elapsedMs", elapsed);
             result.put("serverVersion", version);
             return result;
+        } catch (HostKeyCheckException e) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("needTrust", true);
+            result.put("hostKey", e.getInfo());
+            return result;
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (JSchException e) {
             throw new IllegalArgumentException(friendlyError(e));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("连接失败: "
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         } finally {
-            if (session != null) {
-                session.disconnect();
+            if (transport != null) {
+                disconnectAll(transport.sessions);
             }
         }
+    }
+
+    /* ---------- 连接链路：代理 / 多级跳板机 ---------- */
+
+    private static class Hop {
+        Long connectionId;
+        String name;
+        String host;
+        int port = 22;
+        String username;
+        String authType = "PASSWORD";
+        String password;
+        String keyPath;
+        String passphrase;
+        String proxyType = "NONE";
+        String proxyHost;
+        Integer proxyPort;
+        String proxyUsername;
+        String proxyPassword;
+        boolean target;
+    }
+
+    private static class Transport {
+        final List<Session> sessions = new ArrayList<>();
+        Session target;
+    }
+
+    private List<Hop> hopsForSaved(SshConnection cfg) {
+        List<Hop> chain = new ArrayList<>();
+        chain.add(hopFromSaved(cfg, true));
+        appendJumpChain(chain, cfg.getJumpConnectionId(), cfg.getId());
+        Collections.reverse(chain);
+        return chain;
+    }
+
+    private List<Hop> hopsForForm(ConnectionForm f, SshConnection saved) {
+        Hop target = new Hop();
+        target.target = true;
+        target.connectionId = saved == null ? null : saved.getId();
+        target.name = trimToNull(f.getName()) != null ? f.getName().trim()
+                : (saved == null ? "目标主机" : saved.getName());
+        target.host = trimToNull(f.getHost());
+        target.port = f.getPort() == null ? 22 : f.getPort();
+        target.username = trimToNull(f.getUsername());
+        String authType = trimToNull(f.getAuthType());
+        if (authType == null && saved != null) {
+            authType = saved.getAuthType();
+        }
+        target.authType = authType == null ? "PASSWORD" : authType.toUpperCase(Locale.ROOT);
+        String password = f.getPassword();
+        if ((password == null || password.isEmpty()) && saved != null) {
+            password = cryptoService.decrypt(saved.getPasswordEnc());
+        }
+        target.password = password;
+        String keyPath = trimToNull(f.getKeyPath());
+        if (keyPath == null && saved != null) {
+            keyPath = saved.getKeyPath();
+        }
+        target.keyPath = keyPath;
+        String passphrase = f.getPassphrase();
+        if ((passphrase == null || passphrase.isEmpty()) && saved != null) {
+            passphrase = cryptoService.decrypt(saved.getPassphraseEnc());
+        }
+        target.passphrase = passphrase;
+
+        String proxyType = trimToNull(f.getProxyType());
+        if (proxyType == null && saved != null) {
+            proxyType = saved.getProxyType();
+        }
+        target.proxyType = proxyType == null ? "NONE" : proxyType.toUpperCase(Locale.ROOT);
+        String proxyHost = trimToNull(f.getProxyHost());
+        if (proxyHost == null && saved != null) {
+            proxyHost = saved.getProxyHost();
+        }
+        target.proxyHost = proxyHost;
+        target.proxyPort = f.getProxyPort() != null ? f.getProxyPort()
+                : (saved == null ? null : saved.getProxyPort());
+        String proxyUser = trimToNull(f.getProxyUsername());
+        if (proxyUser == null && saved != null) {
+            proxyUser = saved.getProxyUsername();
+        }
+        target.proxyUsername = proxyUser;
+        String proxyPassword = f.getProxyPassword();
+        if ((proxyPassword == null || proxyPassword.isEmpty()) && saved != null) {
+            proxyPassword = cryptoService.decrypt(saved.getProxyPasswordEnc());
+        }
+        target.proxyPassword = proxyPassword;
+
+        List<Hop> chain = new ArrayList<>();
+        chain.add(target);
+        appendJumpChain(chain, f.getJumpConnectionId(), saved == null ? null : saved.getId());
+        Collections.reverse(chain);
+        return chain;
+    }
+
+    private Hop hopFromSaved(SshConnection c, boolean target) {
+        Hop h = new Hop();
+        h.target = target;
+        h.connectionId = c.getId();
+        h.name = c.getName();
+        h.host = c.getHost();
+        h.port = c.getPort() == null ? 22 : c.getPort();
+        h.username = c.getUsername();
+        h.authType = c.getAuthType() == null ? "PASSWORD" : c.getAuthType();
+        h.password = cryptoService.decrypt(c.getPasswordEnc());
+        h.keyPath = c.getKeyPath();
+        h.passphrase = cryptoService.decrypt(c.getPassphraseEnc());
+        h.proxyType = c.getProxyType() == null ? "NONE" : c.getProxyType();
+        h.proxyHost = c.getProxyHost();
+        h.proxyPort = c.getProxyPort();
+        h.proxyUsername = c.getProxyUsername();
+        h.proxyPassword = cryptoService.decrypt(c.getProxyPasswordEnc());
+        return h;
+    }
+
+    private void appendJumpChain(List<Hop> chain, Long jumpId, Long selfId) {
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        Long cur = jumpId;
+        int depth = 0;
+        while (cur != null) {
+            if (selfId != null && cur.equals(selfId)) {
+                throw new IllegalArgumentException("跳板机链路不能包含当前连接自身");
+            }
+            if (!seen.add(cur)) {
+                throw new IllegalArgumentException("跳板机链路存在循环引用");
+            }
+            if (++depth > 10) {
+                throw new IllegalArgumentException("跳板机层级过深（最多 10 级）");
+            }
+            SshConnection jump = connectionService.get(cur);
+            chain.add(hopFromSaved(jump, false));
+            cur = jump.getJumpConnectionId();
+        }
+    }
+
+    /**
+     * 依次建立整条链路：外层（跳板机）先连，随后在上一跳开本地端口转发，
+     * 下一跳通过 127.0.0.1:临时端口接入，最终返回目标会话。
+     * 代理只作用于链路最外层连接。
+     */
+    private Transport connectHops(List<Hop> hops) throws Exception {
+        Transport t = new Transport();
+        try {
+            int nextLocalPort = -1;
+            for (int i = 0; i < hops.size(); i++) {
+                Hop h = hops.get(i);
+                boolean outermost = i == 0;
+                String dialHost = outermost ? h.host : "127.0.0.1";
+                int dialPort = outermost ? h.port : nextLocalPort;
+
+                JSch jsch = new JSch();
+                if ("KEY".equalsIgnoreCase(h.authType)) {
+                    if (trimToNull(h.keyPath) == null) {
+                        throw new IllegalArgumentException("跳板机 / 目标主机未配置私钥文件路径：" + h.name);
+                    }
+                    jsch.addIdentity(h.keyPath.trim(), h.passphrase == null || h.passphrase.isEmpty()
+                            ? null : h.passphrase.getBytes(StandardCharsets.UTF_8));
+                }
+                Session session = jsch.getSession(h.username, dialHost, dialPort);
+                session.setHostKeyAlias(h.host + ":" + h.port);
+                HostKeyService.Repository hkRepo = hostKeyService.repository(h.host, h.port,
+                        h.target ? "target" : "jump",
+                        h.target ? "目标主机" : ("跳板机 " + h.name));
+                session.setHostKeyRepository(hkRepo);
+                if (!"KEY".equalsIgnoreCase(h.authType)) {
+                    if (h.password == null || h.password.isEmpty()) {
+                        throw new IllegalArgumentException((h.target ? "目标主机" : "跳板机 " + h.name)
+                                + " 未配置密码");
+                    }
+                    session.setPassword(h.password);
+                }
+                if (outermost) {
+                    applyProxy(session, h);
+                }
+                Properties config = new Properties();
+                config.put("StrictHostKeyChecking", "yes");
+                config.put("PreferredAuthentications",
+                        "KEY".equalsIgnoreCase(h.authType) ? "publickey" : "password,keyboard-interactive");
+                session.setConfig(config);
+                session.setServerAliveInterval(30000);
+                session.setServerAliveCountMax(6);
+                try {
+                    session.connect(15000);
+                } catch (JSchException e) {
+                    try {
+                        session.disconnect();
+                    } catch (Exception ignore) {
+                    }
+                    Map<String, Object> problem = hkRepo.getLastProblem();
+                    if (problem != null) {
+                        throw new HostKeyCheckException(problem);
+                    }
+                    String who = h.target ? "目标主机" : ("跳板机 " + h.name);
+                    throw new IllegalArgumentException(who + "：" + friendlyError(e));
+                }
+                t.sessions.add(session);
+                if (i < hops.size() - 1) {
+                    Hop next = hops.get(i + 1);
+                    nextLocalPort = session.setPortForwardingL("127.0.0.1", 0, next.host, next.port);
+                }
+            }
+            t.target = t.sessions.get(t.sessions.size() - 1);
+            return t;
+        } catch (Exception e) {
+            disconnectAll(t.sessions);
+            throw e;
+        }
+    }
+
+    private static void applyProxy(Session session, Hop h) {
+        String type = h.proxyType == null ? "NONE" : h.proxyType.toUpperCase(Locale.ROOT);
+        if ("NONE".equals(type) || type.isEmpty()) {
+            return;
+        }
+        if (trimToNull(h.proxyHost) == null) {
+            throw new IllegalArgumentException("已选择代理，但未填写代理地址");
+        }
+        if ("HTTP".equals(type)) {
+            ProxyHTTP proxy = new ProxyHTTP(h.proxyHost.trim(),
+                    h.proxyPort == null || h.proxyPort <= 0 ? 8080 : h.proxyPort);
+            if (trimToNull(h.proxyUsername) != null) {
+                proxy.setUserPasswd(h.proxyUsername.trim(),
+                        h.proxyPassword == null ? "" : h.proxyPassword);
+            }
+            session.setProxy(proxy);
+            return;
+        }
+        if ("SOCKS5".equals(type)) {
+            ProxySOCKS5 proxy = new ProxySOCKS5(h.proxyHost.trim(),
+                    h.proxyPort == null || h.proxyPort <= 0 ? 1080 : h.proxyPort);
+            if (trimToNull(h.proxyUsername) != null) {
+                proxy.setUserPasswd(h.proxyUsername.trim(),
+                        h.proxyPassword == null ? "" : h.proxyPassword);
+            }
+            session.setProxy(proxy);
+            return;
+        }
+        throw new IllegalArgumentException("不支持的代理类型: " + type);
+    }
+
+    private static void disconnectAll(List<Session> sessions) {
+        for (int i = sessions.size() - 1; i >= 0; i--) {
+            try {
+                sessions.get(i).disconnect();
+            } catch (Exception ignore) {
+            }
+        }
+        sessions.clear();
     }
 
     private static String friendlyError(JSchException e) {
@@ -397,6 +655,9 @@ public class SshSessionManager {
         String lower = msg.toLowerCase(Locale.ROOT);
         if (lower.contains("auth fail") || lower.contains("auth cancel")) {
             return "认证失败：用户名、密码或私钥不正确";
+        }
+        if (lower.contains("proxy") || lower.contains("socks")) {
+            return "代理连接失败: " + msg;
         }
         if (lower.contains("unknownhost") || lower.contains("name or service not known")) {
             return "无法解析主机地址: " + msg;
@@ -423,45 +684,121 @@ public class SshSessionManager {
 
     private SshSession createSession(Long connectionId, int cols, int rows, String clientKey) throws Exception {
         SshConnection cfg = connectionService.get(connectionId);
-        JSch jsch = new JSch();
+        Transport transport = null;
+        try {
+            // 先按代理 / 跳板机链路连到目标；主机指纹在每一跳分别校验
+            transport = connectHops(hopsForSaved(cfg));
+            Session session = transport.target;
 
-        if ("KEY".equalsIgnoreCase(cfg.getAuthType())) {
-            if (cfg.getKeyPath() == null || cfg.getKeyPath().trim().isEmpty()) {
-                throw new IllegalArgumentException("未配置私钥文件路径");
+            boolean persist = cfg.getPersistSession() == null || cfg.getPersistSession();
+            String tmuxName = persist ? tmuxSessionName(connectionId, clientKey) : null;
+            String notice = null;
+            Channel channel;
+            if (tmuxName != null) {
+                boolean hasTmux;
+                try {
+                    hasTmux = remoteHasTmux(session);
+                } catch (Exception e) {
+                    log.debug("tmux 探测失败 session={}: {}", connectionId, e.getMessage());
+                    hasTmux = false;
+                }
+                if (hasTmux) {
+                    ChannelExec exec = (ChannelExec) session.openChannel("exec");
+                    exec.setPty(true);
+                    exec.setPtyType("xterm-256color");
+                    exec.setPtySize(clamp(cols, 20, 1000), clamp(rows, 5, 300), 0, 0);
+                    exec.setCommand("exec tmux new-session -A -s " + shellQuote(tmuxName));
+                    exec.connect(8000);
+                    channel = exec;
+                } else {
+                    notice = "已开启持久会话，但目标服务器未安装 tmux，当前使用普通会话";
+                    tmuxName = null;
+                    channel = openShell(session, cols, rows);
+                }
+            } else {
+                channel = openShell(session, cols, rows);
             }
-            String passphrase = cryptoService.decrypt(cfg.getPassphraseEnc());
-            jsch.addIdentity(cfg.getKeyPath().trim(),
-                    passphrase == null ? null : passphrase.getBytes(StandardCharsets.UTF_8));
-        }
 
-        Session session = jsch.getSession(cfg.getUsername(), cfg.getHost(), cfg.getPort());
-        if (!"KEY".equalsIgnoreCase(cfg.getAuthType())) {
-            String password = cryptoService.decrypt(cfg.getPasswordEnc());
-            if (password == null) {
-                throw new IllegalArgumentException("该连接未保存密码，请先编辑连接并补全密码");
+            SshSession s = new SshSession(connectionId, cfg.getName(), clientKey, session,
+                    channel, tmuxName, notice, transport.sessions);
+            sessions.put(s.getId(), s);
+            startPump(s);
+            if (tmuxName == null) {
+                scheduleShellDiscovery(s);
             }
-            session.setPassword(password);
+            try {
+                PortForwardService pf = portForwardProvider.getIfAvailable();
+                if (pf != null) {
+                    pf.onSessionOpened(s);
+                }
+            } catch (Exception e) {
+                log.warn("自动启动端口转发失败 session={}: {}", s.getId(), e.getMessage());
+            }
+            log.info("SSH 会话已建立: {} -> {}@{}:{} tmux={}", s.getId(), cfg.getUsername(),
+                    cfg.getHost(), cfg.getPort(), tmuxName == null ? "-" : tmuxName);
+            return s;
+        } catch (Exception e) {
+            if (transport != null) {
+                disconnectAll(transport.sessions);
+            }
+            throw e;
         }
-        Properties config = new Properties();
-        config.put("StrictHostKeyChecking", "no");
-        config.put("PreferredAuthentications",
-                "KEY".equalsIgnoreCase(cfg.getAuthType()) ? "publickey" : "password,keyboard-interactive");
-        session.setConfig(config);
-        session.setServerAliveInterval(30000);
-        session.setServerAliveCountMax(6);
-        session.connect(15000);
+    }
 
+    private Channel openShell(Session session, int cols, int rows) throws JSchException {
         ChannelShell shell = (ChannelShell) session.openChannel("shell");
         shell.setPtyType("xterm-256color");
         shell.setPtySize(clamp(cols, 20, 1000), clamp(rows, 5, 300), 0, 0);
         shell.connect(8000);
+        return shell;
+    }
 
-        SshSession s = new SshSession(connectionId, cfg.getName(), clientKey, session, shell);
-        sessions.put(s.getId(), s);
-        startPump(s);
-        scheduleShellDiscovery(s);
-        log.info("SSH 会话已建立: {} -> {}@{}:{}", s.getId(), cfg.getUsername(), cfg.getHost(), cfg.getPort());
-        return s;
+    /** 持久会话名按“连接 + 浏览器标签会话键”生成，程序重启后同一标签可附着回原 tmux 会话 */
+    private static String tmuxSessionName(Long connectionId, String clientKey) {
+        String key = clientKey == null ? "" : clientKey.replaceAll("[^A-Za-z0-9]", "");
+        if (key.isEmpty()) {
+            key = UUID.randomUUID().toString().replace("-", "");
+        }
+        if (key.length() > 40) {
+            key = key.substring(0, 40);
+        }
+        return "deepshell_" + connectionId + "_" + key;
+    }
+
+    private boolean remoteHasTmux(Session session) {
+        ChannelExec exec = null;
+        try {
+            exec = (ChannelExec) session.openChannel("exec");
+            exec.setCommand("command -v tmux >/dev/null 2>&1 && echo yes");
+            exec.setInputStream(null);
+            final InputStream in = exec.getInputStream();
+            exec.connect(5000);
+            final ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            Thread reader = new Thread(() -> {
+                try {
+                    byte[] buf = new byte[64];
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        bos.write(buf, 0, n);
+                    }
+                } catch (Exception ignore) {
+                    // 探测失败按未安装 tmux 处理
+                }
+            }, "ssh-tmux-probe");
+            reader.setDaemon(true);
+            reader.start();
+            reader.join(3000);
+            return "yes".equals(new String(bos.toByteArray(), StandardCharsets.UTF_8).trim());
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (exec != null) {
+                try {
+                    exec.disconnect();
+                } catch (Exception ignore) {
+                }
+            }
+        }
     }
 
     /**
@@ -540,7 +877,8 @@ public class SshSessionManager {
                 if (!s.monitorOff && s.onStats != null) {
                     statsExecutor.submit(() -> pollStatsOnce(s));
                 }
-                if (s.shellPid != null && s.onCwd != null) {
+                if (s.onCwd != null && !s.cwdTrackingOff
+                        && (s.tmuxName != null || s.shellPid != null)) {
                     statsExecutor.submit(() -> pollCwdOnce(s));
                 }
             } catch (RejectedExecutionException ignore) {
@@ -549,14 +887,28 @@ public class SshSessionManager {
     }
 
     private void pollCwdOnce(SshSession s) {
-        Long pid = s.shellPid;
-        if (pid == null || s.isClosed() || s.onCwd == null) {
+        if (s.isClosed() || s.onCwd == null || s.cwdTrackingOff) {
             return;
         }
         try {
-            String out = execCapture(s, "readlink /proc/" + pid + "/cwd 2>/dev/null", 3000);
-            String cwd = out == null ? "" : out.trim();
-            if (cwd.isEmpty() || cwd.startsWith("readlink")) {
+            String cwd;
+            if (s.tmuxName != null) {
+                // tmux 里的 shell 不是 sshd 的子进程，改用 pane 当前路径
+                String out = execCapture(s, "tmux display-message -p -t "
+                        + shellQuote(s.tmuxName) + " '#{pane_current_path}' 2>/dev/null", 3000);
+                cwd = out == null ? "" : out.trim();
+            } else {
+                Long pid = s.shellPid;
+                if (pid == null) {
+                    return;
+                }
+                String out = execCapture(s, "readlink /proc/" + pid + "/cwd 2>/dev/null", 3000);
+                cwd = out == null ? "" : out.trim();
+                if (!cwd.isEmpty() && cwd.startsWith("readlink")) {
+                    cwd = "";
+                }
+            }
+            if (cwd.isEmpty() || !cwd.startsWith("/")) {
                 throw new IllegalStateException("cwd 不可读");
             }
             s.cwdFail = 0;
@@ -570,6 +922,7 @@ public class SshSessionManager {
         } catch (Exception e) {
             if (++s.cwdFail >= 5) {
                 // shell 已退出或不可读，停止目录跟随（不影响其余功能）
+                s.cwdTrackingOff = true;
                 s.shellPid = null;
                 log.info("目录跟随已停用 session={}", s.getId());
             }
@@ -833,16 +1186,29 @@ public class SshSessionManager {
         }
     }
 
+    /** 用户主动关闭标签：连同远程 tmux 会话一起清理 */
     public void close(String sessionId) {
-        close(sessionId, null);
+        close(sessionId, null, true);
     }
 
+    /** 内部断开（F5 超时 / 远端中断 / 参数变化）：保留 tmux，便于重新附着 */
     private void close(String sessionId, String reason) {
+        close(sessionId, reason, false);
+    }
+
+    private void close(String sessionId, String reason, boolean cleanupPersistent) {
         SshSession s = sessions.remove(sessionId);
         if (s == null) {
             return;
         }
         s.cancelCleanup();
+        if (cleanupPersistent && s.isTmux() && !s.isClosed()) {
+            try {
+                execCapture(s, "tmux kill-session -t " + shellQuote(s.getTmuxName()) + " 2>/dev/null", 2000);
+            } catch (Exception e) {
+                log.debug("清理 tmux 会话失败 {}: {}", s.getTmuxName(), e.getMessage());
+            }
+        }
         s.markClosed();
         if (s.getClientKey() != null) {
             bindings.remove(s.getClientKey(), sessionId);
@@ -855,11 +1221,18 @@ public class SshSessionManager {
         } catch (Exception ignore) {
         }
         try {
-            s.getShell().disconnect();
+            Channel ch = s.getChannel();
+            if (ch != null && ch.isConnected()) {
+                ch.disconnect();
+            }
         } catch (Exception ignore) {
         }
+        disconnectAll(s.getTransportSessions());
         try {
-            s.getJsch().disconnect();
+            PortForwardService pf = portForwardProvider.getIfAvailable();
+            if (pf != null) {
+                pf.onSessionClosed(sessionId);
+            }
         } catch (Exception ignore) {
         }
         log.info("SSH 会话已关闭: {} {}", sessionId, reason == null ? "" : "(" + reason + ")");
