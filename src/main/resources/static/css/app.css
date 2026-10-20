@@ -6406,6 +6406,82 @@ body.resizing .term-host {
     height: auto;
 }
 
+.dsk-conn-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    background: #fff;
+}
+
+.dsk-conn-body .conn-dlg-head {
+    flex: 0 0 auto;
+    margin-bottom: 6px;
+}
+
+.dsk-conn-body .conn-dlg-list {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+}
+
+.dsk-conn-body .conn-dlg-tip {
+    flex: 0 0 auto;
+}
+
+.dsk-conn-foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid #edf0f5;
+}
+
+.dsk-tool-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    color: var(--text);
+}
+
+.dsk-tool-body > .dirs,
+.dsk-tool-body > .cmds,
+.dsk-tool-body > .procs {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+}
+
+.dsk-dirs-body .dir-path,
+.dsk-dirs-body .dirs-current-path {
+    color: var(--text);
+}
+
+.dsk-dirs-body .dirs-current {
+    color: var(--text-2);
+}
+
+.dsk-cmds-body .cmd-add {
+    border-top-color: #edf0f5;
+}
+
+.dsk-procs-body .procs {
+    padding: 0 6px 6px;
+}
+
+.dsk-tool-hint {
+    flex: 0 0 auto;
+    padding: 6px 10px 8px;
+    color: #8a93a3;
+    font-size: 11px;
+}
+
 .dsk-transfer-body .xfer-list {
     flex: 1;
     min-height: 0;

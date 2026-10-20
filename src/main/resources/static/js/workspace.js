@@ -1416,10 +1416,10 @@ new Vue({
             { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
-            { id: 'process', label: '进程', icon: 'el-icon-cpu', color: '#e06c75' },
+            { id: 'process', label: '进程', icon: 'el-icon-s-grid', color: '#e06c75' },
             { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
             { id: 'control', label: '设置', icon: 'el-icon-setting', color: '#54657e' },
-            { id: 'connect', label: '连接管理', icon: 'el-icon-monitor', color: '#2f8fce' }
+            { id: 'connect', label: '连接管理', icon: 'el-icon-connection', color: '#2f8fce' }
         ],
         tmNavItems: [
             { id: 'processes', label: '进程', icon: 'el-icon-s-grid' },
@@ -1830,8 +1830,35 @@ new Vue({
             return this.tabs.find(function (t) { return t.key === this.activeKey; }, this) || null;
         },
         /* 当前主机的常用目录（按连接隔离） */
-        commonDirs: function () {
+        /* 侧栏面板与桌面工具窗口共用的操作会话：桌面打开时优先当前桌面连接 */
+        uiTab: function () {
+            return (this.desktop.visible ? this.desktopTab : null) || this.activeTab;
+        },
+        uiSessionTabs: function () {
+            if (!this.desktop.visible) {
+                return this.tabs;
+            }
+            var out = [];
+            var t = this.desktopTab;
+            if (t) {
+                out.push(t);
+            }
+            this.desktop.windows.forEach(function (w) {
+                if (w.type === 'terminal' && w.termTab && out.indexOf(w.termTab) < 0) {
+                    out.push(w.termTab);
+                }
+            });
+            return out;
+        },
+        uiCurrentDir: function () {
+            if (this.desktop.visible) {
+                return this.desk.path || this.desktopHomeDir || '';
+            }
             var t = this.activeTab;
+            return t ? (t.sftpPath || '') : '';
+        },
+        commonDirs: function () {
+            var t = this.uiTab;
             if (!t || t.connId == null) {
                 return [];
             }
@@ -1880,6 +1907,14 @@ new Vue({
             }
             return null;
         },
+        desktopConnWin: function () {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === 'connect') {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
         taskmgrWin: function () {
             for (var i = 0; i < this.desktop.windows.length; i++) {
                 if (this.desktop.windows[i].type === 'taskmgr') {
@@ -1891,7 +1926,8 @@ new Vue({
         desktopTaskWindows: function () {
             return this.desktop.windows.filter(function (w) {
                 return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr'
-                    || w.type === 'transfer' || w.type === 'disk';
+                    || w.type === 'transfer' || w.type === 'disk' || w.type === 'connect'
+                    || w.type === 'dirs' || w.type === 'cmd' || w.type === 'process';
             });
         },
         /* ---------- 任务管理器 ---------- */
@@ -2527,7 +2563,7 @@ new Vue({
             return cells;
         },
         filteredProcRows: function () {
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || !t.procList) {
                 return [];
             }
@@ -4397,6 +4433,18 @@ new Vue({
             if (type === 'taskmgr') {
                 return 'el-icon-cpu';
             }
+            if (type === 'connect') {
+                return 'el-icon-connection';
+            }
+            if (type === 'dirs') {
+                return 'el-icon-star-off';
+            }
+            if (type === 'cmd') {
+                return 'el-icon-caret-right';
+            }
+            if (type === 'process') {
+                return 'el-icon-s-grid';
+            }
             return 'el-icon-folder-opened';
         },
         desktopWindowTitle: function (w) {
@@ -4414,6 +4462,18 @@ new Vue({
             }
             if (w && w.type === 'taskmgr') {
                 return '任务管理器';
+            }
+            if (w && w.type === 'connect') {
+                return '连接管理';
+            }
+            if (w && w.type === 'dirs') {
+                return '常用目录';
+            }
+            if (w && w.type === 'cmd') {
+                return '快捷命令';
+            }
+            if (w && w.type === 'process') {
+                return '进程';
             }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
@@ -4447,6 +4507,20 @@ new Vue({
             }
             if (w && w.type === 'taskmgr') {
                 return host ? host + ' · 进程与性能' : '进程与性能';
+            }
+            if (w && w.type === 'connect') {
+                return this.connections.length + ' 个连接 · ' + this.folders.length + ' 个文件夹';
+            }
+            if (w && w.type === 'dirs') {
+                return this.commonDirs.length + ' 个目录' + (host ? ' · ' + host : '');
+            }
+            if (w && w.type === 'cmd') {
+                return this.snippets.length + ' 条命令' + (host ? ' · ' + host : '');
+            }
+            if (w && w.type === 'process') {
+                var pt = this.uiTab;
+                return (pt && pt.procList ? pt.procList.length : 0) + ' 个进程'
+                    + (host ? ' · ' + host : '');
             }
             if (w && w.type === 'ai') {
                 var t = this.desktopTab;
@@ -4659,6 +4733,151 @@ new Vue({
                 return existing;
             }
             var w = this.addDesktopWindow('transfer');
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        openDesktopConnectionWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            this.desktop.startOpen = false;
+            this.desktop.settingsVisible = false;
+            this.loadConnections();
+            this.loadFolders();
+            var existing = this.desktopConnWin;
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var w = this.addDesktopWindow('connect');
+            var area = this.desktopWindowWorkArea();
+            var width = Math.min(area.width - 20, 640);
+            var height = Math.min(area.height - 20, Math.max(420, Math.round(area.height * 0.8)));
+            this.applyDesktopWindowGeometry(w, {
+                x: Math.round((area.width - width) / 2),
+                y: Math.round((area.height - height) / 2),
+                w: width,
+                h: height
+            });
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        desktopConnOpen: function (row) {
+            if (!row || row.id == null) {
+                return;
+            }
+            if (this.openDesktopTabForConn(row.id)) {
+                ELEMENT.Message.success('已在新标签页打开「' + row.name + '」的 AI 桌面');
+            }
+        },
+        openDesktopTabForConn: function (connId, path) {
+            if (connId == null) {
+                return false;
+            }
+            var url = '/workspace?connId=' + encodeURIComponent(connId) + '&view=desktop';
+            if (path) {
+                url += '&path=' + encodeURIComponent(path);
+            }
+            var win = window.open(url, 'deepshell-desktop-' + connId);
+            if (!win) {
+                ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
+                return false;
+            }
+            return true;
+        },
+        desktopWindowOfType: function (type) {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === type) {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
+        centerDesktopWindow: function (w, width, height) {
+            var area = this.desktopWindowWorkArea();
+            var ww = Math.min(area.width - 20, width);
+            var wh = Math.min(area.height - 20, height);
+            this.applyDesktopWindowGeometry(w, {
+                x: Math.round((area.width - ww) / 2),
+                y: Math.round((area.height - wh) / 2),
+                w: ww,
+                h: wh
+            });
+        },
+        openDesktopDirsWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var t = this.desktopTab;
+            if (t && t.connId != null) {
+                this.loadCommonDirs(t.connId);
+            }
+            var existing = this.desktopWindowOfType('dirs');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var area = this.desktopWindowWorkArea();
+            var w = this.addDesktopWindow('dirs');
+            this.centerDesktopWindow(w, 480, Math.max(380, Math.round(area.height * 0.62)));
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        openDesktopCommandsWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            this.loadSnippets();
+            var existing = this.desktopWindowOfType('cmd');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var area = this.desktopWindowWorkArea();
+            var w = this.addDesktopWindow('cmd');
+            this.centerDesktopWindow(w, 620, Math.max(420, Math.round(area.height * 0.72)));
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        openDesktopProcessWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var t = this.desktopTab;
+            var existing = this.desktopWindowOfType('process');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                if (t && t.sessionId) {
+                    this.loadProcesses(t);
+                }
+                return existing;
+            }
+            var area = this.desktopWindowWorkArea();
+            var w = this.addDesktopWindow('process');
+            this.centerDesktopWindow(w, 900, Math.max(460, Math.round(area.height * 0.84)));
+            if (t && t.sessionId) {
+                this.loadProcesses(t);
+            }
             var self = this;
             this.$nextTick(function () {
                 if (self.$refs.desktopRoot) {
@@ -9585,14 +9804,7 @@ new Vue({
             }
             var conv = this.aiActiveConv(t);
             var path = (conv && conv.cwd) || t.termCwd || '';
-            var url = '/workspace?connId=' + encodeURIComponent(t.connId) + '&view=desktop';
-            if (path) {
-                url += '&path=' + encodeURIComponent(path);
-            }
-            var win = window.open(url, 'deepshell-desktop-' + t.connId);
-            if (!win) {
-                ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
-            }
+            this.openDesktopTabForConn(t.connId, path);
         },
         openTerminalInNewTab: function () {
             this.desktop.startOpen = false;
@@ -9638,6 +9850,18 @@ new Vue({
                 this.openDesktopExplorerWindow();
                 return;
             }
+            if (id === 'dirs') {
+                this.openDesktopDirsWindow();
+                return;
+            }
+            if (id === 'cmd') {
+                this.openDesktopCommandsWindow();
+                return;
+            }
+            if (id === 'process') {
+                this.openDesktopProcessWindow();
+                return;
+            }
             if (id === 'sysinfo') {
                 this.openDesktopSysInfo();
                 return;
@@ -9646,12 +9870,14 @@ new Vue({
                 this.openDesktopSettings();
                 return;
             }
-            if (id === 'settings' || id === 'connect' || id === 'help' || id === 'about') {
+            if (id === 'connect') {
+                this.openDesktopConnectionWindow();
+                return;
+            }
+            if (id === 'settings' || id === 'help' || id === 'about') {
                 this.closeAiDesktop();
                 this.$nextTick(function () {
-                    if (id === 'connect') {
-                        self.openConnectDialog();
-                    } else if (id === 'settings') {
+                    if (id === 'settings') {
                         self.onMenuCommand('ai');
                     } else {
                         self.onMenuCommand(id);
@@ -9969,7 +10195,7 @@ new Vue({
             // 先用列表里的（可能被截断）命令行立即展示，再异步取完整命令行替换
             this.procDetailCmd = row.args || row.comm || '';
             this.procDetailVisible = true;
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || !t.sessionId) {
                 return;
             }
@@ -12367,7 +12593,7 @@ new Vue({
             });
         },
         killProcess: function (row, force) {
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || !t.sessionId) {
                 return;
             }
@@ -12752,7 +12978,7 @@ new Vue({
         },
         addCommonDir: function () {
             var self = this;
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || t.connId == null) {
                 ELEMENT.Message.warning('请先连接主机');
                 return;
@@ -12770,14 +12996,16 @@ new Vue({
         },
         addCurrentDir: function () {
             var self = this;
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || t.connId == null) {
                 ELEMENT.Message.warning('请先连接主机');
                 return;
             }
-            var p = t.sftpPath || t.sftpHome;
+            var p = this.desktop.visible
+                ? (this.desk.path || this.desktopHomeDir)
+                : (t.sftpPath || t.sftpHome);
             if (!p) {
-                ELEMENT.Message.warning('当前目录未知，请先浏览文件面板');
+                ELEMENT.Message.warning('当前目录未知，请先打开文件面板或资源管理器');
                 return;
             }
             http.post('/api/common-dirs', { connId: t.connId, path: p }).then(function () {
@@ -12787,7 +13015,7 @@ new Vue({
         },
         removeCommonDir: function (d) {
             var self = this;
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || t.connId == null) {
                 return;
             }
@@ -12803,7 +13031,7 @@ new Vue({
                 });
         },
         cdIntoDir: function (d) {
-            var t = this.activeTab;
+            var t = this.uiTab;
             if (!t || !t.ws || t.ws.readyState !== 1 || t.status !== 'open') {
                 ELEMENT.Message.warning('当前没有已连接的终端会话');
                 return;
@@ -12819,6 +13047,14 @@ new Vue({
                 target = "'" + path.replace(/'/g, "'\\''") + "'";
             }
             t.ws.send(JSON.stringify({ type: 'data', data: 'cd ' + target + '\r' }));
+            if (this.desktop.visible) {
+                if (this.desk.id) {
+                    this.desktopGo(path);
+                } else {
+                    this.openDesktopExplorerWindow(path);
+                }
+                return;
+            }
             if (t.term) {
                 t.term.focus();
             }
@@ -12834,15 +13070,15 @@ new Vue({
                 return x.ws && x.ws.readyState === 1 && x.status === 'open';
             };
             if (this.snippetTarget === 'all') {
-                return this.tabs.filter(alive);
+                return this.uiSessionTabs.filter(alive);
             }
             if (this.snippetTarget === 'custom') {
                 var keys = this.snippetTargets;
-                return this.tabs.filter(function (x) {
+                return this.uiSessionTabs.filter(function (x) {
                     return keys.indexOf(x.key) >= 0 && alive(x);
                 });
             }
-            var t = this.activeTab;
+            var t = this.uiTab;
             return t && alive(t) ? [t] : [];
         },
         sendSnippetText: function (text) {
@@ -12854,11 +13090,11 @@ new Vue({
                 return;
             }
             var payload = JSON.stringify({ type: 'data', data: text });
-            var active = this.activeTab;
+            var active = this.uiTab;
             targets.forEach(function (x) {
                 x.ws.send(payload);
             });
-            if (active && targets.indexOf(active) >= 0 && active.term) {
+            if (!this.desktop.visible && active && targets.indexOf(active) >= 0 && active.term) {
                 active.term.focus();
             }
         },
@@ -13191,8 +13427,10 @@ new Vue({
             self.closeDesktopSubMenus();
         });
         setInterval(function () {
-            var t = self.activeTab;
-            if (self.panelVisible && self.panelTab === 'process' && t && t.sessionId
+            var t = self.uiTab;
+            var needPanel = self.panelVisible && self.panelTab === 'process';
+            var needWin = self.desktop.visible && !!self.desktopWindowOfType('process');
+            if ((needPanel || needWin) && t && t.sessionId
                 && t.procAuto && !t.procLoading) {
                 self.loadProcesses(t);
             }

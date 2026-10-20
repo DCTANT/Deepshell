@@ -476,6 +476,248 @@
                                    @summary="showLocalDownloadSummary" @remove="removeTransfer"></xfer-list>
                     </div>
                 </template>
+                <template v-else-if="w.type === 'connect'">
+                    <div class="dsk-conn-body">
+                        <div class="conn-dlg-head">
+                            <el-radio-group v-model="connFilter" size="mini">
+                                <el-radio-button label="all">全部</el-radio-button>
+                                <el-radio-button label="fav">收藏</el-radio-button>
+                            </el-radio-group>
+                            <el-input v-model="connKeyword" size="mini" prefix-icon="el-icon-search" clearable
+                                      placeholder="搜索名称 / 主机 / 用户名" class="conn-dlg-search"></el-input>
+                            <span class="conn-dlg-actions" v-if="connFilter === 'all' && folders.length">
+                                <el-button size="mini" type="text" @click="expandAllFolders(true)">展开全部</el-button>
+                                <el-button size="mini" type="text" @click="expandAllFolders(false)">收起全部</el-button>
+                            </span>
+                        </div>
+                        <div class="conn-dlg-list dsk-conn-list">
+                            <template v-for="row in connRows">
+                                <div v-if="row._rowType === 'section'" :key="row.key" class="conn-sec">
+                                    <i :class="row.icon"></i> {{ row.label }}
+                                </div>
+                                <div v-else-if="row._rowType === 'sep'" :key="row.key" class="conn-sep"></div>
+                                <div v-else-if="row._rowType === 'folder'" :key="row.key" class="conn-row is-folder"
+                                     :class="{ 'drop-target': connDragOverId === row.id }"
+                                     :style="{ paddingLeft: (8 + row.depth * 18) + 'px' }" @click="toggleFolder(row.id)"
+                                     @dragover.prevent="onFolderDragOver(row)" @dragleave="onFolderDragLeave(row)"
+                                     @drop.prevent="onConnDrop(row)">
+                                    <i class="conn-row-arrow"
+                                       :class="connExpanded[row.id] ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
+                                    <i class="el-icon-folder conn-row-icon"></i>
+                                    <span class="conn-row-name">{{ row.name }}</span>
+                                    <span class="conn-row-folder-ops">
+                                        <i class="el-icon-edit" title="重命名文件夹" @click.stop="renameFolderQuick(row)"></i>
+                                        <i class="el-icon-delete" title="删除文件夹（内容上移到上一级）"
+                                           @click.stop="removeFolderQuick(row)"></i>
+                                    </span>
+                                    <span class="conn-row-count">{{ row._count }} 项</span>
+                                </div>
+                                <div v-else :key="row.key" class="conn-row" :draggable="!row.noDrag"
+                                     :title="'在新标签页打开「' + row.name + '」的 AI 桌面'"
+                                     :class="{ 'drop-before': connDropKey === row.key && connDropPos === 'before',
+                                               'drop-after': connDropKey === row.key && connDropPos === 'after' }"
+                                     :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }"
+                                     @click="desktopConnOpen(row)"
+                                     @dragover.prevent="onConnRowDragOver($event, row)" @dragleave="onConnRowDragLeave(row)"
+                                     @drop.prevent="onConnRowDrop($event, row)"
+                                     @dragstart="onConnDragStart($event, row)" @dragend="onConnDragEnd">
+                                    <i class="el-icon-monitor conn-row-icon"></i>
+                                    <span class="conn-row-name">{{ row.name }}</span>
+                                    <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
+                                    <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                                    <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
+                                    <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
+                                                :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">
+                                        <div class="conn-set">
+                                            <div class="conn-set-row">
+                                                <span><i class="el-icon-top"></i> 置顶显示</span>
+                                                <el-switch :value="row.pinned" size="mini"
+                                                           @change="setConnFlag(row.id, 'pinned', $event)"></el-switch>
+                                            </div>
+                                            <div class="conn-set-row">
+                                                <span><i class="el-icon-star-on"></i> 收藏</span>
+                                                <el-switch :value="row.favorite" size="mini"
+                                                           @change="setConnFlag(row.id, 'favorite', $event)"></el-switch>
+                                            </div>
+                                            <div class="conn-set-row conn-set-action" @click="editConnFromDialog(row.id)">
+                                                <span><i class="el-icon-edit"></i> 编辑连接</span>
+                                                <i class="el-icon-arrow-right"></i>
+                                            </div>
+                                            <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
+                                                <span><i class="el-icon-document-copy"></i> 复制连接</span>
+                                            </div>
+                                            <div class="conn-set-row conn-set-action conn-set-danger"
+                                                 @click="removeConnFromDialog(row.id)">
+                                                <span><i class="el-icon-delete"></i> 删除连接</span>
+                                            </div>
+                                            <div class="conn-set-hint">置顶后显示在列表顶部，收藏可用顶部「收藏」筛选</div>
+                                        </div>
+                                        <i slot="reference" class="el-icon-setting conn-set-btn" title="连接设置"
+                                           @click.stop></i>
+                                    </el-popover>
+                                </div>
+                            </template>
+                            <div v-if="!connRows.length" class="panel-tip">
+                                {{ connFilter === 'fav'
+                                    ? '暂无收藏的连接（点击连接右侧 ⚙ 可收藏）'
+                                    : (connKeyword ? '没有匹配的连接' : '暂无连接，点击下方「新建连接」直接创建') }}
+                            </div>
+                        </div>
+                        <div class="conn-dlg-tip">
+                            <i class="el-icon-info"></i> 单击连接会在新标签页打开该连接的 AI 桌面；拖动可排序或移入文件夹
+                        </div>
+                        <div class="dsk-conn-foot">
+                            <el-button size="mini" icon="el-icon-upload2"
+                                       @click="connImportVisible = true">连接导入</el-button>
+                            <el-button size="mini" icon="el-icon-download" @click="openConnExport">连接导出</el-button>
+                            <el-button size="mini" icon="el-icon-folder-add"
+                                       @click="newFolderQuick(null)">新建文件夹</el-button>
+                            <span class="spacer"></span>
+                            <el-button size="mini" type="primary" icon="el-icon-plus"
+                                       @click="openNewConnDialog">新建连接</el-button>
+                        </div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'dirs'">
+                    <div class="dsk-tool-body dsk-dirs-body">
+                        <div class="dirs" v-if="uiTab && uiTab.sessionId">
+                            <div class="dirs-toolbar">
+                                <el-input size="mini" v-model="newDirPath" class="dirs-input"
+                                          placeholder="目录路径，如 /home/user"
+                                          @keyup.enter.native="addCommonDir">
+                                    <el-button slot="append" icon="el-icon-plus" title="添加"
+                                               @click="addCommonDir"></el-button>
+                                </el-input>
+                                <el-button size="mini" icon="el-icon-location-outline"
+                                           title="把当前目录加入常用" :disabled="!uiCurrentDir"
+                                           @click="addCurrentDir"></el-button>
+                            </div>
+                            <div class="dirs-current" v-if="uiCurrentDir">
+                                当前目录：<span class="dirs-current-path">{{ uiCurrentDir }}</span>
+                            </div>
+                            <div class="dirs-list">
+                                <div class="dir-item" v-for="d in commonDirs" :key="d.id"
+                                     :title="'cd 到 ' + d.path" @click="cdIntoDir(d)">
+                                    <i class="el-icon-folder-opened dir-ico"></i>
+                                    <span class="dir-path">{{ d.path }}</span>
+                                    <i class="el-icon-close dir-del" title="从常用目录移除"
+                                       @click.stop="removeCommonDir(d)"></i>
+                                </div>
+                                <div v-if="!commonDirs.length" class="panel-tip">
+                                    还没有常用目录：浏览到目标目录后可点右侧定位按钮添加，或在上方输入路径
+                                </div>
+                            </div>
+                            <div class="dsk-tool-hint">
+                                <i class="el-icon-info"></i> 单击目录会在终端执行 cd，并让资源管理器跳转到该目录
+                            </div>
+                        </div>
+                        <div v-else class="panel-tip">连接建立后即可使用常用目录</div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'cmd'">
+                    <div class="dsk-tool-body dsk-cmds-body">
+                        <div class="cmds">
+                            <div class="cmd-target-bar">
+                                <span class="cmd-target-label">发送到</span>
+                                <el-radio-group v-model="snippetTarget" size="mini">
+                                    <el-radio-button label="current">当前会话</el-radio-button>
+                                    <el-radio-button label="all">所有会话</el-radio-button>
+                                    <el-radio-button label="custom">指定会话</el-radio-button>
+                                </el-radio-group>
+                            </div>
+                            <div v-if="snippetTarget === 'custom'" class="cmd-target-list">
+                                <el-checkbox v-for="t in uiSessionTabs" :key="t.key"
+                                             :value="snippetTargets.indexOf(t.key) >= 0"
+                                             @change="toggleSnippetTarget(t.key, $event)">{{ t.title }}</el-checkbox>
+                                <span v-if="!uiSessionTabs.length" class="panel-tip">没有打开的会话</span>
+                            </div>
+                            <div class="cmd-list">
+                                <div class="cmd-item" v-for="c in snippets" :key="c.id"
+                                     :title="c.command" @click="runSnippet(c)">
+                                    <i class="el-icon-caret-right"></i>
+                                    <span class="cmd-name">{{ c.name }}</span>
+                                    <span class="cmd-text">{{ c.command }}</span>
+                                    <i class="el-icon-edit cmd-edit" title="编辑"
+                                       @click.stop="openCmdEdit(c)"></i>
+                                    <i class="el-icon-plus cmd-send" title="仅填入，不执行"
+                                       @click.stop="fillSnippet(c)"></i>
+                                </div>
+                                <div v-if="!snippets.length" class="panel-tip">
+                                    还没有快捷命令，可直接在下方输入框添加
+                                </div>
+                            </div>
+                            <div class="cmd-add">
+                                <el-input size="mini" v-model="newCmd.name" placeholder="名称"
+                                          class="cmd-add-name"></el-input>
+                                <el-input size="mini" v-model="newCmd.command" placeholder="命令，如 df -h"
+                                          class="cmd-add-cmd" @keyup.enter.native="addSnippet"></el-input>
+                                <el-button size="mini" type="primary" icon="el-icon-plus" title="添加"
+                                           @click="addSnippet"></el-button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'process'">
+                    <div class="dsk-tool-body dsk-procs-body">
+                        <div class="procs" v-if="uiTab && uiTab.sessionId">
+                            <div class="proc-toolbar">
+                                <el-input size="mini" v-model="uiTab.procKeyword"
+                                          placeholder="过滤 名称/用户/PID/命令"
+                                          prefix-icon="el-icon-search" clearable class="proc-search"></el-input>
+                                <el-switch v-model="uiTab.procAuto" size="mini" active-text="3s"></el-switch>
+                                <el-button size="mini" icon="el-icon-refresh"
+                                           @click="loadProcesses(uiTab)"></el-button>
+                            </div>
+                            <el-table :data="filteredProcRows" size="mini" stripe
+                                      v-loading="uiTab.procLoading" class="proc-table" height="100%"
+                                      :default-sort="{ prop: 'cpu', order: 'descending' }"
+                                      @row-click="showProcDetail">
+                                <el-table-column label="名称" min-width="110" show-overflow-tooltip>
+                                    <template slot-scope="s">
+                                        <el-tooltip placement="top-start" :content="s.row.args || s.row.comm">
+                                            <span class="proc-comm">{{ s.row.comm }}</span>
+                                        </el-tooltip>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="PID" prop="pid" width="64" sortable></el-table-column>
+                                <el-table-column label="用户" prop="user" width="76" show-overflow-tooltip></el-table-column>
+                                <el-table-column label="CPU" prop="cpu" width="64" sortable :sort-method="sortByCpu">
+                                    <template slot-scope="s">
+                                        <span :class="{ 'proc-hot': procCpuValue(s.row) >= 50 }">{{ fmtProcCpu(s.row) }}</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="内存" prop="rssMb" width="76" sortable :sort-method="sortByMem">
+                                    <template slot-scope="s">
+                                        <el-tooltip placement="top" :content="(s.row.memPct || 0) + '% 物理内存'">
+                                            <span>{{ fmtMb(s.row.rssMb) }}</span>
+                                        </el-tooltip>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="状态" width="50" align="center">
+                                    <template slot-scope="s">
+                                        <el-tooltip placement="top" :content="statText(s.row.state)">
+                                            <span>{{ s.row.state }}</span>
+                                        </el-tooltip>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="时长" width="86">
+                                    <template slot-scope="s">
+                                        <span class="dim">{{ s.row.elapsedSecs >= 0 ? fmtUptime(s.row.elapsedSecs) : '--' }}</span>
+                                    </template>
+                                </el-table-column>
+                                <el-table-column label="操作" width="86" align="right">
+                                    <template slot-scope="s">
+                                        <el-button size="mini" type="text" class="danger-text"
+                                                   @click.stop="killProcess(s.row, false)">结束</el-button>
+                                        <el-button size="mini" type="text" class="danger-text"
+                                                   @click.stop="killProcess(s.row, true)">强杀</el-button>
+                                    </template>
+                                </el-table-column>
+                            </el-table>
+                        </div>
+                        <div v-else class="panel-tip">连接建立后即可查看服务器进程</div>
+                    </div>
+                </template>
                 <template v-else-if="w.type === 'disk'">
                     <div class="dsk-disk-body">
                         <disk-analyzer :tab="w"
@@ -1906,7 +2148,7 @@
                                     <div class="dsk-set-info"><b>当前连接</b>
                                         <span>{{ desktopTab ? desktopTab.title + ' · ' + desktopTab.host : '未连接' }}</span>
                                     </div>
-                                    <el-button size="mini" @click="openConnectDialog">连接管理</el-button>
+                                    <el-button size="mini" @click="openDesktopConnectionWindow">连接管理</el-button>
                                 </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info"><b>局域网设置</b><span>查看访问地址、复制地址与安全提示</span></div>
@@ -2947,7 +3189,9 @@
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
                     <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录</li>
-                    <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏放置 AI 终端、新建终端，以及已打开窗口的按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器，可最小化与还原）；传输中心、磁盘等应用从开始菜单打开。右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；<b>点击或右键连接状态</b>可重新连接 / 断开 / 查看系统信息；连接断开时状态旁会显示「重新连接」，任务栏空白处右键也可重新连接。点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；开始菜单底部可在新标签页打开工作台（保留当前桌面），或直接返回工作台；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏放置 AI 终端、新建终端，以及已打开窗口的按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 常用目录 / 快捷命令 / 进程 / 连接管理，可最小化与还原）；这些工具都从开始菜单打开，均在桌面内以窗口运行，不再跳转终端工作台。右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；<b>点击或右键连接状态</b>可重新连接 / 断开 / 查看系统信息；连接断开时状态旁会显示「重新连接」，任务栏空白处右键也可重新连接。点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；开始菜单底部可在新标签页打开工作台（保留当前桌面），或直接返回工作台；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>常用目录 / 快捷命令 / 进程（桌面窗口）</b>：常用目录可添加、移除目录，<b>单击目录</b>会在终端执行 cd 并让资源管理器跳转到该目录；快捷命令按「当前会话 / 所有会话 / 指定会话」发送，桌面内的终端窗口也会出现在会话列表中；进程窗口每 3 秒自动刷新，支持过滤、排序、查看详情与结束 / 强杀</li>
+                    <li><b>连接管理（桌面窗口）</b>：开始菜单「连接管理」在桌面内以窗口打开，支持搜索、收藏 / 置顶、文件夹分组、拖动排序、连接导入导出以及新建 / 编辑 / 复制 / 删除；<b>单击连接</b>会在新浏览器标签页打开该连接的 AI 桌面，当前桌面保持不变。终端工作台的「打开连接」弹窗行为不变</li>
                     <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后会按退避策略自动重连，也可在任务栏连接状态处右键手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
                     <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
                     <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>
