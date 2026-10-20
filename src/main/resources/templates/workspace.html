@@ -1499,13 +1499,6 @@
                           @mousedown.stop.prevent="startDesktopWindowResize($event, w, dir)"></span>
                 </template>
             </div>
-            <div class="dsk-window-empty" v-if="!desktop.windows.length">
-                <i class="el-icon-folder-opened"></i>
-                <p>桌面上没有打开的窗口</p>
-                <el-button size="small" icon="el-icon-folder-add"
-                           @click="openDesktopExplorerWindow()">新建资源管理器窗口</el-button>
-                <div class="dsk-window-empty-tip">也可以在桌面空白处右键，或从开始菜单重新打开</div>
-            </div>
         </div>
 
         <input ref="desktopUpload" type="file" multiple class="dsk-upload-input"
@@ -2738,7 +2731,7 @@
 
     <!-- 端口转发 -->
     <el-dialog title="端口转发" :visible.sync="pfVisible" width="780px" append-to-body
-               custom-class="pf-dialog">
+               custom-class="pf-dialog" top="3vh">
         <div class="pf-head">
             <span class="pf-desc">规则按连接保存；勾选自动启动的规则会在连接建立后恢复。
                 本机监听 = 本机端口经服务器转发；服务器监听 = 服务器端口经本机转发。</span>

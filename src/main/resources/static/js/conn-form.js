@@ -45,7 +45,7 @@
     Vue.component('conn-form-dialog', {
         template: `
 <el-dialog :title="form.id ? '编辑连接' : '新建连接'" :visible.sync="visible" width="580px" append-to-body
-           custom-class="conn-form-dialog"
+           custom-class="conn-form-dialog" top="3vh"
            :close-on-click-modal="false" :close-on-press-escape="false">
     <el-form label-width="90px" size="small">
         <el-form-item label="名称" required>

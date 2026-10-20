@@ -3422,48 +3422,6 @@ body.resizing .term-host {
 .r-se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: se-resize; }
 .r-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: sw-resize; }
 
-.dsk-window-empty {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    pointer-events: none;
-    color: rgba(219, 234, 255, .62);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
-}
-
-.dsk-window-empty > i {
-    font-size: 46px;
-    color: rgba(160, 200, 255, .5);
-}
-
-.dsk-window-empty p {
-    margin: 0;
-    font-size: 14px;
-}
-
-.dsk-window-empty .el-button {
-    pointer-events: auto;
-    border-color: rgba(140, 185, 255, .45);
-    background: rgba(20, 44, 82, .55);
-    color: #dcebff;
-}
-
-.dsk-window-empty .el-button:hover {
-    border-color: #6ea8ff;
-    background: rgba(40, 76, 132, .72);
-    color: #fff;
-}
-
-.dsk-window-empty-tip {
-    font-size: 11px;
-    color: rgba(190, 214, 245, .45);
-}
-
 .dsk-topbar {
     flex: 0 0 auto;
     height: 50px;
@@ -7318,6 +7276,28 @@ body.resizing .term-host {
 .pf-dialog,
 .conn-form-dialog {
     max-width: calc(100vw - 24px);
+}
+
+/* 表单类弹窗：内容超出视口时在弹窗内部滚动，避免整页出现滚动条 */
+.conn-form-dialog,
+.pf-dialog {
+    margin-bottom: 3vh !important;
+    max-height: calc(100vh - 6vh);
+    display: flex;
+    flex-direction: column;
+}
+
+.conn-form-dialog .el-dialog__header,
+.conn-form-dialog .el-dialog__footer,
+.pf-dialog .el-dialog__header {
+    flex: 0 0 auto;
+}
+
+.conn-form-dialog .el-dialog__body,
+.pf-dialog .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .portfwd-target {
