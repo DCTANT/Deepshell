@@ -26,7 +26,7 @@ mvn test
 java -jar target/deepshell.jar
 ```
 
-启动后访问 <http://127.0.0.1:18080>。开发模式数据目录默认为 `~/.deepshell`。
+启动后访问 <http://127.0.0.1:17777>。开发模式数据目录默认为 `~/.deepshell`。
 
 ## 代码风格
 

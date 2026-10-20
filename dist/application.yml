@@ -29,7 +29,7 @@ deepshell:
 
 # ── 常用可调项（去掉行首 # 即生效）────────────────────────────
 # server:
-#   port: 18080              # 服务端口
+#   port: 17777              # 服务端口
 # deepshell:
 #   open-browser: true       # 启动后自动打开浏览器
 #   browser-cmd: ""          # 自定义打开命令，{url} 为地址占位符

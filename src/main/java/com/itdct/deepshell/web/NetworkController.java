@@ -26,7 +26,7 @@ import java.util.*;
 @RequestMapping("/api/network")
 public class NetworkController {
 
-    @Value("${server.port:18080}")
+    @Value("${server.port:17777}")
     private int port;
 
     @Value("${server.address:127.0.0.1}")

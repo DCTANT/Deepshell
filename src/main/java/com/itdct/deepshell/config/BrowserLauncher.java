@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class BrowserLauncher implements ApplicationListener<ApplicationReadyEvent> {
 
-    @Value("${server.port:18080}")
+    @Value("${server.port:17777}")
     private int port;
 
     @Value("${deepshell.open-browser:true}")

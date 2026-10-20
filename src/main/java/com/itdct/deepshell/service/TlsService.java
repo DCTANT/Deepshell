@@ -56,7 +56,7 @@ public class TlsService {
     @Value("${server.address:127.0.0.1}")
     private String bindAddress;
 
-    @Value("${server.port:18080}")
+    @Value("${server.port:17777}")
     private int port;
 
     private volatile boolean enabled;

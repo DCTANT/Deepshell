@@ -94,7 +94,7 @@ deepshell-1.2.0/
 
 开发模式（在 IntelliJ IDEA 中运行 `DeepShellApplication`）数据目录默认为 `~/.deepshell`；分发包数据全部位于程序目录 `data/` 下，拷贝整个目录即可迁移。
 
-启动后访问 **http://127.0.0.1:18080**（也可以用 localhost；局域网模式下请用本机 127.0.0.1 或局域网 IP）
+启动后访问 **http://127.0.0.1:17777**（也可以用 localhost；局域网模式下请用本机 127.0.0.1 或局域网 IP）
 
 ## 使用说明
 
@@ -158,7 +158,7 @@ src/assembly/      maven-assembly 打包描述（dist.xml）
 内置默认配置在 `src/main/resources/application.yml`；分发包使用与 jar 同级的外置 `application.yml`，只需填写要覆盖的项：
 
 ```yaml
-server.port: 18080             # 服务端口（默认 18080）
+server.port: 17777             # 服务端口（默认 17777）
 deepshell.data-dir: ./data     # 数据目录（默认 ~/.deepshell；分发包为 ./data）
 deepshell.open-browser: true   # 启动后自动打开浏览器
 

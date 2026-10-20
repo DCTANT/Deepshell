@@ -1,5 +1,5 @@
 server:
-  port: 18080
+  port: 17777
   # 默认仅本机访问；在应用内开启「局域网访问」并重启后绑定 0.0.0.0
   address: ${deepshell.lan-address:127.0.0.1}
   compression:
@@ -7,7 +7,8 @@ server:
 
 spring:
   main:
-    # 本机直写下载需要弹原生目录选择框；是否真正可用由 LocalDownloadService 运行时探测
+    # 该属性在 Spring Boot 中绑定得晚于 AWT 初始化，实际生效位置是 DeepShellApplication.main；
+    # 这里保留以声明意图，是否真正有图形界面由 LocalDownloadService 运行时探测
     headless: false
   application:
     name: deepshell

@@ -25,7 +25,7 @@ public class LoopbackDualStackConfig implements WebServerFactoryCustomizer<Tomca
     @Value("${server.address:127.0.0.1}")
     private String bindAddress;
 
-    @Value("${server.port:18080}")
+    @Value("${server.port:17777}")
     private int bindPort;
 
     private final TlsService tls;

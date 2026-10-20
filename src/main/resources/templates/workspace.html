@@ -2064,7 +2064,7 @@
                                         <b>局域网访问</b>
                                         <span>当前：{{ lanSettings.effectiveLan ? '已开放' : '仅本机' }} ·
                                             {{ lanSettings.tlsEnabled ? 'HTTPS' : 'HTTP' }} ·
-                                            端口 {{ lanSettings.port || 18080 }}</span>
+                                            端口 {{ lanSettings.port || 17777 }}</span>
                                     </div>
                                     <el-switch v-model="lanSettings.lanEnabled" size="mini"
                                                @change="saveLan"></el-switch>
