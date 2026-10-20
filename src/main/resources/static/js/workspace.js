@@ -1410,7 +1410,7 @@ new Vue({
         ],
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
-            { id: 'terminal', label: '终端', icon: 'el-icon-monitor', color: '#22a06b' },
+            { id: 'terminal', label: '新建终端', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'taskmgr', label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' },
             { id: 'file', label: '文件 SFTP', icon: 'el-icon-folder-opened', color: '#e6a23c' },
@@ -1890,7 +1890,8 @@ new Vue({
         },
         desktopTaskWindows: function () {
             return this.desktop.windows.filter(function (w) {
-                return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr';
+                return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr'
+                    || w.type === 'transfer' || w.type === 'disk';
             });
         },
         /* ---------- 任务管理器 ---------- */
@@ -4666,14 +4667,6 @@ new Vue({
             });
             return w;
         },
-        toggleDesktopTransferApp: function () {
-            var w = this.desktopTransferWin;
-            if (!w) {
-                this.openTransferDesktopWindow();
-                return;
-            }
-            this.toggleDesktopTaskbarWindow(w);
-        },
         openDiskDesktopWindow: function () {
             if (!this.desktop.visible) {
                 return null;
@@ -4710,14 +4703,6 @@ new Vue({
                 }
             });
             return w;
-        },
-        toggleDesktopDiskApp: function () {
-            var w = this.desktopDiskWin;
-            if (!w) {
-                this.openDiskDesktopWindow();
-                return;
-            }
-            this.toggleDesktopTaskbarWindow(w);
         },
         openDesktopTerminalWindow: function (startDir) {
             if (!this.desktop.visible) {
@@ -9610,6 +9595,9 @@ new Vue({
             }
         },
         openTerminalInNewTab: function () {
+            this.desktop.startOpen = false;
+            this.desktop.powerOpen = false;
+            this.desktop.wallMenu.visible = false;
             var t = this.desktopTab;
             if (!t || t.connId == null) {
                 ELEMENT.Message.warning('当前会话没有可用的连接记录');
