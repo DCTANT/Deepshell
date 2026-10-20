@@ -5772,6 +5772,510 @@ body.resizing .term-host {
     }
 }
 
+/* ---------- 音频播放 ---------- */
+.av-viewer {
+    background:
+        radial-gradient(1100px 640px at 26% 20%, rgba(41, 76, 128, .34), rgba(7, 10, 15, 0) 62%),
+        rgba(7, 10, 15, .97);
+}
+
+#audioViewer audio {
+    display: none;
+}
+
+.av-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+.av-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    padding: 26px 24px 20px;
+    overflow: auto;
+}
+
+.av-cover {
+    position: relative;
+    flex: 0 0 auto;
+    width: min(29vh, 224px);
+    height: min(29vh, 224px);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 50%,
+        #1d2430 0 17%, #0d1118 17% 19.5%,
+        #171d28 19.5% 37%, #0d1118 37% 39.5%,
+        #171d28 39.5% 57%, #0c1017 57% 59.5%,
+        #141a24 59.5% 77%, #0b0e14 77% 79.5%,
+        #131923 79.5% 100%);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
+
+.av-cover::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 24%,
+        rgba(255, 255, 255, .1), transparent 52%);
+    pointer-events: none;
+}
+
+.av-vinyl {
+    position: absolute;
+    inset: 9%;
+    border-radius: 50%;
+    background: repeating-radial-gradient(circle at 50% 50%,
+        rgba(255, 255, 255, .035) 0 1px, transparent 1px 5px);
+    animation: av-spin 9s linear infinite;
+    animation-play-state: paused;
+}
+
+.av-cover.playing .av-vinyl {
+    animation-play-state: running;
+}
+
+.av-label {
+    position: relative;
+    z-index: 1;
+    width: 38%;
+    height: 38%;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    background: linear-gradient(135deg, #f175b5, #d94a91);
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .35), inset 0 0 0 1px rgba(255, 255, 255, .18);
+}
+
+.av-label i {
+    font-size: 20px;
+}
+
+.av-label span {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .6px;
+}
+
+.av-cover-glow {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle, transparent 46%, rgba(241, 117, 181, .18) 72%, transparent 86%);
+    opacity: 0;
+    transition: opacity .4s ease;
+    pointer-events: none;
+}
+
+.av-cover.playing .av-cover-glow {
+    opacity: 1;
+    animation: av-pulse 3.2s ease-in-out infinite;
+}
+
+.av-title {
+    max-width: min(680px, 92%);
+    color: #eef4fd;
+    font-size: 19px;
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+.av-subtitle {
+    max-width: min(680px, 92%);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: #93a3ba;
+    font-size: 12px;
+}
+
+.av-artist {
+    color: #a9bad2;
+}
+
+.av-chip {
+    padding: 2px 8px;
+    border: 1px solid rgba(255, 255, 255, .1);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .04);
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10.5px;
+}
+
+.av-controls {
+    width: min(720px, 100%);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 14px;
+    background: rgba(15, 20, 29, .78);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, .35);
+    box-sizing: border-box;
+}
+
+.av-btn {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 50%;
+    background: transparent;
+    color: #c7d3e5;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all .15s ease;
+}
+
+.av-btn:hover:not(:disabled) {
+    border-color: #4c8dff;
+    background: rgba(76, 141, 255, .14);
+    color: #fff;
+}
+
+.av-btn:disabled {
+    opacity: .3;
+    cursor: default;
+}
+
+.av-play {
+    width: 44px;
+    height: 44px;
+    border-color: rgba(110, 168, 255, .45);
+    background: linear-gradient(135deg, #3b7fe8, #2b62c4);
+    color: #fff;
+    font-size: 19px;
+    box-shadow: 0 6px 18px rgba(59, 127, 232, .32);
+}
+
+.av-play:hover:not(:disabled) {
+    background: linear-gradient(135deg, #4a8df2, #3570d4);
+    filter: brightness(1.05);
+}
+
+.av-progress {
+    flex: 1 1 auto;
+    min-width: 120px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+}
+
+.av-time {
+    flex: 0 0 auto;
+    min-width: 38px;
+    color: #8b9bb3;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11px;
+    text-align: center;
+}
+
+.av-range {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    margin: 0;
+    border-radius: 2px;
+    background: linear-gradient(to right,
+        #4c8dff 0%, #6ea8ff var(--av-fill, 0%),
+        rgba(255, 255, 255, .14) var(--av-fill, 0%), rgba(255, 255, 255, .14) 100%);
+    outline: none;
+    cursor: pointer;
+}
+
+.av-range:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.av-seek {
+    flex: 1 1 auto;
+    min-width: 80px;
+}
+
+.av-volume {
+    flex: 0 0 74px;
+    width: 74px;
+}
+
+.av-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #eaf2ff;
+    border: 2px solid #4c8dff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+
+.av-range::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #eaf2ff;
+    border: 2px solid #4c8dff;
+}
+
+.av-icon-btn {
+    border-radius: 50%;
+}
+
+.av-icon-btn svg {
+    width: 17px;
+    height: 17px;
+    display: block;
+}
+
+.av-text-btn {
+    width: auto;
+    min-width: 32px;
+    padding: 0 7px;
+    border-radius: 7px;
+    color: #a9bbd4;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11px;
+}
+
+.av-text-btn.on {
+    border-color: rgba(110, 168, 255, .5);
+    background: rgba(76, 141, 255, .16);
+    color: #cfe2ff;
+}
+
+.av-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #9fb0c8;
+    font-size: 12px;
+}
+
+.av-error {
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 24px;
+    border: 1px solid rgba(240, 180, 41, .25);
+    border-radius: 12px;
+    background: rgba(42, 32, 12, .5);
+    color: #e6d4a8;
+    text-align: center;
+    font-size: 12.5px;
+}
+
+.av-error > i {
+    color: #f0b429;
+    font-size: 30px;
+}
+
+.av-error p {
+    margin: 0;
+    line-height: 1.7;
+}
+
+.av-notice {
+    padding: 6px 12px;
+    border: 1px solid rgba(110, 168, 255, .25);
+    border-radius: 14px;
+    background: rgba(24, 42, 68, .7);
+    color: #a9c8f5;
+    font-size: 11.5px;
+}
+
+.av-format-hint {
+    max-width: 560px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #c9a85a;
+    font-size: 11.5px;
+}
+
+.av-playlist {
+    flex: 0 0 292px;
+    width: 292px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(12, 16, 23, .62);
+}
+
+.av-playlist-head {
+    flex: 0 0 auto;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+    color: #dbe6f5;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.av-playlist-count {
+    color: #7f8ea5;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.av-tracks {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px;
+}
+
+.av-track {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 9px;
+    border-radius: 7px;
+    cursor: pointer;
+}
+
+.av-track:hover {
+    background: rgba(255, 255, 255, .05);
+}
+
+.av-track.active {
+    background: rgba(76, 141, 255, .16);
+    box-shadow: inset 0 0 0 1px rgba(110, 168, 255, .25);
+}
+
+.av-track-ico {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .06);
+    color: #9fb1c9;
+    font-size: 11px;
+}
+
+.av-track.active .av-track-ico {
+    background: rgba(76, 141, 255, .28);
+    color: #dcebff;
+}
+
+.av-track-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.av-track-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #cfdaea;
+    font-size: 12px;
+}
+
+.av-track.active .av-track-name {
+    color: #fff;
+}
+
+.av-track-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #71829a;
+    font-size: 10.5px;
+}
+
+.av-track-dur {
+    flex: 0 0 auto;
+    color: #8fa4bf;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10.5px;
+}
+
+.av-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 64px;
+    z-index: 10;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 6px;
+    background: rgba(18, 24, 34, .92);
+    color: #dbe6f5;
+    font-size: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+}
+
+@keyframes av-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes av-pulse {
+    0%, 100% { opacity: .5; }
+    50% { opacity: 1; }
+}
+
+@media (max-width: 900px) {
+    .av-playlist {
+        display: none;
+    }
+
+    .av-main {
+        padding: 22px 16px 18px;
+    }
+
+    .av-cover {
+        width: min(24vh, 170px);
+        height: min(24vh, 170px);
+    }
+
+    .av-title {
+        font-size: 16px;
+    }
+
+    .av-controls {
+        gap: 7px;
+        padding: 10px 12px;
+    }
+
+    .av-volume {
+        display: none;
+    }
+}
+
 /* 大 / 中图标视图的图片缩略图 */
 .dsk-thumb {
     position: relative;

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>音频播放 · DeepShell</title>
+    <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #070a0f;
+        }
+    </style>
+</head>
+<body>
+<div id="audioViewer" class="dsk-preview av-viewer" v-cloak @contextmenu.prevent>
+    <div class="dsk-preview-head">
+        <i class="el-icon-headset"></i>
+        <span class="dsk-preview-title" :title="path">{{ name || '音频播放' }}</span>
+        <span class="dsk-preview-counter" v-if="tracks.length && index >= 0">{{ index + 1 }} / {{ tracks.length }}</span>
+        <span class="spacer"></span>
+        <button class="dsk-preview-head-btn" title="下载原音频" @click="download">
+            <i class="el-icon-download"></i><span>下载</span>
+        </button>
+        <button class="dsk-preview-head-btn" title="关闭标签页 (Esc)" @click="closeTab">
+            <i class="el-icon-close"></i><span>关闭</span>
+        </button>
+    </div>
+    <div class="av-body">
+        <div class="av-main">
+            <div class="av-cover" :class="{ playing: !paused && !error }">
+                <div class="av-vinyl"></div>
+                <div class="av-label">
+                    <i class="el-icon-headset"></i>
+                    <span>{{ ext ? ext.toUpperCase() : 'AUDIO' }}</span>
+                </div>
+                <div class="av-cover-glow"></div>
+            </div>
+            <div class="av-title" :title="name">{{ displayTitle || '音频播放' }}</div>
+            <div class="av-subtitle">
+                <span v-if="displayArtist" class="av-artist">{{ displayArtist }}</span>
+                <span v-if="ext" class="av-chip">{{ ext.toUpperCase() }}</span>
+                <span v-if="sizeText" class="av-chip">{{ sizeText }}</span>
+                <span v-if="durationText" class="av-chip">{{ durationText }}</span>
+            </div>
+            <audio ref="audio" :src="audioUrl" preload="metadata"
+                   @loadedmetadata="onLoadedMetadata" @canplay="onCanPlay"
+                   @timeupdate="onTimeUpdate" @play="onPlay" @pause="onPause"
+                   @ended="onEnded" @volumechange="onVolumeChange" @error="onError"></audio>
+            <div class="av-controls">
+                <button class="av-btn" title="上一首 ([)" :disabled="tracks.length < 2" @click="step(-1)">
+                    <i class="el-icon-d-arrow-left"></i>
+                </button>
+                <button class="av-btn av-play" :title="paused ? '播放 (空格)' : '暂停 (空格)'" @click="togglePlay">
+                    <i :class="paused ? 'el-icon-video-play' : 'el-icon-video-pause'"></i>
+                </button>
+                <button class="av-btn" title="下一首 (])" :disabled="tracks.length < 2" @click="step(1)">
+                    <i class="el-icon-d-arrow-right"></i>
+                </button>
+                <div class="av-progress">
+                    <span class="av-time">{{ currentText || '0:00' }}</span>
+                    <input class="av-range av-seek" type="range" min="0" max="1000" step="1"
+                           :value="progress" :style="{ '--av-fill': (progress / 10) + '%' }"
+                           :disabled="!duration" title="播放进度"
+                           @input="onSeekInput" @change="onSeekInput">
+                    <span class="av-time">{{ durationText || '--:--' }}</span>
+                </div>
+                <button class="av-btn av-icon-btn" :title="muted ? '取消静音 (M)' : '静音 (M)'" @click="toggleMute">
+                    <svg v-if="muted" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/>
+                        <path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor"
+                              stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/>
+                        <path d="M16 9a4.5 4.5 0 010 6M18.5 6.5a8 8 0 010 11" fill="none" stroke="currentColor"
+                              stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                </button>
+                <input class="av-range av-volume" type="range" min="0" max="100" step="1"
+                       :value="volume" :style="{ '--av-fill': volume + '%' }"
+                       :disabled="muted" title="音量 (↑ / ↓)" @input="onVolumeInput">
+                <button class="av-btn av-text-btn" :class="{ on: loop }"
+                        :title="loop ? '单曲循环：开 (L)' : '单曲循环：关 (L)'" @click="toggleLoop">
+                    <i class="el-icon-refresh"></i>
+                </button>
+                <button class="av-btn av-text-btn" title="切换播放速度" @click="cycleRate">{{ rate }}x</button>
+            </div>
+            <div class="av-loading" v-if="loading && !error">
+                <i class="el-icon-loading"></i> 正在加载音频…
+            </div>
+            <div class="av-error" v-if="error">
+                <i class="el-icon-warning-outline"></i>
+                <p>{{ error }}</p>
+                <button class="dsk-preview-head-btn" @click="download">
+                    <i class="el-icon-download"></i><span>下载文件</span>
+                </button>
+            </div>
+            <div class="av-notice" v-if="notice && !error">{{ notice }}</div>
+            <div class="av-format-hint" v-if="formatHint && !error">
+                <i class="el-icon-warning-outline"></i>{{ formatHint }}
+            </div>
+        </div>
+        <aside class="av-playlist" v-if="tracks.length">
+            <div class="av-playlist-head">
+                <span>播放列表</span>
+                <span class="av-playlist-count">{{ tracks.length }} 首</span>
+            </div>
+            <div class="av-tracks">
+                <div v-for="(t, i) in tracks" :key="t.name" class="av-track" :class="{ active: i === index }"
+                     :title="t.name" @click="openTrack(i)">
+                    <span class="av-track-ico">
+                        <i :class="i === index && !paused && !error
+                            ? 'el-icon-video-pause' : 'el-icon-video-play'"></i>
+                    </span>
+                    <span class="av-track-main">
+                        <span class="av-track-name">{{ trackTitle(t.name) }}</span>
+                        <span class="av-track-meta">{{ trackArtist(t.name) || fmtSize(t.size) }}</span>
+                    </span>
+                    <span class="av-track-dur" v-if="i === index && durationText">{{ durationText }}</span>
+                </div>
+            </div>
+        </aside>
+    </div>
+    <div class="dsk-preview-tools">
+        <span class="dsk-video-meta" v-if="durationText">
+            <i class="el-icon-time"></i>{{ durationText }}
+        </span>
+        <span class="dsk-video-meta" v-if="sizeText">
+            <i class="el-icon-files"></i>{{ sizeText }}
+        </span>
+        <span class="dsk-video-meta" v-if="ext">
+            <i class="el-icon-headset"></i>{{ ext.toUpperCase() }}
+        </span>
+        <span class="dsk-preview-sep"></span>
+        <button class="dsk-preview-tool text" title="播放 / 暂停 (空格)" @click="togglePlay">
+            {{ paused ? '播放' : '暂停' }}
+        </button>
+        <button class="dsk-preview-tool text" title="静音 / 取消静音 (M)" @click="toggleMute">
+            {{ muted ? '取消静音' : '静音' }}
+        </button>
+        <span class="spacer"></span>
+        <span class="dsk-preview-hint">空格播放 / 暂停 · ← → 快退 / 快进 · ↑ ↓ 音量 · [ ] 切换 · Esc 关闭标签页</span>
+    </div>
+    <div class="av-toast" v-if="closeHint">{{ closeHint }}</div>
+</div>
+<script th:src="@{/vendor/vue/vue.min.js}"></script>
+<script th:src="@{/js/audio-viewer.js}"></script>
+</body>
+</html>

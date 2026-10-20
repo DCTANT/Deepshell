@@ -29,4 +29,10 @@ public class PageController {
     public String videoViewer() {
         return "video-viewer";
     }
+
+    /** 独立音频播放页：AI 可视化桌面双击音频时在新标签页打开 */
+    @GetMapping("/audio-viewer")
+    public String audioViewer() {
+        return "audio-viewer";
+    }
 }

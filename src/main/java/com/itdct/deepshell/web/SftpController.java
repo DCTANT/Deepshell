@@ -325,6 +325,22 @@ public class SftpController {
     }
 
     /**
+     * 音频预览：与视频共用 Range 流式读取，浏览器可以边加载边播放并拖动进度条。
+     */
+    @GetMapping("/audio")
+    public void audio(@RequestParam("sessionId") String sessionId,
+                      @RequestParam("path") String path,
+                      HttpServletRequest req,
+                      HttpServletResponse resp) throws Exception {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        String contentType = audioContentType(name);
+        if (contentType == null) {
+            throw new IllegalArgumentException("该文件类型不支持音频预览");
+        }
+        streamMedia(sessionId, path, req, resp, contentType);
+    }
+
+    /**
      * 视频预览：支持 HTTP Range，浏览器可以边下边播，并在拖动进度条时按需读取。
      * 未带 Range 时返回完整文件；带 Range 时返回 206 + Content-Range。
      */
@@ -338,6 +354,13 @@ public class SftpController {
         if (contentType == null) {
             throw new IllegalArgumentException("该文件类型不支持视频预览");
         }
+        streamMedia(sessionId, path, req, resp, contentType);
+    }
+
+    /** 音频 / 视频共用的流式输出：支持单段 Range 与 HEAD 请求 */
+    private void streamMedia(String sessionId, String path, HttpServletRequest req,
+                             HttpServletResponse resp, String contentType) throws Exception {
+        String name = path.substring(path.lastIndexOf('/') + 1);
         long size = sftp.fileSize(sessionId, path);
         resp.setContentType(contentType);
         resp.setHeader("Accept-Ranges", "bytes");
@@ -472,6 +495,33 @@ public class SftpController {
             case "rm":
             case "rmvb":
                 return "application/vnd.rn-realmedia-vbr";
+            default:
+                return null;
+        }
+    }
+
+    static String audioContentType(String name) {
+        int idx = name.lastIndexOf('.');
+        if (idx < 0 || idx == name.length() - 1) {
+            return null;
+        }
+        String ext = name.substring(idx + 1).toLowerCase(java.util.Locale.ROOT);
+        switch (ext) {
+            case "mp3":
+                return "audio/mpeg";
+            case "wav":
+                return "audio/wav";
+            case "flac":
+                return "audio/flac";
+            case "aac":
+                return "audio/aac";
+            case "ogg":
+            case "opus":
+                return "audio/ogg";
+            case "m4a":
+                return "audio/mp4";
+            case "wma":
+                return "audio/x-ms-wma";
             default:
                 return null;
         }

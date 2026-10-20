@@ -7068,6 +7068,12 @@ new Vue({
                         sortBy: 'name',
                         sortDir: 'asc'
                     });
+                } else if (this.isDesktopAudio(item.entry)) {
+                    this.openDesktopAudioPreview(item.entry, {
+                        path: this.desktop.surface.dir,
+                        sortBy: 'name',
+                        sortDir: 'asc'
+                    });
                 } else if (this.desktopTab && this.desktopTab.sessionId) {
                     this.openRemoteEdit(this.desktopTab, item.path);
                 }
@@ -7111,6 +7117,12 @@ new Vue({
                     });
                 } else if (self.isDesktopVideo(row)) {
                     self.openDesktopVideoPreview(row, {
+                        path: parent,
+                        sortBy: 'name',
+                        sortDir: 'asc'
+                    });
+                } else if (self.isDesktopAudio(row)) {
+                    self.openDesktopAudioPreview(row, {
                         path: parent,
                         sortBy: 'name',
                         sortDir: 'asc'
@@ -8192,6 +8204,8 @@ new Vue({
                 this.openDesktopImagePreview(row, d);
             } else if (this.isDesktopVideo(row)) {
                 this.openDesktopVideoPreview(row, d);
+            } else if (this.isDesktopAudio(row)) {
+                this.openDesktopAudioPreview(row, d);
             } else {
                 this.desktopOpenEdit(row, d);
             }
@@ -8229,6 +8243,22 @@ new Vue({
                 + '&sortDir=' + encodeURIComponent(d.sortDir)
                 + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
             if (!window.open('/video-viewer' + query, '_blank')) {
+                ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
+            }
+        },
+        /* 音频同样在新标签页打开，后端 Range 流式返回，可拖动进度条并自动连播同目录音频 */
+        openDesktopAudioPreview: function (row, win) {
+            var t = this.desktopTab;
+            var d = win || this.desk;
+            if (!t || !t.sessionId || !this.isDesktopAudio(row)) {
+                return;
+            }
+            var query = '?sessionId=' + encodeURIComponent(t.sessionId)
+                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d))
+                + '&sortBy=' + encodeURIComponent(d.sortBy)
+                + '&sortDir=' + encodeURIComponent(d.sortDir)
+                + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
+            if (!window.open('/audio-viewer' + query, '_blank')) {
                 ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
             }
         },
@@ -8523,6 +8553,8 @@ new Vue({
                     this.openDesktopImagePreview(target, ctxWin);
                 } else if (target && this.isDesktopVideo(target)) {
                     this.openDesktopVideoPreview(target, ctxWin);
+                } else if (target && this.isDesktopAudio(target)) {
+                    this.openDesktopAudioPreview(target, ctxWin);
                 }
             } else if (action === 'edit') {
                 if (target && !target.dir) {
@@ -8997,6 +9029,24 @@ new Vue({
         },
         isDesktopVideo: function (row) {
             return !!row && !row.dir && this.desktopFileKind(row) === 'video';
+        },
+        isDesktopAudio: function (row) {
+            return !!row && !row.dir && this.desktopFileKind(row) === 'audio';
+        },
+        desktopPreviewable: function (row) {
+            return this.isDesktopImage(row) || this.isDesktopVideo(row) || this.isDesktopAudio(row);
+        },
+        desktopPreviewLabel: function (row) {
+            if (this.isDesktopAudio(row)) {
+                return '播放音频';
+            }
+            return this.isDesktopVideo(row) ? '播放视频' : '预览';
+        },
+        desktopPreviewIcon: function (row) {
+            if (this.isDesktopAudio(row)) {
+                return 'el-icon-headset';
+            }
+            return this.isDesktopVideo(row) ? 'el-icon-video-play' : 'el-icon-picture-outline';
         },
         desktopFileKind: function (row) {
             if (row && row.dir) {

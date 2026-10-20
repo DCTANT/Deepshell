@@ -1963,7 +1963,7 @@
                             </div>
                             <div class="dsk-set-note">
                                 固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜
-                                新标签图片预览 ← → 切换、R 旋转；视频预览 空格播放 / 暂停、← → 快进 / 快退；Esc 关闭标签页
+                                新标签图片预览 ← → 切换、R 旋转；音频预览 空格播放 / 暂停、← → 快退 / 快进、↑ ↓ 音量；视频预览 空格播放 / 暂停、← → 快进 / 快退；Esc 关闭标签页
                             </div>
                         </template>
 
@@ -2010,7 +2010,7 @@
                                 </div>
                             </div>
                             <div class="dsk-set-note">
-                                设置面板、开始菜单或弹窗打开期间，空闲计时会暂停；图片预览在新标签页打开时也不会触发自动返回。远端服务器关机 / 重启在开始菜单底部的电源按钮中执行，需要当前用户为 root 或已配置免密 sudo。
+                                设置面板、开始菜单或弹窗打开期间，空闲计时会暂停；图片 / 音频 / 视频预览在新标签页打开时也不会触发自动返回。远端服务器关机 / 重启在开始菜单底部的电源按钮中执行，需要当前用户为 root 或已配置免密 sudo。
                             </div>
                         </template>
 
@@ -2150,18 +2150,18 @@
                     <i class="el-icon-position"></i>在终端中打开
                 </div>
                 <div class="dsk-menu-item"
-                     v-if="!desktopMenuMulti && (isDesktopImage(desktop.menu.target) || isDesktopVideo(desktop.menu.target))"
+                     v-if="!desktopMenuMulti && desktopPreviewable(desktop.menu.target)"
                      @click="desktopMenuAction('preview')">
-                    <i :class="isDesktopVideo(desktop.menu.target) ? 'el-icon-video-play' : 'el-icon-picture-outline'"></i>
-                    {{ isDesktopVideo(desktop.menu.target) ? '播放视频' : '预览' }}
+                    <i :class="desktopPreviewIcon(desktop.menu.target)"></i>
+                    {{ desktopPreviewLabel(desktop.menu.target) }}
                 </div>
                 <div class="dsk-menu-item"
-                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopImage(desktop.menu.target) && !isDesktopVideo(desktop.menu.target)"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !desktopPreviewable(desktop.menu.target)"
                      @click="desktopMenuAction('edit')">
                     <i class="el-icon-edit-outline"></i>在线编辑
                 </div>
                 <div class="dsk-menu-item"
-                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopVideo(desktop.menu.target)"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopVideo(desktop.menu.target) && !isDesktopAudio(desktop.menu.target)"
                      @click="desktopMenuAction('vscode')">
                     <i class="el-icon-edit"></i>用 VSCode 编辑
                 </div>
