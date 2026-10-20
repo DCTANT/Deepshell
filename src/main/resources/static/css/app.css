@@ -4624,8 +4624,36 @@ body.resizing .term-host {
     gap: 1px;
     max-width: 180px;
     min-width: 0;
+    padding: 3px 8px;
+    border-radius: 5px;
     line-height: 1.15;
     color: #8f9db2;
+    cursor: pointer;
+}
+
+.dsk-tray-conn:hover {
+    background: #222c3d;
+}
+
+.dsk-tray-conn.is-down .dsk-tray-conn-name {
+    color: #f0b429;
+}
+
+.dsk-tray-conn-fix {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 3px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: #3a2f1a;
+    color: #ffd76a;
+    font-size: 10px;
+    line-height: 1.6;
+}
+
+.dsk-tray-conn-fix:hover {
+    background: #4d3d20;
+    color: #ffe9ac;
 }
 
 .dsk-tray-conn-line {
@@ -5310,6 +5338,15 @@ body.resizing .term-host {
     }
 
     .dsk-tray-conn {
+        display: none;
+    }
+
+    .dsk-tray-conn.is-down {
+        display: flex;
+        max-width: 132px;
+    }
+
+    .dsk-tray-conn.is-down .dsk-tray-conn-name {
         display: none;
     }
 
