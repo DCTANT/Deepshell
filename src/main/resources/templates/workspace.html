@@ -4163,11 +4163,23 @@
             </el-popover>
             <i class="el-icon-document-copy cmd-tool" title="复制终端选中内容" @click="copySelection"></i>
             <i class="el-icon-document cmd-tool" title="粘贴到输入框" @click="pasteToInput"></i>
-            <el-popover placement="top-end" width="300" trigger="click" v-model="searchVisible"
+            <el-popover placement="top-end" width="360" trigger="click" v-model="searchVisible"
                         popper-class="cmd-pop">
                 <div class="cmd-search">
                     <el-input ref="searchInput" size="mini" v-model="searchText" placeholder="搜索终端输出"
                               @input.native="onSearchInput" @keyup.native="onSearchKey"></el-input>
+                    <div class="cmd-search-opts">
+                        <button type="button" class="cmd-search-opt" :class="{ active: searchCaseSensitive }"
+                                title="区分大小写（Alt+C）"
+                                @click="toggleSearchOption('searchCaseSensitive')">Aa</button>
+                        <button type="button" class="cmd-search-opt" :class="{ active: searchWholeWord }"
+                                title="全词匹配（Alt+W）"
+                                @click="toggleSearchOption('searchWholeWord')">全词</button>
+                        <button type="button" class="cmd-search-opt cmd-search-opt-regex"
+                                :class="{ active: searchRegex }" title="正则表达式（Alt+R）"
+                                @click="toggleSearchOption('searchRegex')">.*</button>
+                        <span class="cmd-search-count" :class="{ invalid: searchInvalid }">{{ searchCountText }}</span>
+                    </div>
                     <div class="cmd-search-btns">
                         <el-button size="mini" icon="el-icon-top" @click="findPrev">上一个</el-button>
                         <el-button size="mini" icon="el-icon-bottom" @click="findNext">下一个</el-button>
@@ -4188,7 +4200,7 @@
 
 <script type="text/x-template" id="editor-menu-bar-tpl">
 <div class="em-bar">
-    <el-dropdown trigger="click" @command="emitCommand">
+    <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">文件</span>
         <el-dropdown-menu slot="dropdown" popper-class="em-drop">
             <el-dropdown-item command="file.new">
@@ -4209,7 +4221,7 @@
         </el-dropdown-menu>
     </el-dropdown>
 
-    <el-dropdown trigger="click" @command="emitCommand">
+    <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">编辑</span>
         <el-dropdown-menu slot="dropdown" popper-class="em-drop">
             <el-dropdown-item command="edit.undo">
@@ -4242,7 +4254,7 @@
         </el-dropdown-menu>
     </el-dropdown>
 
-    <el-dropdown trigger="click" @command="emitCommand">
+    <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">选择</span>
         <el-dropdown-menu slot="dropdown" popper-class="em-drop">
             <el-dropdown-item command="select.all">
@@ -4257,7 +4269,7 @@
         </el-dropdown-menu>
     </el-dropdown>
 
-    <el-dropdown trigger="click" @command="emitCommand">
+    <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">视图</span>
         <el-dropdown-menu slot="dropdown" popper-class="em-drop">
             <el-dropdown-item command="view.wrap">
@@ -4281,7 +4293,7 @@
         </el-dropdown-menu>
     </el-dropdown>
 
-    <el-dropdown trigger="click" @command="emitCommand">
+    <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">帮助</span>
         <el-dropdown-menu slot="dropdown" popper-class="em-drop">
             <el-dropdown-item command="help.shortcuts">
@@ -4312,7 +4324,7 @@
         </button>
     </div>
 
-    <div class="edit-toolbar te-findbar">
+    <div class="edit-toolbar te-findbar" v-show="find.open">
         <div class="edit-find-row">
             <div class="edit-find-box">
                 <el-input ref="editFindInput" size="mini" v-model="find.text" class="edit-find-input"
@@ -4335,6 +4347,8 @@
             </div>
             <span class="spacer"></span>
             <span class="edit-kbd-hint">Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为</span>
+            <button type="button" class="edit-icon-btn edit-find-close" title="关闭查找 (Esc)"
+                    @click="closeFind"><i class="el-icon-close"></i></button>
         </div>
         <div class="edit-replace-row" v-show="find.replaceOpen">
             <el-input ref="editReplaceInput" size="mini" v-model="find.replace"

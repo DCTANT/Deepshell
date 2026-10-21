@@ -368,6 +368,8 @@ function createTerminalState(connId, conn, clientKey) {
         diskError: '',
         diskTruncated: false,
         searchAddon: null,
+        searchResultIndex: -1,
+        searchResultCount: 0,
         stats: null,
         procList: [],
         procLoading: false,
@@ -1206,6 +1208,10 @@ Vue.component('term-cmd-bar', {
             snippetsVisible: false,
             searchVisible: false,
             searchText: '',
+            searchCaseSensitive: false,
+            searchWholeWord: false,
+            searchRegex: false,
+            searchInvalid: false,
             _histIdx: undefined,
             _histDraft: undefined,
             _altCombo: false
@@ -1217,6 +1223,20 @@ Vue.component('term-cmd-bar', {
         },
         snippets: function () {
             return this.$root.snippets || [];
+        },
+        searchCountText: function () {
+            if (this.searchInvalid) {
+                return '正则无效';
+            }
+            if (!this.searchText) {
+                return '';
+            }
+            var count = this.tab && this.tab.searchResultCount || 0;
+            if (!count) {
+                return '无匹配';
+            }
+            var index = this.tab && this.tab.searchResultIndex;
+            return (index >= 0 ? index + 1 : 0) + ' / ' + count;
         }
     },
     watch: {
@@ -1233,6 +1253,14 @@ Vue.component('term-cmd-bar', {
             this.snippetsVisible = false;
             this.searchVisible = false;
             this.searchText = '';
+            this.searchInvalid = false;
+            if (ov) {
+                ov.searchResultIndex = -1;
+                ov.searchResultCount = 0;
+                if (ov.searchAddon && ov.searchAddon.clearDecorations) {
+                    try { ov.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
+                }
+            }
             this._histIdx = undefined;
             this._histDraft = undefined;
         },
@@ -1248,9 +1276,8 @@ Vue.component('term-cmd-bar', {
             }
             clearTimeout(this._searchTimer);
             this.searchText = '';
-            if (this.tab.searchAddon && this.tab.searchAddon.clearDecorations) {
-                try { this.tab.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
-            }
+            this.searchInvalid = false;
+            this.clearSearchHighlights();
         }
     },
     mounted: function () {
@@ -1328,27 +1355,100 @@ Vue.component('term-cmd-bar', {
         pasteToInput: function () {
             this.$root.pasteToInput(this.tab, this.$refs.cmdInput);
         },
+        searchOptions: function () {
+            return {
+                caseSensitive: this.searchCaseSensitive,
+                wholeWord: this.searchWholeWord,
+                regex: this.searchRegex
+            };
+        },
+        focusSearchInput: function () {
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.searchInput) {
+                    self.$refs.searchInput.focus();
+                }
+            });
+        },
+        clearSearchHighlights: function () {
+            if (this.tab && this.tab.searchAddon && this.tab.searchAddon.clearDecorations) {
+                try { this.tab.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
+            }
+            if (this.tab) {
+                this.tab.searchResultIndex = -1;
+                this.tab.searchResultCount = 0;
+            }
+        },
+        validateSearch: function () {
+            if (!this.searchRegex || !this.searchText) {
+                this.searchInvalid = false;
+                return true;
+            }
+            try {
+                new RegExp(this.searchText);
+                this.searchInvalid = false;
+                return true;
+            } catch (e) {
+                this.searchInvalid = true;
+                this.clearSearchHighlights();
+                return false;
+            }
+        },
+        runTerminalSearch: function (direction, incremental) {
+            if (!this.searchText) {
+                this.clearSearchHighlights();
+                return;
+            }
+            if (!this.validateSearch()) {
+                return;
+            }
+            if (direction === 'prev') {
+                this.$root.findPrev(this.tab, this.searchText, incremental, this.searchOptions());
+            } else {
+                this.$root.findNext(this.tab, this.searchText, incremental, this.searchOptions());
+            }
+        },
+        toggleSearchOption: function (name) {
+            this[name] = !this[name];
+            this.clearSearchHighlights();
+            this.runTerminalSearch('next', false);
+            this.focusSearchInput();
+        },
         findNext: function () {
-            this.$root.findNext(this.tab, this.searchText);
+            this.runTerminalSearch('next', false);
+            this.focusSearchInput();
         },
         findPrev: function () {
-            this.$root.findPrev(this.tab, this.searchText);
+            this.runTerminalSearch('prev', false);
+            this.focusSearchInput();
         },
         onSearchInput: function () {
             var self = this;
             clearTimeout(this._searchTimer);
             this._searchTimer = setTimeout(function () {
-                if (!self.searchText) {
-                    if (self.tab.searchAddon && self.tab.searchAddon.clearDecorations) {
-                        self.tab.searchAddon.clearDecorations();
-                    }
-                    return;
-                }
-                self.$root.findNext(self.tab, self.searchText, true);
+                self.runTerminalSearch('next', true);
             }, 180);
         },
         onSearchKey: function (e) {
             clearTimeout(this._searchTimer);
+            if (e.altKey) {
+                var k = (e.key || '').toLowerCase();
+                if (k === 'c') {
+                    e.preventDefault();
+                    this.toggleSearchOption('searchCaseSensitive');
+                    return;
+                }
+                if (k === 'w') {
+                    e.preventDefault();
+                    this.toggleSearchOption('searchWholeWord');
+                    return;
+                }
+                if (k === 'r') {
+                    e.preventDefault();
+                    this.toggleSearchOption('searchRegex');
+                    return;
+                }
+            }
             if (e.key === 'Enter') {
                 if (e.shiftKey) {
                     this.findPrev();
@@ -1482,7 +1582,7 @@ Vue.component('desktop-text-editor', {
             activeId: '',
             cursor: { line: 1, col: 1 },
             find: {
-                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
+                open: false, text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
                 replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
             },
             wrap: false,
@@ -1728,7 +1828,7 @@ Vue.component('desktop-text-editor', {
             this.cursor = { line: activeCursor.line + 1, col: activeCursor.ch + 1 };
             this.updateStatus();
             this.setWinState();
-            if (this.find.text) {
+            if (this.find.open && this.find.text) {
                 this.$nextTick(function () {
                     self.applySearch(true);
                 });
@@ -1853,7 +1953,7 @@ Vue.component('desktop-text-editor', {
             doc.dirty = content !== doc.original;
             doc.lineCount = cm.lineCount();
             this.updateStatus();
-            if (this.find.text) {
+            if (this.find.open && this.find.text) {
                 this.scheduleSearch(false);
             }
         },
@@ -2478,14 +2578,29 @@ Vue.component('desktop-text-editor', {
             if (sel && sel.indexOf('\n') < 0 && sel.length <= 200) {
                 this.find.text = sel;
             }
-            if (withReplace) {
-                this.find.replaceOpen = true;
-            }
+            this.find.open = true;
+            this.find.replaceOpen = !!withReplace;
             this.applySearch(true);
             var self = this;
             this.$nextTick(function () {
                 self.focusFind();
             });
+        },
+        closeFind: function () {
+            if (this._findTimer) {
+                clearTimeout(this._findTimer);
+                this._findTimer = null;
+            }
+            this.find.open = false;
+            this.find.replaceOpen = false;
+            this.find.total = 0;
+            this.find.current = 0;
+            this.find.countText = '';
+            this._findMatches = [];
+            this.clearMarks();
+            if (this._cm) {
+                this._cm.focus();
+            }
         },
         onFindKey: function (e) {
             var key = e.key || '';
@@ -2500,9 +2615,8 @@ Vue.component('desktop-text-editor', {
             }
             if (key === 'Escape') {
                 e.preventDefault();
-                if (this._cm) {
-                    this._cm.focus();
-                }
+                e.stopPropagation();
+                this.closeFind();
                 return;
             }
             if (e.altKey) {
@@ -2532,12 +2646,15 @@ Vue.component('desktop-text-editor', {
             }
             if (key === 'Escape') {
                 e.preventDefault();
-                if (this._cm) {
-                    this._cm.focus();
-                }
+                e.stopPropagation();
+                this.closeFind();
             }
         },
         onEditorKey: function (e) {
+            if (e.key === 'Escape' && this.find.open) {
+                this.closeFind();
+                return;
+            }
             if (e.altKey && (e.key || '').toLowerCase() === 'z') {
                 e.preventDefault();
                 this.toggleWrap();
@@ -2592,6 +2709,9 @@ Vue.component('desktop-text-editor', {
         },
         scheduleSearch: function (select) {
             var self = this;
+            if (!this.find.open) {
+                return;
+            }
             if (this._findTimer) {
                 clearTimeout(this._findTimer);
             }
@@ -2620,7 +2740,7 @@ Vue.component('desktop-text-editor', {
         },
         applySearch: function (resetCurrent, selectCurrent) {
             var cm = this._cm;
-            if (!cm || !this.activeDoc) {
+            if (!cm || !this.activeDoc || !this.find.open) {
                 return;
             }
             if (selectCurrent === undefined) {
@@ -12973,6 +13093,12 @@ new Vue({
                 var searchAddon = new SearchAddon.SearchAddon();
                 term.loadAddon(searchAddon);
                 tab.searchAddon = searchAddon;
+                if (searchAddon.onDidChangeResults) {
+                    searchAddon.onDidChangeResults(function (ev) {
+                        tab.searchResultIndex = ev.resultIndex;
+                        tab.searchResultCount = ev.resultCount;
+                    });
+                }
             }
             term.open(el);
             try { fit.fit(); } catch (e) { /* 容器未就绪时忽略 */ }
@@ -16463,17 +16589,31 @@ new Vue({
                 document.exitFullscreen().catch(function () { /* ignore */ });
             }
         },
-        findNext: function (tab, text, incremental) {
+        findNext: function (tab, text, incremental, opts) {
             var t = tab || this.activeTab;
             if (t && t.searchAddon && text) {
-                t.searchAddon.findNext(text, { decorations: SEARCH_DECOR, incremental: !!incremental });
+                try {
+                    t.searchAddon.findNext(text, this.buildSearchOptions(incremental, opts));
+                } catch (e) { /* 正则无效时忽略，由搜索框提示 */ }
             }
         },
-        findPrev: function (tab, text, incremental) {
+        findPrev: function (tab, text, incremental, opts) {
             var t = tab || this.activeTab;
             if (t && t.searchAddon && text) {
-                t.searchAddon.findPrevious(text, { decorations: SEARCH_DECOR, incremental: !!incremental });
+                try {
+                    t.searchAddon.findPrevious(text, this.buildSearchOptions(incremental, opts));
+                } catch (e) { /* 正则无效时忽略，由搜索框提示 */ }
             }
+        },
+        buildSearchOptions: function (incremental, opts) {
+            var options = {
+                decorations: SEARCH_DECOR,
+                incremental: !!incremental,
+                caseSensitive: !!(opts && opts.caseSensitive),
+                wholeWord: !!(opts && opts.wholeWord),
+                regex: !!(opts && opts.regex)
+            };
+            return options;
         },
 
         /* ---------- 常用目录（按连接/主机隔离） ---------- */
