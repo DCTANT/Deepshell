@@ -8,13 +8,19 @@
 
 ### AI 可视化桌面
 
-![AI 可视化桌面：资源管理器与 AI 终端同屏](docs/screenshots/ai-desktop-ai-window.png)
+![AI 可视化桌面：AI 终端与资源管理器同屏](docs/screenshots/ai-desktop-ai-window.png)
 
-*桌面内同时打开资源管理器与 AI 终端：文件浏览、AI 自动执行命令、结果卡片都在同一个桌面里完成。*
+*桌面内同时打开 AI 终端与资源管理器：左边用自然语言让 AI 直接在服务器上执行命令并给出结论，右边继续浏览同一台服务器的文件，窗口可以随意拖动、缩放和贴边。*
 
 | 桌面与资源管理器 | 开始菜单 |
 |---|---|
 | ![桌面与资源管理器](docs/screenshots/ai-desktop.png) | ![开始菜单](docs/screenshots/ai-desktop-start.png) |
+
+| 任务管理器 | 文本编辑器 |
+|---|---|
+| ![任务管理器](docs/screenshots/ai-desktop-taskmgr.png) | ![文本编辑器](docs/screenshots/ai-desktop-editor.png) |
+
+*桌面内置 Windows 风格任务管理器（进程 / 性能 / 应用历史 / 启动应用 / 用户 / 详细信息 / 服务七个页面）和多标签文本编辑器（顶部菜单栏、语法高亮、远程文件打开与另存为）。*
 
 ### 工作台
 
