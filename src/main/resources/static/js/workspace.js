@@ -206,6 +206,10 @@ function createDesktopWindow(id) {
         pendingOpen: false,
         thumbSrc: {},
         thumbFailed: {},
+        /* 回收站窗口状态 */
+        trashItems: [],
+        trashLoading: false,
+        trashError: '',
         /* 磁盘窗口状态（与工作台标签页的磁盘字段一致） */
         diskPath: '',
         diskEntries: [],
@@ -2984,6 +2988,8 @@ new Vue({
         desktopAppIcons: [
             { key: 'app:explorer', type: 'app', action: 'explorer', label: '资源管理器',
               icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { key: 'app:trash', type: 'app', action: 'trash', label: '回收站',
+              icon: 'el-icon-delete', color: '#7b8798' },
             { key: 'app:editor', type: 'app', action: 'editor', label: '文本编辑器',
               icon: 'el-icon-edit-outline', color: '#3d7eff' },
             { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
@@ -3086,6 +3092,7 @@ new Vue({
             iconDragKey: '',
             iconDropKey: '',
             iconMenu: { visible: false, x: 0, y: 0, key: '' },
+            trashMenu: { visible: false, x: 0, y: 0, item: null, winId: '' },
             archiveWin: null,
             menu: { visible: false, x: 0, y: 0, target: null, surface: false },
             propsVisible: false,
@@ -3165,6 +3172,7 @@ new Vue({
         editDialogTitle: '',
         distribute: {
             visible: false,
+            mode: 'local',
             phase: 'edit',
             files: [],
             targetPath: '',
@@ -3176,7 +3184,10 @@ new Vue({
             task: null,
             error: '',
             cancelling: false,
-            speed: 0
+            speed: 0,
+            sourceSessionId: '',
+            sourceConnId: null,
+            sourceDir: ''
         },
         editor: {
             find: {
@@ -3493,7 +3504,11 @@ new Vue({
         },
         distributeTargets: function () {
             var kw = String(this.distribute.keyword || '').trim().toLowerCase();
+            var self = this;
             var list = this.connections.filter(function (c) {
+                if (self.distribute.mode === 'cross' && c.id === self.distribute.sourceConnId) {
+                    return false;
+                }
                 if (!kw) {
                     return true;
                 }
@@ -3510,24 +3525,35 @@ new Vue({
                 && String(d.targetPath || '').trim().charAt(0) === '/'
                 && !d.starting;
         },
+        distributeModeWord: function () {
+            return this.distribute.mode === 'cross' ? '传输' : '分发';
+        },
+        distributeTargetTotal: function () {
+            var total = (this.connections || []).length;
+            if (this.distribute.mode === 'cross' && this.distribute.sourceConnId != null) {
+                total = Math.max(0, total - 1);
+            }
+            return total;
+        },
         distributeStatusText: function () {
             var t = this.distribute.task;
+            var word = this.distributeModeWord;
             if (!t) {
-                return '正在准备文件…';
+                return '正在准备' + (this.distribute.mode === 'cross' ? '源文件' : '文件') + '…';
             }
             if (t.status === 'running') {
-                return '正在分发到 ' + t.totalTargets + ' 台服务器…';
+                return '正在' + word + '到 ' + t.totalTargets + ' 台服务器…';
             }
             if (t.status === 'cancelled') {
-                return '分发已取消';
+                return word + '已取消';
             }
             if (t.failedTargets && t.failedTargets === t.totalTargets) {
-                return '分发失败';
+                return word + '失败';
             }
             if (t.failedTargets) {
-                return '分发完成（部分失败）';
+                return word + '完成（部分失败）';
             }
-            return '分发完成';
+            return word + '完成';
         },
         distributeStatusIcon: function () {
             var t = this.distribute.task;
@@ -4164,6 +4190,13 @@ new Vue({
         desktopHomeDir: function () {
             var t = this.desktopTab;
             return t && t.sftpHome ? t.sftpHome : '';
+        },
+        desktopTrashPath: function () {
+            var home = this.desktopHomeDir;
+            if (!home) {
+                return '.recycle-bin';
+            }
+            return String(home).replace(/\/+$/, '') + '/.recycle-bin';
         },
         desktopQuickDirs: function () {
             return [
@@ -6262,6 +6295,9 @@ new Vue({
             if (type === 'editor') {
                 return 'el-icon-edit-outline';
             }
+            if (type === 'trash') {
+                return 'el-icon-delete';
+            }
             return 'el-icon-folder-opened';
         },
         desktopBaseName: function (path) {
@@ -6301,6 +6337,9 @@ new Vue({
                 var editorName = w.editorTitle || this.desktopBaseName(w.editorPath) || '文本编辑器';
                 return w.editorDirty ? editorName + ' •' : editorName;
             }
+            if (w && w.type === 'trash') {
+                return '回收站';
+            }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
                 return '/';
@@ -6333,6 +6372,10 @@ new Vue({
             }
             if (w && w.type === 'taskmgr') {
                 return host ? host + ' · 进程与性能' : '进程与性能';
+            }
+            if (w && w.type === 'trash') {
+                var trashText = ((w.trashItems || []).length) + ' 项';
+                return host ? host + ' · ' + trashText : '回收站 · ' + trashText;
             }
             if (w && w.type === 'connect') {
                 return this.connections.length + ' 个连接 · ' + this.folders.length + ' 个文件夹';
@@ -7315,6 +7358,7 @@ new Vue({
             this.desktop.menu.visible = false;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.trashMenu.visible = false;
             this.desktop.taskbarMenu.visible = false;
             this.taskmgr.ctxMenu.visible = false;
             this.desktop.iconSelected = '';
@@ -9019,6 +9063,8 @@ new Vue({
                     this.openDesktopSettings();
                 } else if (item.action === 'ai') {
                     this.openAiDesktopWindow();
+                } else if (item.action === 'trash') {
+                    this.openDesktopTrashWindow();
                 }
                 return;
             }
@@ -9418,6 +9464,7 @@ new Vue({
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
+            this.desktop.trashMenu.visible = false;
             this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.iconMenu = {
@@ -9442,6 +9489,8 @@ new Vue({
             }
             if (action === 'open') {
                 this.openDesktopIcon(item);
+            } else if (action === 'emptyTrash') {
+                this.emptyDesktopTrash();
             } else if (action === 'hide') {
                 this.setDesktopAppHidden(key, true);
             }
@@ -10488,6 +10537,7 @@ new Vue({
             var y = ev.clientY;
             this.desktop.taskMenu.visible = false;
             this.desktop.iconMenu.visible = false;
+            this.desktop.trashMenu.visible = false;
             this.desktop.calendarOpen = false;
             this.closeDesktopSubMenus();
             this.desktop.menu = {
@@ -10590,6 +10640,8 @@ new Vue({
                 }
             } else if (action === 'download') {
                 this.desktopDownloadRows(rows, ctxWin);
+            } else if (action === 'crossTransfer') {
+                this.openCrossTransferDialog(ctxWin);
             } else if (action === 'downloadEach') {
                 this.desktopDownloadRows(rows, ctxWin);
             } else if (action === 'downloadBundle') {
@@ -10605,7 +10657,9 @@ new Vue({
                     this.desktopRename(target, ctxWin);
                 }
             } else if (action === 'delete') {
-                this.desktopDeleteRows(rows, ctxWin);
+                this.desktopDeleteRows(rows, ctxWin, false);
+            } else if (action === 'deletePermanent') {
+                this.desktopDeleteRows(rows, ctxWin, true);
             } else if (action === 'props') {
                 if (target) {
                     this.desktopShowProps(target, ctxWin);
@@ -10965,7 +11019,240 @@ new Vue({
             }
             this.downloadPath(t, this.desktopEntryPath(row, d));
         },
-        desktopDeleteRows: function (rows, win) {
+        desktopSelectionHasFile: function (win) {
+            return this.desktopSelectedRows(win || this.desk).some(function (r) {
+                return r && !r.dir;
+            });
+        },
+        openDesktopTrashWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return null;
+            }
+            var existing = this.desktopWindowOfType('trash');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                this.loadDesktopTrash(existing);
+                return existing;
+            }
+            var w = this.addDesktopWindow('trash');
+            w.trashItems = [];
+            w.trashLoading = false;
+            w.trashError = '';
+            this.centerDesktopWindow(w, 900, 560);
+            this.loadDesktopTrash(w);
+            return w;
+        },
+        loadDesktopTrash: function (w) {
+            if (!w) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                w.trashError = '连接未就绪';
+                w.trashItems = [];
+                return;
+            }
+            var self = this;
+            w.trashLoading = true;
+            w.trashError = '';
+            http.get('/api/sftp/trash/list', {
+                params: { sessionId: t.sessionId },
+                silent: true
+            }).then(function (items) {
+                w.trashItems = items || [];
+                w.trashLoading = false;
+            }).catch(function (err) {
+                w.trashLoading = false;
+                w.trashItems = [];
+                w.trashError = '读取回收站失败：' + ((err && err.message) || '网络错误');
+            });
+        },
+        refreshDesktopTrashWindows: function () {
+            var self = this;
+            this.desktop.windows.forEach(function (w) {
+                if (w.type === 'trash') {
+                    self.loadDesktopTrash(w);
+                }
+            });
+        },
+        desktopTrashTime: function (ts) {
+            var d = new Date(ts || Date.now());
+            var p = function (n) { return (n < 10 ? '0' : '') + n; };
+            return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate())
+                + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+        },
+        restoreDesktopTrashItem: function (item, w) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !item) {
+                return;
+            }
+            var self = this;
+            http.post('/api/sftp/trash/restore', {
+                sessionId: t.sessionId,
+                id: item.id
+            }).then(function (res) {
+                var target = res && res.path ? res.path : item.originalPath;
+                ELEMENT.Message.success('已恢复：' + target);
+                self.loadDesktopTrash(w);
+                self.refreshDesktopAfterRestore(target);
+            }).catch(function () { /* 已由拦截器提示 */ });
+        },
+        purgeDesktopTrashItem: function (item, w) {
+            if (!item) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var self = this;
+            this.$confirm('彻底删除「' + item.name + '」？此操作不可恢复。', '彻底删除', {
+                type: 'warning',
+                confirmButtonText: '彻底删除',
+                cancelButtonText: '取消'
+            }).then(function () {
+                return http.post('/api/sftp/trash/purge', {
+                    sessionId: t.sessionId,
+                    ids: [item.id]
+                }).then(function (res) {
+                    if (res && res.failed) {
+                        ELEMENT.Message.warning('彻底删除完成，但有 ' + res.failed + ' 项失败');
+                    } else {
+                        ELEMENT.Message.success('已彻底删除');
+                    }
+                    self.loadDesktopTrash(w);
+                });
+            }).catch(function () { /* 取消或失败 */ });
+        },
+        desktopTrashEmpty: function (w) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            if (!w || !(w.trashItems || []).length) {
+                ELEMENT.Message.info('回收站为空');
+                return;
+            }
+            this.confirmDesktopTrashEmpty(w, w.trashItems.length);
+        },
+        emptyDesktopTrash: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var w = this.desktopWindowOfType('trash');
+            this.confirmDesktopTrashEmpty(w, w ? (w.trashItems || []).length : 0);
+        },
+        confirmDesktopTrashEmpty: function (w, count) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var self = this;
+            var text = count > 0
+                ? ('确定清空回收站中的 ' + count + ' 项？此操作不可恢复。')
+                : '确定清空回收站？此操作不可恢复。';
+            this.$confirm(text, '清空回收站', {
+                type: 'warning',
+                confirmButtonText: '清空',
+                cancelButtonText: '取消'
+            }).then(function () {
+                return http.post('/api/sftp/trash/empty', {
+                    sessionId: t.sessionId
+                }).then(function (res) {
+                    var n = res && res.deleted != null ? res.deleted : count;
+                    ELEMENT.Message.success(n > 0 ? ('已清空回收站：' + n + ' 项') : '回收站已清空');
+                    if (w) {
+                        self.loadDesktopTrash(w);
+                    }
+                    self.refreshDesktopTrashWindows();
+                });
+            }).catch(function () { /* 取消或失败 */ });
+        },
+        refreshDesktopAfterRestore: function (target) {
+            if (!target) {
+                return;
+            }
+            var idx = target.lastIndexOf('/');
+            var parent = idx <= 0 ? '/' : target.substring(0, idx);
+            var self = this;
+            if (this.desktop.surface.dir === parent) {
+                this.refreshDesktopSurface();
+            }
+            this.desktop.windows.forEach(function (w) {
+                if (w.type === 'explorer' && w.path === parent) {
+                    self.desktopRefresh(w);
+                }
+            });
+        },
+        openDesktopTrashMenu: function (ev, item, w) {
+            this.desktop.trashMenu = {
+                visible: true,
+                x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 240)),
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 300)),
+                item: item,
+                winId: w ? w.id : ''
+            };
+            this.desktop.iconMenu.visible = false;
+            this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            var self = this;
+            this.$nextTick(function () {
+                var el = document.querySelector('.dsk-trash-menu');
+                if (!el || !self.desktop.trashMenu.visible) {
+                    return;
+                }
+                var r = el.getBoundingClientRect();
+                self.desktop.trashMenu.x = Math.max(8, Math.min(ev.clientX, window.innerWidth - r.width - 8));
+                self.desktop.trashMenu.y = Math.max(8, Math.min(ev.clientY, window.innerHeight - r.height - 8));
+            });
+        },
+        desktopTrashMenuAction: function (action) {
+            var item = this.desktop.trashMenu.item;
+            var w = this.desktopWindowById(this.desktop.trashMenu.winId);
+            this.desktop.trashMenu.visible = false;
+            if (!item) {
+                return;
+            }
+            if (action === 'restore') {
+                this.restoreDesktopTrashItem(item, w);
+            } else if (action === 'purge') {
+                this.purgeDesktopTrashItem(item, w);
+            } else if (action === 'copyPath') {
+                this.copyText(item.originalPath);
+            } else if (action === 'openParent') {
+                var idx = String(item.originalPath || '').lastIndexOf('/');
+                this.openDesktopExplorerWindow(idx <= 0 ? '/' : item.originalPath.substring(0, idx));
+            } else if (action === 'props') {
+                this.desktopTrashProps(item);
+            } else if (action === 'refresh') {
+                this.loadDesktopTrash(w);
+            } else if (action === 'empty') {
+                this.confirmDesktopTrashEmpty(w, w ? (w.trashItems || []).length : 0);
+            }
+        },
+        desktopTrashProps: function (item) {
+            if (!item) {
+                return;
+            }
+            var size = item.dir ? '文件夹' : this.fmtSize(item.size);
+            this.$alert('<div style="line-height:1.9;font-size:13px;color:#4b5563">'
+                + '<b>' + escapeAiHtml(item.name) + '</b><br>'
+                + '原路径：<span style="font-family:Consolas,monospace">' + escapeAiHtml(item.originalPath) + '</span><br>'
+                + '大小：' + escapeAiHtml(size) + '<br>'
+                + '删除时间：' + escapeAiHtml(this.desktopTrashTime(item.deletedAt)) + '<br>'
+                + '存储位置：<span style="font-family:Consolas,monospace">' + escapeAiHtml(item.storedPath || '') + '</span>'
+                + '</div>', '回收站项目属性', {
+                dangerouslyUseHTMLString: true,
+                confirmButtonText: '知道了'
+            });
+        },
+        desktopDeleteRows: function (rows, win, permanent) {
             var t = this.desktopTab;
             var d = win || this.desk;
             if (!t || !t.sessionId || !rows || !rows.length) {
@@ -10975,11 +11262,54 @@ new Vue({
             var label = rows.length === 1
                 ? ('「' + rows[0].name + '」' + (rows[0].dir ? '及其全部内容' : ''))
                 : (rows.length + ' 个项目');
-            this.$confirm('确定删除' + label + '？删除后不可恢复。', '危险操作', {
+            var message = permanent
+                ? ('确定彻底删除' + label + '？删除后不可恢复。')
+                : ('确定将' + label + '移入回收站？可在回收站中恢复。');
+            this.$confirm(message, permanent ? '彻底删除' : '移入回收站', {
                 type: 'warning',
-                confirmButtonText: '删除',
+                confirmButtonText: permanent ? '彻底删除' : '移入回收站',
                 cancelButtonText: '取消'
             }).then(function () {
+                if (!permanent) {
+                    var items = rows.map(function (r) {
+                        return {
+                            path: self.desktopEntryPath(r, d),
+                            name: r.name,
+                            dir: !!r.dir,
+                            size: r.size || 0
+                        };
+                    });
+                    return http.post('/api/sftp/trash/delete', {
+                        sessionId: t.sessionId,
+                        items: items
+                    }).then(function (results) {
+                        var ok = 0;
+                        var fail = 0;
+                        var firstError = '';
+                        (results || []).forEach(function (r) {
+                            if (r && r.ok) {
+                                ok++;
+                            } else {
+                                fail++;
+                                if (!firstError && r && r.error) {
+                                    firstError = r.error;
+                                }
+                            }
+                        });
+                        if (fail === 0) {
+                            ELEMENT.Message.success('已移入回收站：' + ok + ' 项');
+                        } else if (ok > 0) {
+                            ELEMENT.Message.warning('移入回收站完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项'
+                                + (firstError ? '（' + firstError + '）' : ''));
+                        } else {
+                            ELEMENT.Message.error(firstError || '移入回收站失败');
+                        }
+                        d.selected = [];
+                        d.lastSelected = '';
+                        self.desktopRefresh(d);
+                        self.refreshDesktopTrashWindows();
+                    });
+                }
                 var chain = Promise.resolve();
                 var ok = 0;
                 var fail = 0;
@@ -10997,13 +11327,14 @@ new Vue({
                 });
                 return chain.then(function () {
                     if (fail === 0) {
-                        ELEMENT.Message.success('已删除 ' + ok + ' 项');
+                        ELEMENT.Message.success('已彻底删除 ' + ok + ' 项');
                     } else {
-                        ELEMENT.Message.warning('删除完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
+                        ELEMENT.Message.warning('彻底删除完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项');
                     }
                     d.selected = [];
                     d.lastSelected = '';
                     self.desktopRefresh(d);
+                    self.refreshDesktopTrashWindows();
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
@@ -12034,6 +12365,9 @@ new Vue({
                 } else if (this.desktop.iconMenu.visible) {
                     this.desktop.iconMenu.visible = false;
                     e.preventDefault();
+                } else if (this.desktop.trashMenu.visible) {
+                    this.desktop.trashMenu.visible = false;
+                    e.preventDefault();
                 } else if (this.desktop.menu.visible) {
                     this.desktop.menu.visible = false;
                     e.preventDefault();
@@ -12086,10 +12420,10 @@ new Vue({
             } else if (e.key === 'Delete' || e.key === 'Del') {
                 if (surfaceRows.length) {
                     e.preventDefault();
-                    this.desktopDeleteRows(surfaceRows, surfaceWin);
+                    this.desktopDeleteRows(surfaceRows, surfaceWin, e.shiftKey);
                 } else if (selected.length) {
                     e.preventDefault();
-                    this.desktopDeleteRows(selected, win);
+                    this.desktopDeleteRows(selected, win, e.shiftKey);
                 }
             } else if (e.key === 'Enter') {
                 if (surfaceItems.length === 1) {
@@ -14580,17 +14914,18 @@ new Vue({
         },
 
         /* ---------- SFTP 批量分发 ---------- */
-        openDistributeDialog: function () {
+        resetDistributeState: function (mode, extra) {
             this.stopDistributePoll();
             this._distRawFiles = {};
             this._distLastBytes = 0;
             this._distLastAt = 0;
             this._distNotifiedTaskId = '';
-            this.distribute = {
+            this.distribute = Object.assign({
                 visible: true,
+                mode: mode || 'local',
                 phase: 'edit',
                 files: [],
-                targetPath: (this.activeTab && this.activeTab.sftpPath) || '/',
+                targetPath: '/',
                 keyword: '',
                 ids: [],
                 dragOver: false,
@@ -14599,8 +14934,70 @@ new Vue({
                 task: null,
                 error: '',
                 cancelling: false,
-                speed: 0
-            };
+                speed: 0,
+                sourceSessionId: '',
+                sourceConnId: null,
+                sourceDir: ''
+            }, extra || {});
+        },
+        openDistributeDialog: function () {
+            this.resetDistributeState('local', {
+                targetPath: (this.activeTab && this.activeTab.sftpPath) || '/'
+            });
+        },
+        openCrossTransferDialog: function (win) {
+            var t = win ? this.desktopTab : this.activeTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var rows;
+            var sourceDir;
+            if (win) {
+                rows = this.desktopSelectedRows(win);
+                sourceDir = win.path || this.desktop.surface.dir || '/';
+            } else {
+                rows = t.sftpSelected || [];
+                sourceDir = t.sftpPath || t.sftpHome || '/';
+            }
+            var files = [];
+            var skippedDir = 0;
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                if (!r) {
+                    continue;
+                }
+                if (r.dir) {
+                    skippedDir++;
+                    continue;
+                }
+                var path = win
+                    ? this.desktopEntryPath(r, win)
+                    : this.pathJoin(sourceDir, r.name);
+                files.push({
+                    uid: 'ct' + i + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                    name: r.name,
+                    size: r.size || 0,
+                    path: path
+                });
+            }
+            if (!files.length) {
+                ELEMENT.Message.warning(skippedDir ? '跨服务器传输暂只支持文件，请选择文件' : '请先选择要传输的文件');
+                return;
+            }
+            if (skippedDir) {
+                ELEMENT.Message.warning('已忽略 ' + skippedDir + ' 个文件夹（暂只支持文件）');
+            }
+            if (!this.connections.length) {
+                this.loadConnections();
+            }
+            this.resetDistributeState('cross', {
+                files: files,
+                targetPath: sourceDir,
+                sourceSessionId: t.sessionId,
+                sourceConnId: t.connId,
+                sourceDir: sourceDir
+            });
         },
         pickDistributeFiles: function () {
             var el = this.$refs.distFileInput;
@@ -14620,6 +15017,9 @@ new Vue({
         },
         onDistributeDrop: function (ev) {
             this.distribute.dragOver = false;
+            if (this.distribute.mode === 'cross') {
+                return;
+            }
             var dt = ev.dataTransfer;
             if (!dt) {
                 return;
@@ -14655,7 +15055,7 @@ new Vue({
             this.addDistributeFiles(files);
         },
         addDistributeFiles: function (files) {
-            if (!files || !files.length) {
+            if (!files || !files.length || this.distribute.mode === 'cross') {
                 return;
             }
             if (!this._distRawFiles) {
@@ -14737,7 +15137,7 @@ new Vue({
                 return;
             }
             if (!d.files.length) {
-                ELEMENT.Message.warning('请先选择要分发的文件');
+                ELEMENT.Message.warning(d.mode === 'cross' ? '请先选择要传输的文件' : '请先选择要分发的文件');
                 return;
             }
             if (!d.ids.length) {
@@ -14746,6 +15146,46 @@ new Vue({
             }
             if (String(d.targetPath || '').trim().charAt(0) !== '/') {
                 ELEMENT.Message.warning('目标目录必须是绝对路径，例如 /opt/app');
+                return;
+            }
+            var self = this;
+            if (d.mode === 'cross') {
+                var paths = d.files.map(function (f) { return f.path; }).filter(function (p) {
+                    return !!p;
+                });
+                if (!paths.length) {
+                    ELEMENT.Message.warning('请先选择要传输的文件');
+                    return;
+                }
+                d.starting = true;
+                d.phase = 'run';
+                d.task = null;
+                d.error = '';
+                d.preparePct = 10;
+                d.speed = 0;
+                this._distLastBytes = 0;
+                this._distLastAt = 0;
+                http.post('/api/sftp/distribute/cross', {
+                    sessionId: d.sourceSessionId,
+                    paths: paths,
+                    connectionIds: d.ids,
+                    targetPath: String(d.targetPath).trim()
+                }, { timeout: 0 }).then(function (task) {
+                    d.starting = false;
+                    d.preparePct = 100;
+                    if (!task || !task.id) {
+                        d.phase = 'edit';
+                        d.error = '服务端未返回传输任务';
+                        return;
+                    }
+                    self.applyDistributeSnapshot(task);
+                    self.startDistributePoll();
+                }).catch(function (err) {
+                    d.starting = false;
+                    d.phase = 'edit';
+                    d.preparePct = 0;
+                    d.error = (err && err.message) ? err.message : '跨服务器传输请求失败';
+                });
                 return;
             }
             var fd = new FormData();
@@ -14775,7 +15215,6 @@ new Vue({
             d.speed = 0;
             this._distLastBytes = 0;
             this._distLastAt = 0;
-            var self = this;
             http.post('/api/sftp/distribute', fd, {
                 timeout: 0,
                 onUploadProgress: function (e) {
@@ -14910,15 +15349,18 @@ new Vue({
             if (task.status === 'done') {
                 var ok = task.doneTargets || 0;
                 var failed = task.failedTargets || 0;
-                var title = '批量分发完成';
+                var prefix = this.distribute.mode === 'cross' ? '跨服务器传输' : '批量分发';
+                var title = prefix + '完成';
                 var type = 'success';
                 if (!ok && failed) {
-                    title = '批量分发失败';
+                    title = prefix + '失败';
                     type = 'error';
                 } else if (failed) {
-                    title = '批量分发完成（部分失败）';
+                    title = prefix + '完成（部分失败）';
                     type = 'warning';
                 }
+                this.pushDesktopNotice(type === 'success' ? 'success' : type,
+                    title, '成功 ' + ok + ' 台' + (failed ? '，失败 ' + failed + ' 台' : ''), 'transfers');
                 ELEMENT.Notification({
                     title: title,
                     message: '成功 ' + ok + ' 台' + (failed ? '，失败 ' + failed + ' 台' : ''),
@@ -17339,6 +17781,9 @@ new Vue({
             if (self.desktop.iconMenu.visible) {
                 self.desktop.iconMenu.visible = false;
             }
+            if (self.desktop.trashMenu.visible) {
+                self.desktop.trashMenu.visible = false;
+            }
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;
             }
@@ -17424,6 +17869,9 @@ new Vue({
             }
             if (self.desktop.iconMenu.visible) {
                 self.desktop.iconMenu.visible = false;
+            }
+            if (self.desktop.trashMenu.visible) {
+                self.desktop.trashMenu.visible = false;
             }
             if (self.desktop.menu.visible) {
                 self.desktop.menu.visible = false;

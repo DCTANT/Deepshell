@@ -142,6 +142,9 @@
                             <el-button size="mini" icon="el-icon-share"
                                        title="批量分发文件到多台服务器的同一目录"
                                        @click="openDistributeDialog"></el-button>
+                            <el-button size="mini" icon="el-icon-sort" :disabled="!sftpSelectedHasFile"
+                                       title="跨服务器传输选中文件（不下载到本机）"
+                                       @click="openCrossTransferDialog()"></el-button>
                             <input ref="folderInput" type="file" webkitdirectory multiple
                                    style="display: none" @change="onFolderInput">
                             <el-button size="mini" icon="el-icon-refresh" title="刷新当前目录"
@@ -164,6 +167,9 @@
                             <el-button v-if="localDownloadReady" size="mini" icon="el-icon-folder-opened"
                                        title="通过 SFTP 直接下载到本机目录（仅本机访问，会弹出目录选择框）"
                                        @click="sftpDownloadToLocal">下载到本机</el-button>
+                            <el-button size="mini" icon="el-icon-sort"
+                                       :disabled="!sftpSelectedHasFile"
+                                       @click="openCrossTransferDialog()">跨服务器传输</el-button>
                             <el-button size="mini" type="text" @click="clearSftpSelection">取消选择</el-button>
                         </div>
                         <el-table ref="sftpTable" :data="activeTab.sftpEntries" size="mini" stripe
@@ -1298,6 +1304,45 @@
                                 referrerpolicy="no-referrer"></iframe>
                     </div>
                 </template>
+                <template v-else-if="w.type === 'trash'">
+                    <div class="dsk-trash">
+                        <div class="dsk-trash-bar">
+                            <el-button size="mini" icon="el-icon-refresh"
+                                       :loading="w.trashLoading" @click="loadDesktopTrash(w)">刷新</el-button>
+                            <el-button size="mini" icon="el-icon-delete" class="danger-text"
+                                       :disabled="!w.trashItems || !w.trashItems.length"
+                                       @click="desktopTrashEmpty(w)">清空回收站</el-button>
+                            <span class="spacer"></span>
+                            <span class="dsk-trash-count">{{ (w.trashItems || []).length }} 项</span>
+                            <span class="dsk-trash-path" :title="desktopTrashPath">{{ desktopTrashPath }}</span>
+                        </div>
+                        <div class="dsk-trash-error" v-if="w.trashError">{{ w.trashError }}</div>
+                        <div class="dsk-trash-list" v-loading="w.trashLoading">
+                            <div v-for="item in w.trashItems" :key="item.id" class="dsk-trash-row"
+                                 :title="item.originalPath"
+                                 @contextmenu.prevent.stop="openDesktopTrashMenu($event, item, w)">
+                                <i class="dsk-trash-icon"
+                                   :class="item.dir ? 'el-icon-folder' : 'el-icon-document'"></i>
+                                <div class="dsk-trash-main">
+                                    <div class="dsk-trash-name">{{ item.name }}</div>
+                                    <div class="dsk-trash-orig">{{ item.originalPath }}</div>
+                                </div>
+                                <span class="dsk-trash-size">{{ item.dir ? '文件夹' : fmtSize(item.size) }}</span>
+                                <span class="dsk-trash-time">{{ desktopTrashTime(item.deletedAt) }}</span>
+                                <span class="dsk-trash-actions">
+                                    <el-button size="mini" type="text"
+                                               @click.stop="restoreDesktopTrashItem(item, w)">还原</el-button>
+                                    <el-button size="mini" type="text" class="danger-text"
+                                               @click.stop="purgeDesktopTrashItem(item, w)">彻底删除</el-button>
+                                </span>
+                            </div>
+                            <div v-if="!w.trashLoading && !(w.trashItems || []).length" class="dsk-trash-empty">
+                                <i class="el-icon-delete"></i>
+                                <span>回收站为空</span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
                 <template v-else>
                 <div class="dsk-toolbar">
             <el-button-group class="dsk-nav">
@@ -1358,6 +1403,9 @@
                        @click="desktopNewFile(w)"></el-button>
             <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"
                        @click="pickDesktopUpload"></el-button>
+            <el-button size="mini" icon="el-icon-sort" :disabled="!desktopSelectionHasFile(w)"
+                       title="跨服务器传输选中文件（不下载到本机）"
+                       @click="openCrossTransferDialog(w)"></el-button>
         </div>
 
         <div class="dsk-body">
@@ -2290,6 +2338,10 @@
                      @click="desktopMenuAction('download')">
                     <i class="el-icon-download"></i>下载
                 </div>
+                <div class="dsk-menu-item" v-if="desktopMenuHasFile"
+                     @click="desktopMenuAction('crossTransfer')">
+                    <i class="el-icon-sort"></i>跨服务器传输
+                </div>
                 <div class="dsk-menu-item has-sub" v-else-if="desktopMenuMulti"
                      @click.stop="openDesktopDownloadSub($event)">
                     <i class="el-icon-download"></i>下载
@@ -2319,8 +2371,12 @@
                     <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
                 </div>
                 <div class="dsk-menu-item danger" @click="desktopMenuAction('delete')">
-                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('删除 ' + desktopMenuSelectionCount + ' 项') : '删除' }}
+                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('移入回收站 ' + desktopMenuSelectionCount + ' 项') : '移入回收站' }}
                     <span class="dsk-menu-key">Del</span>
+                </div>
+                <div class="dsk-menu-item danger" @click="desktopMenuAction('deletePermanent')">
+                    <i class="el-icon-delete-solid"></i>彻底删除
+                    <span class="dsk-menu-key">Shift+Del</span>
                 </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('props')">
                     <i class="el-icon-info"></i>属性
@@ -2451,8 +2507,43 @@
             <div class="dsk-menu-item" @click="desktopIconMenuAction('open')">
                 <i class="el-icon-folder-opened"></i>打开
             </div>
+            <div v-if="desktop.iconMenu.key === 'app:trash'" class="dsk-menu-item danger"
+                 @click="desktopIconMenuAction('emptyTrash')">
+                <i class="el-icon-delete"></i>清空回收站
+            </div>
             <div class="dsk-menu-item" @click="desktopIconMenuAction('hide')">
                 <i class="el-icon-remove-outline"></i>隐藏
+            </div>
+        </div>
+
+        <!-- 回收站项目右键菜单 -->
+        <div class="dsk-menu dsk-trash-menu" v-if="desktop.trashMenu.visible"
+             :style="{ left: desktop.trashMenu.x + 'px', top: desktop.trashMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title" :title="desktop.trashMenu.item && desktop.trashMenu.item.name">
+                {{ desktop.trashMenu.item ? desktop.trashMenu.item.name : '回收站项目' }}
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('restore')">
+                <i class="el-icon-refresh-left"></i>还原
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('openParent')">
+                <i class="el-icon-folder-opened"></i>打开原目录
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('copyPath')">
+                <i class="el-icon-document-copy"></i>复制原路径
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('props')">
+                <i class="el-icon-info"></i>属性
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item danger" @click="desktopTrashMenuAction('purge')">
+                <i class="el-icon-delete"></i>彻底删除
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('refresh')">
+                <i class="el-icon-refresh"></i>刷新回收站
+            </div>
+            <div class="dsk-menu-item danger" @click="desktopTrashMenuAction('empty')">
+                <i class="el-icon-delete-solid"></i>清空回收站
             </div>
         </div>
 
@@ -3502,7 +3593,8 @@
     </el-dialog>
 
     <!-- SFTP 批量分发：本地文件 -> 多台服务器同一目录 -->
-    <el-dialog title="批量分发文件到多台服务器" :visible.sync="distribute.visible"
+    <el-dialog :title="distribute.mode === 'cross' ? '跨服务器传输文件' : '批量分发文件到多台服务器'"
+               :visible.sync="distribute.visible"
                width="840px" top="4vh" custom-class="dist-dialog"
                :close-on-click-modal="false" :before-close="beforeDistributeClose"
                destroy-on-close @closed="onDistributeClosed">
@@ -3510,11 +3602,19 @@
              @dragover.prevent @drop.prevent="onDistributeDrop">
             <div class="dist-hint">
                 <i class="el-icon-info"></i>
-                选择本地文件，同时上传到多台服务器的同一目录；同名文件会被覆盖。
+                <template v-if="distribute.mode === 'cross'">
+                    把当前服务器选中的文件直接传输到其他服务器，无需下载到本机；源文件保持不变，同名文件会被覆盖。
+                </template>
+                <template v-else>
+                    选择本地文件，同时上传到多台服务器的同一目录；同名文件会被覆盖。
+                </template>
             </div>
             <div class="dist-section">
                 <div class="dist-section-head">
-                    <span class="dist-section-title">本地文件</span>
+                    <span class="dist-section-title">{{ distribute.mode === 'cross' ? '源文件（当前服务器）' : '本地文件' }}</span>
+                    <span class="dist-count" v-if="distribute.mode === 'cross' && distribute.sourceDir">
+                        {{ distribute.sourceDir }}
+                    </span>
                     <span class="dist-count" v-if="distribute.files.length">
                         {{ distribute.files.length }} 个 · {{ fmtSize(distributeFileBytes) }}
                     </span>
@@ -3522,7 +3622,7 @@
                     <el-button v-if="distribute.files.length" size="mini" type="text"
                                @click="clearDistributeFiles">清空</el-button>
                 </div>
-                <div class="dist-drop" :class="{ over: distribute.dragOver }"
+                <div v-if="distribute.mode !== 'cross'" class="dist-drop" :class="{ over: distribute.dragOver }"
                      @click="pickDistributeFiles"
                      @dragover.prevent.stop="distribute.dragOver = true"
                      @dragleave.prevent="distribute.dragOver = false"
@@ -3536,7 +3636,7 @@
                 <div class="dist-file-list" v-if="distribute.files.length">
                     <div class="dist-file" v-for="(f, i) in distribute.files" :key="f.uid">
                         <i class="el-icon-document"></i>
-                        <span class="dist-file-name" :title="f.name">{{ f.name }}</span>
+                        <span class="dist-file-name" :title="f.path || f.name">{{ f.name }}</span>
                         <span class="dist-file-size">{{ fmtSize(f.size) }}</span>
                         <i class="el-icon-close" title="移除" @click.stop="removeDistributeFile(i)"></i>
                     </div>
@@ -3555,7 +3655,7 @@
             <div class="dist-section">
                 <div class="dist-section-head">
                     <span class="dist-section-title">目标服务器</span>
-                    <span class="dist-count">已选 {{ distribute.ids.length }} / {{ connections.length }}</span>
+                    <span class="dist-count">已选 {{ distribute.ids.length }} / {{ distributeTargetTotal }}</span>
                     <span class="spacer"></span>
                     <el-button size="mini" type="text" @click="selectAllDistributeTargets">全选</el-button>
                     <el-button size="mini" type="text" :disabled="!distribute.ids.length"
@@ -3645,7 +3745,7 @@
                 <el-button size="small" @click="distribute.visible = false">取消</el-button>
                 <el-button size="small" type="primary" :loading="distribute.starting"
                            :disabled="!canDistribute" @click="startDistribute">
-                    开始分发<template v-if="distribute.ids.length">（{{ distribute.ids.length }} 台）</template>
+                    {{ distribute.mode === 'cross' ? '开始传输' : '开始分发' }}<template v-if="distribute.ids.length">（{{ distribute.ids.length }} 台）</template>
                 </el-button>
             </template>
             <template v-else>

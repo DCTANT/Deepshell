@@ -179,6 +179,39 @@ public class SftpService {
         });
     }
 
+    /** 递归创建目录（已存在时忽略） */
+    public void mkdirs(String sessionId, String path) throws Exception {
+        withSftp(sessionId, c -> {
+            ensureDir(c, path);
+            return null;
+        });
+    }
+
+    /** 把源路径直接重命名/移动到目标绝对路径 */
+    public void renameAbsolute(String sessionId, String src, String dest) throws Exception {
+        withSftp(sessionId, c -> {
+            c.rename(src, dest);
+            return null;
+        });
+    }
+
+    public boolean exists(String sessionId, String path) throws Exception {
+        return withSftp(sessionId, c -> sftpExists(c, path));
+    }
+
+    /** 下载单个文件到本机临时路径（跨服务器传输暂存用） */
+    public void downloadToLocal(String sessionId, String path, Path local) throws Exception {
+        withSftp(sessionId, c -> {
+            SftpATTRS attrs = c.stat(path);
+            if (attrs.isDir()) {
+                throw new IllegalArgumentException("跨服务器传输暂只支持文件");
+            }
+            Files.createDirectories(local.toAbsolutePath().getParent());
+            c.get(path, local.toString());
+            return null;
+        });
+    }
+
     public void rename(String sessionId, String path, String newName) throws Exception {
         if (newName == null || newName.trim().isEmpty() || newName.contains("/")) {
             throw new IllegalArgumentException("新名称不合法");

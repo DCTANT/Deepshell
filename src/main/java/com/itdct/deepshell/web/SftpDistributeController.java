@@ -1,6 +1,7 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.dto.CrossTransferReq;
 import com.itdct.deepshell.service.SftpDistributeService;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,6 +26,15 @@ public class SftpDistributeController {
             @RequestParam(value = "connectionIds", required = false) List<Long> connectionIds,
             @RequestParam(value = "targetPath", required = false) String targetPath) throws Exception {
         return R.ok(service.distribute(files, connectionIds, targetPath));
+    }
+
+    @PostMapping("/cross")
+    public R<Map<String, Object>> cross(@RequestBody CrossTransferReq req) throws Exception {
+        if (req == null) {
+            throw new IllegalArgumentException("请求参数缺失");
+        }
+        return R.ok(service.crossTransfer(req.getSessionId(), req.getPaths(),
+                req.getConnectionIds(), req.getTargetPath()));
     }
 
     @GetMapping("/{taskId}")

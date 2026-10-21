@@ -5464,6 +5464,142 @@ body.resizing .term-host {
         display: none;
     }
 }
+/* ---------- 回收站窗口 ---------- */
+.dsk-trash {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fbfcfe;
+}
+
+.dsk-trash-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e5ebf4;
+    background: #f7f9fc;
+}
+
+.dsk-trash-bar .el-button + .el-button {
+    margin-left: 0;
+}
+
+.dsk-trash-count {
+    color: #6b7891;
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.dsk-trash-path {
+    max-width: 340px;
+    overflow: hidden;
+    color: #9aa7bd;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-trash-error {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3d6d6;
+    background: #fff5f5;
+    color: #c0392b;
+    font-size: 12px;
+}
+
+.dsk-trash-list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px 8px 12px;
+}
+
+.dsk-trash-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 6px;
+}
+
+.dsk-trash-row:hover {
+    background: #eef4ff;
+}
+
+.dsk-trash-icon {
+    flex: 0 0 auto;
+    color: #e6a23c;
+    font-size: 18px;
+}
+
+.dsk-trash-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.dsk-trash-name {
+    overflow: hidden;
+    color: #2f3a4d;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-trash-orig {
+    margin-top: 2px;
+    overflow: hidden;
+    color: #8a96a6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-trash-size {
+    flex: 0 0 auto;
+    width: 76px;
+    text-align: right;
+    color: #7b8798;
+    font-size: 11.5px;
+}
+
+.dsk-trash-time {
+    flex: 0 0 auto;
+    width: 128px;
+    text-align: right;
+    color: #9aa7bd;
+    font-size: 11px;
+}
+
+.dsk-trash-actions {
+    flex: 0 0 auto;
+    width: 128px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 2px;
+}
+
+.dsk-trash-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 64px 0;
+    color: #9aa7bd;
+    font-size: 13px;
+}
+
+.dsk-trash-empty i {
+    color: #cbd4e1;
+    font-size: 42px;
+}
+
 /* ---------- 可视桌面任务栏 ---------- */
 .dsk-taskbar {
     position: absolute;

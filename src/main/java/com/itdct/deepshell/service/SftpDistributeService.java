@@ -56,6 +56,7 @@ public class SftpDistributeService {
     private final SshSessionManager sessions;
     private final ConnectionService connectionService;
     private final AuditService audit;
+    private final SftpService sftp;
 
     private final Map<String, Task> tasks = new ConcurrentHashMap<>();
     private final ExecutorService pool = Executors.newFixedThreadPool(PARALLEL_TARGETS, r -> {
@@ -72,10 +73,11 @@ public class SftpDistributeService {
     private volatile boolean cleanerStarted;
 
     public SftpDistributeService(SshSessionManager sessions, ConnectionService connectionService,
-                                 AuditService audit) {
+                                 AuditService audit, SftpService sftp) {
         this.sessions = sessions;
         this.connectionService = connectionService;
         this.audit = audit;
+        this.sftp = sftp;
     }
 
     @PostConstruct
@@ -109,6 +111,26 @@ public class SftpDistributeService {
         Task task = stage(files);
         try {
             return start(task, connectionIds, targetPath);
+        } catch (Exception e) {
+            cleanupDir(task.dir);
+            tasks.remove(task.id, task);
+            throw e;
+        }
+    }
+
+    /**
+     * 跨服务器传输：先把当前会话选中的远端文件暂存到本机，再复用批量分发任务
+     * 并行上传到目标服务器。源文件保持不变。
+     */
+    public Map<String, Object> crossTransfer(String sourceSessionId, List<String> paths,
+                                             List<Long> connectionIds, String targetPath)
+            throws Exception {
+        Task task = stageRemote(sourceSessionId, paths);
+        try {
+            Map<String, Object> out = start(task, connectionIds, targetPath);
+            audit.record("FILE_CROSS_TRANSFER", targetPath, "OK",
+                    task.files.size() + " 个文件，" + task.totalBytes + " 字节");
+            return out;
         } catch (Exception e) {
             cleanupDir(task.dir);
             tasks.remove(task.id, task);
@@ -187,6 +209,9 @@ public class SftpDistributeService {
 
     private Map<String, Object> start(Task task, List<Long> connectionIds, String targetPath) {
         List<Long> ids = normalizeIds(connectionIds);
+        if (ids.isEmpty()) {
+            throw new IllegalArgumentException("请选择至少一台目标服务器");
+        }
         String path = normalizeTargetPath(targetPath);
         Map<Long, SshConnection> saved = new HashMap<>();
         for (SshConnection c : connectionService.list()) {
@@ -363,6 +388,77 @@ public class SftpDistributeService {
         Task task = new Task(id, dir, list, total);
         tasks.put(id, task);
         return task;
+    }
+
+    private Task stageRemote(String sourceSessionId, List<String> paths) throws Exception {
+        purge();
+        if (sourceSessionId == null || sourceSessionId.trim().isEmpty()) {
+            throw new IllegalArgumentException("源会话不存在");
+        }
+        if (paths == null || paths.isEmpty()) {
+            throw new IllegalArgumentException("请选择要传输的文件");
+        }
+        int count = 0;
+        for (String p : paths) {
+            if (p != null && !p.trim().isEmpty()) {
+                count++;
+            }
+        }
+        if (count == 0) {
+            throw new IllegalArgumentException("请选择要传输的文件");
+        }
+        if (count > MAX_FILES) {
+            throw new IllegalArgumentException("一次最多传输 " + MAX_FILES + " 个文件");
+        }
+
+        String id = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        Path dir = root.resolve(id);
+        Files.createDirectories(dir);
+        List<DistFile> list = new ArrayList<>();
+        Set<String> names = new HashSet<>();
+        long total = 0;
+        try {
+            for (String raw : paths) {
+                if (raw == null || raw.trim().isEmpty()) {
+                    continue;
+                }
+                String src = trimRemote(raw);
+                if (!src.startsWith("/")) {
+                    throw new IllegalArgumentException("源文件路径必须是绝对路径：" + src);
+                }
+                String name = src.substring(src.lastIndexOf('/') + 1);
+                if (name.isEmpty()) {
+                    throw new IllegalArgumentException("源文件路径不合法：" + src);
+                }
+                if (!names.add(name)) {
+                    throw new IllegalArgumentException("选中文件中存在同名文件：" + name);
+                }
+                Path dest = dir.resolve("f" + list.size() + ".bin");
+                try {
+                    sftp.downloadToLocal(sourceSessionId, src, dest);
+                } catch (Exception e) {
+                    throw new IllegalArgumentException("无法读取源文件 " + src
+                            + "：" + (e.getMessage() == null ? "读取失败" : e.getMessage()));
+                }
+                long size = Files.size(dest);
+                list.add(new DistFile(name, size, dest));
+                total += size;
+            }
+        } catch (Exception e) {
+            cleanupDir(dir);
+            throw e;
+        }
+        Task task = new Task(id, dir, list, total);
+        tasks.put(id, task);
+        return task;
+    }
+
+    private static String trimRemote(String path) {
+        String s = path.trim();
+        while (s.length() > 1 && s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
     }
 
     private Task require(String taskId) {

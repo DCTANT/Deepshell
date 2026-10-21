@@ -61,7 +61,7 @@ class SftpDistributeServiceTest {
         when(sessions.openSftp(2L)).thenReturn(
                 new SshSessionManager.SftpHandle(channel2, null, false));
 
-        service = new SftpDistributeService(sessions, connectionService, audit);
+        service = new SftpDistributeService(sessions, connectionService, audit, mock(SftpService.class));
         service.initAt(temp.resolve("distribute"));
 
         byte[] deploy = "#!/bin/sh\necho deploy\n".getBytes(StandardCharsets.UTF_8);
@@ -103,11 +103,52 @@ class SftpDistributeServiceTest {
     }
 
     @Test
+    void crossTransferStagesRemoteFilesAndUploadsToAllTargets() throws Exception {
+        SshConnection c1 = connection(1L, "web-1", "10.0.0.1");
+        SshConnection c2 = connection(2L, "web-2", "10.0.0.2");
+        ConnectionService connectionService = mock(ConnectionService.class);
+        when(connectionService.list()).thenReturn(Arrays.asList(c1, c2));
+        Map<String, byte[]> received1 = new ConcurrentHashMap<>();
+        Map<String, byte[]> received2 = new ConcurrentHashMap<>();
+        ChannelSftp channel1 = mockChannel(received1);
+        ChannelSftp channel2 = mockChannel(received2);
+        SshSessionManager sessions = mock(SshSessionManager.class);
+        when(sessions.openSftp(1L)).thenReturn(
+                new SshSessionManager.SftpHandle(channel1, null, false));
+        when(sessions.openSftp(2L)).thenReturn(
+                new SshSessionManager.SftpHandle(channel2, null, false));
+        SftpService sftp = mock(SftpService.class);
+        doAnswer(invocation -> {
+            String remote = invocation.getArgument(1);
+            Path local = invocation.getArgument(2);
+            Files.write(local, ("from:" + remote).getBytes(StandardCharsets.UTF_8));
+            return null;
+        }).when(sftp).downloadToLocal(anyString(), anyString(), any(Path.class));
+
+        service = new SftpDistributeService(sessions, connectionService,
+                mock(AuditService.class), sftp);
+        service.initAt(temp.resolve("distribute"));
+
+        Map<String, Object> started = service.crossTransfer("src-session",
+                Arrays.asList("/etc/app.conf", "/var/log/app.log"), Arrays.asList(1L, 2L),
+                "/backup/");
+        Map<String, Object> done = await(service, String.valueOf(started.get("id")));
+
+        assertEquals("done", done.get("status"));
+        assertEquals(2, ((Number) done.get("doneTargets")).intValue());
+        assertTrue(Arrays.equals("from:/etc/app.conf".getBytes(StandardCharsets.UTF_8),
+                received1.get("/backup/app.conf")));
+        assertTrue(Arrays.equals("from:/var/log/app.log".getBytes(StandardCharsets.UTF_8),
+                received1.get("/backup/app.log")));
+        assertEquals(2, received2.size());
+    }
+
+    @Test
     void rejectsRelativeTargetPathAndCleansStaging() throws Exception {
         ConnectionService connectionService = mock(ConnectionService.class);
         AuditService audit = mock(AuditService.class);
         SshSessionManager sessions = mock(SshSessionManager.class);
-        service = new SftpDistributeService(sessions, connectionService, audit);
+        service = new SftpDistributeService(sessions, connectionService, audit, mock(SftpService.class));
         Path root = temp.resolve("distribute");
         service.initAt(root);
 
@@ -124,7 +165,7 @@ class SftpDistributeServiceTest {
     @Test
     void rejectsDuplicateFileNames() throws Exception {
         service = new SftpDistributeService(mock(SshSessionManager.class),
-                mock(ConnectionService.class), mock(AuditService.class));
+                mock(ConnectionService.class), mock(AuditService.class), mock(SftpService.class));
         service.initAt(temp.resolve("distribute"));
 
         List<MultipartFile> files = Arrays.asList(
