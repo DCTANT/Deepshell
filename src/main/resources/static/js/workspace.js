@@ -3264,6 +3264,7 @@ new Vue({
             settingsVisible: false,
             settingsSection: 'appearance',
             compressSub: { visible: false, x: 0, y: 0 },
+            extractSub: { visible: false, x: 0, y: 0 },
             downloadSub: { visible: false, x: 0, y: 0 },
             thumbnailsEnabled: loadDesktopThumbs(),
             showHidden: loadDesktopShowHidden(),
@@ -3390,6 +3391,7 @@ new Vue({
         renameForm: { path: '', newName: '' },
         archiveDialogVisible: false,
         archiveSaving: false,
+        archiveExtracting: false,
         archiveSources: [],
         archiveLastFormat: 'zip',
         archiveForm: { format: 'zip', name: '', level: 'normal', overwrite: false },
@@ -4427,6 +4429,18 @@ new Vue({
         desktopMenuHasFile: function () {
             return this.desktopSelectedRows(this.desktopMenuContextWin())
                 .some(function (r) { return !r.dir; });
+        },
+        desktopMenuCanExtract: function () {
+            var t = this.desktop.menu.target;
+            return !!t && !this.desktopMenuMulti && !t.dir
+                && !!this.desktopArchiveFormat(t.name);
+        },
+        desktopMenuExtractName: function () {
+            var t = this.desktop.menu.target;
+            return t ? t.name : '';
+        },
+        desktopMenuExtractFolder: function () {
+            return this.desktopArchiveBase(this.desktopMenuExtractName);
         },
         archiveNameExists: function () {
             var name = (this.archiveForm.name || '').trim();
@@ -9681,6 +9695,8 @@ new Vue({
                         sortBy: 'name',
                         sortDir: 'asc'
                     });
+                } else if (this.desktopArchiveFormat(item.entry.name)) {
+                    ELEMENT.Message.info('压缩包请右键选择「解压」');
                 } else if (this.desktopTab && this.desktopTab.sessionId) {
                     this.openDesktopEditorWindow(this.desktopTab, item.path);
                 }
@@ -10936,6 +10952,8 @@ new Vue({
                 this.openDesktopVideoPreview(row, d);
             } else if (this.isDesktopAudio(row)) {
                 this.openDesktopAudioPreview(row, d);
+            } else if (this.desktopArchiveFormat(row.name)) {
+                ELEMENT.Message.info('压缩包请右键选择「解压」');
             } else {
                 this.desktopOpenEdit(row, d);
             }
@@ -11279,6 +11297,10 @@ new Vue({
                 this.desktopOpenArchiveDialog('zip', ctxWin);
             } else if (action.indexOf('compress:') === 0) {
                 this.desktopOpenArchiveDialog(action.substring('compress:'.length), ctxWin);
+            } else if (action === 'extractHere') {
+                this.desktopExtractArchive(target, ctxWin, false);
+            } else if (action === 'extractToFolder') {
+                this.desktopExtractArchive(target, ctxWin, true);
             } else if (action === 'preview') {
                 if (target && this.isDesktopImage(target)) {
                     this.openDesktopImagePreview(target, ctxWin);
@@ -11351,6 +11373,98 @@ new Vue({
             }
             return '.zip';
         },
+        desktopArchiveFormat: function (name) {
+            var n = String(name || '').toLowerCase();
+            if (/\.(zip|jar|war)$/.test(n)) {
+                return 'zip';
+            }
+            if (/\.(tar|tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz)$/.test(n)) {
+                return 'tar';
+            }
+            if (/\.7z$/.test(n)) {
+                return '7z';
+            }
+            if (/\.rar$/.test(n)) {
+                return 'rar';
+            }
+            if (/\.gz$/.test(n)) {
+                return 'gzip';
+            }
+            if (/\.bz2$/.test(n)) {
+                return 'bzip2';
+            }
+            if (/\.xz$/.test(n)) {
+                return 'xz';
+            }
+            return '';
+        },
+        desktopArchiveBase: function (name) {
+            var n = String(name || '');
+            var lower = n.toLowerCase();
+            var exts = ['.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.tbz', '.txz',
+                '.zip', '.jar', '.war', '.tar', '.7z', '.rar', '.gz', '.bz2', '.xz'];
+            for (var i = 0; i < exts.length; i++) {
+                if (lower.slice(-exts[i].length) === exts[i]) {
+                    var base = n.slice(0, n.length - exts[i].length);
+                    return base || 'extracted';
+                }
+            }
+            return n || 'extracted';
+        },
+        parentDirOf: function (path) {
+            var s = String(path || '');
+            var idx = s.lastIndexOf('/');
+            return idx <= 0 ? '/' : s.substring(0, idx);
+        },
+        desktopExtractArchive: function (target, win, toFolder) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !target) {
+                return;
+            }
+            var format = this.desktopArchiveFormat(target.name);
+            if (!format) {
+                ELEMENT.Message.warning('暂不支持解压该格式');
+                return;
+            }
+            if (this.archiveExtracting) {
+                return;
+            }
+            var d = win || this.desk;
+            var archivePath = this.desktopEntryPath(target, d);
+            var parent = this.parentDirOf(archivePath);
+            var folderName = this.desktopArchiveBase(target.name);
+            var destDir = toFolder ? this.pathJoin(parent, folderName) : parent;
+            var self = this;
+            this.archiveExtracting = true;
+            var loading = ELEMENT.Message({
+                message: '正在解压 ' + target.name + ' …',
+                duration: 0,
+                iconClass: 'el-icon-loading'
+            });
+            http.post('/api/sftp/extract', {
+                sessionId: t.sessionId,
+                path: archivePath,
+                destDir: destDir,
+                overwrite: false
+            }).then(function (res) {
+                loading.close();
+                self.archiveExtracting = false;
+                if (res && res.skipped) {
+                    ELEMENT.Message.info('目标文件已存在，已跳过解压');
+                } else {
+                    ELEMENT.Message.success(toFolder
+                        ? ('已解压到 ' + folderName + '/')
+                        : ('已解压到当前目录：' + parent));
+                }
+                if (d && d.type !== 'surface') {
+                    d.pendingSelect = toFolder ? folderName : target.name;
+                }
+                self.desktopRefresh(d);
+            }).catch(function () {
+                loading.close();
+                self.archiveExtracting = false;
+            });
+        },
         positionDesktopSub: function (ev, sub, estimatedHeight) {
             var item = ev && ev.currentTarget;
             var menu = this.$refs.deskMenu;
@@ -11386,6 +11500,7 @@ new Vue({
                 return;
             }
             this.closeDesktopDownloadSub();
+            this.closeDesktopExtractSub();
             if (!this.positionDesktopSub(ev, this.desktop.compressSub, 320)) {
                 return;
             }
@@ -11399,12 +11514,33 @@ new Vue({
                 this.desktop.compressSub = { visible: false, x: 0, y: 0 };
             }
         },
+        openDesktopExtractSub: function (ev) {
+            if (this.desktop.extractSub.visible) {
+                this.closeDesktopExtractSub();
+                return;
+            }
+            this.closeDesktopCompressSub();
+            this.closeDesktopDownloadSub();
+            if (!this.positionDesktopSub(ev, this.desktop.extractSub, 140)) {
+                return;
+            }
+            var self = this;
+            this.$nextTick(function () {
+                self.fitDesktopSubHeight('deskExtractSub', self.desktop.extractSub);
+            });
+        },
+        closeDesktopExtractSub: function () {
+            if (this.desktop.extractSub.visible) {
+                this.desktop.extractSub = { visible: false, x: 0, y: 0 };
+            }
+        },
         openDesktopDownloadSub: function (ev) {
             if (this.desktop.downloadSub.visible) {
                 this.closeDesktopDownloadSub();
                 return;
             }
             this.closeDesktopCompressSub();
+            this.closeDesktopExtractSub();
             if (!this.positionDesktopSub(ev, this.desktop.downloadSub, 140)) {
                 return;
             }
@@ -11420,6 +11556,7 @@ new Vue({
         },
         closeDesktopSubMenus: function () {
             this.closeDesktopCompressSub();
+            this.closeDesktopExtractSub();
             this.closeDesktopDownloadSub();
         },
         desktopOpenArchiveDialog: function (format, win) {

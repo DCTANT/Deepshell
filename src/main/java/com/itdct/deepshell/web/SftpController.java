@@ -4,6 +4,7 @@ import com.itdct.deepshell.common.ImageThumbnails;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.dto.ArchiveReq;
 import com.itdct.deepshell.dto.CopyReq;
+import com.itdct.deepshell.dto.ExtractReq;
 import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
 import com.itdct.deepshell.service.ArchiveService;
@@ -708,6 +709,15 @@ public class SftpController {
         Map<String, Object> result = archiveService.compress(req);
         audit.record("FILE_COMPRESS", String.valueOf(result.get("path")), "OK",
                 String.valueOf(result.get("format")));
+        return R.ok(result);
+    }
+
+    /** 解压当前目录下的压缩包（调用服务器 unzip / tar / 7z / unrar / gzip 等） */
+    @PostMapping("/extract")
+    public R<Map<String, Object>> extract(@RequestBody ExtractReq req) throws Exception {
+        Map<String, Object> result = archiveService.extract(req);
+        audit.record("FILE_EXTRACT", String.valueOf(result.get("path")), "OK",
+                String.valueOf(result.get("format")) + " -> " + String.valueOf(result.get("destDir")));
         return R.ok(result);
     }
 }
