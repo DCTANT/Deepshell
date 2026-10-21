@@ -437,6 +437,11 @@
             </div>
         </div>
 
+        <div class="dsk-snap-preview" v-if="desktop.snapPreview.visible"
+             :class="'snap-' + desktop.snapPreview.kind"
+             :style="{ left: desktop.snapPreview.x + 'px', top: desktop.snapPreview.y + 'px',
+                       width: desktop.snapPreview.w + 'px', height: desktop.snapPreview.h + 'px' }"></div>
+
         <div class="dsk-window-layer">
             <div v-for="w in desktop.windows" :key="w.id" class="dsk-window"
                  :class="{ active: w.id === desktop.activeWinId, maximized: w.max,
@@ -1548,11 +1553,11 @@
                 <span class="dsk-win-logo"><i></i><i></i><i></i><i></i></span>
             </button>
             <button class="dsk-task-search" :class="{ active: desktop.startOpen }"
-                    @click.stop="openDesktopStart">
+                    title="搜索应用、连接、文件或操作 (Ctrl+Shift+K)" @click.stop="openDesktopStart">
                 <i class="el-icon-search"></i>
-                <span>{{ desktop.startSearch || '搜索文件、目录或功能' }}</span>
+                <span>{{ desktop.startSearch || '搜索应用、连接、文件或操作' }}</span>
             </button>
-            <div class="dsk-task-apps">
+            <div class="dsk-task-apps" @wheel.prevent="onDesktopTaskAppsWheel">
                 <button class="dsk-task-app dsk-ai-app"
                         :class="{ active: desktopAiWin && desktop.activeWinId === desktopAiWin.id && !desktopAiWin.min,
                                   'is-min': desktopAiWin && desktopAiWin.min }"
@@ -1618,6 +1623,11 @@
                     <span class="dsk-tray-conn-name" :title="desktopTab.title">{{ desktopTab.title }}</span>
                 </div>
             </div>
+            <div class="dsk-tray-bell" :class="{ active: desktop.notifOpen }" title="通知"
+                 @click.stop="toggleDesktopNotifications">
+                <i class="el-icon-bell"></i>
+                <span v-if="desktop.notifUnread" class="dsk-bell-dot">{{ desktop.notifUnread > 9 ? '9+' : desktop.notifUnread }}</span>
+            </div>
             <div class="dsk-tray-clock" :class="{ active: desktop.calendarOpen }"
                  :title="desktopClockFull + ' · ' + desktopClockTimezone"
                  @click.stop="toggleDesktopCalendar">
@@ -1662,6 +1672,35 @@
             </div>
         </div>
 
+        <!-- 通知中心 -->
+        <div class="dsk-notif" v-if="desktop.notifOpen" @click.stop @contextmenu.prevent>
+            <div class="dsk-notif-head">
+                <span><i class="el-icon-bell"></i> 通知</span>
+                <span class="spacer"></span>
+                <button class="dsk-notif-clear" v-if="desktop.notifications.length"
+                        @click="clearDesktopNotifications">全部清除</button>
+                <button class="dsk-notif-x" title="关闭" @click="desktop.notifOpen = false">
+                    <i class="el-icon-close"></i>
+                </button>
+            </div>
+            <div class="dsk-notif-list">
+                <div v-for="n in desktop.notifications" :key="n.id"
+                     class="dsk-notif-item" :class="'level-' + n.level"
+                     @click="desktopNotifClick(n)">
+                    <i class="dsk-notif-icon" :class="desktopNotifIcon(n.level)"></i>
+                    <div class="dsk-notif-main">
+                        <div class="dsk-notif-title">{{ n.title }}</div>
+                        <div class="dsk-notif-text" v-if="n.text">{{ n.text }}</div>
+                        <div class="dsk-notif-time">{{ desktopNotifTime(n.time) }}</div>
+                    </div>
+                </div>
+                <div v-if="!desktop.notifications.length" class="dsk-notif-empty">
+                    <i class="el-icon-bell"></i>
+                    <span>暂无通知</span>
+                </div>
+            </div>
+        </div>
+
         <!-- 开始菜单 -->
         <div class="dsk-start" v-if="desktop.startOpen" @click.stop @contextmenu.prevent>
             <div class="dsk-start-head">
@@ -1680,7 +1719,7 @@
                 <el-input ref="desktopStartSearch" v-model="desktop.startSearch" size="small"
                           prefix-icon="el-icon-search" clearable
                           placeholder="搜索应用、当前目录或服务器文件"
-                          @keyup.enter.native="desktopSearchServer"
+                          @keyup.enter.native="desktopStartEnter"
                           @keydown.esc.native.stop="desktop.startOpen = false"></el-input>
             </div>
             <div class="dsk-start-body" ref="desktopStartBody" @click="desktop.powerOpen = false">
@@ -1725,7 +1764,7 @@
                         </button>
                     </div>
                     <div class="dsk-start-tip">
-                        <i class="el-icon-info"></i> 输入关键字后回车，可在当前目录的 6 层子目录中搜索文件
+                        <i class="el-icon-info"></i> 输入关键字搜索应用、连接、文件与快捷操作，回车打开第一项；Ctrl+Shift+K 可随时呼出
                     </div>
                 </template>
                 <template v-else>
@@ -1741,6 +1780,35 @@
                                 <span class="dsk-start-result-main">
                                     <span class="dsk-start-result-name">{{ a.label }}</span>
                                     <span class="dsk-start-result-sub">{{ a.plugin ? '插件应用' : '应用' }}</span>
+                                </span>
+                                <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <template v-if="desktopStartConnMatches.length">
+                        <div class="dsk-start-sec">连接</div>
+                        <div class="dsk-start-results">
+                            <button v-for="c in desktopStartConnMatches" :key="'sc' + c.id"
+                                    class="dsk-start-result" :title="c.name + ' · ' + c.host"
+                                    @click="desktopStartOpenConnection(c)">
+                                <i class="el-icon-connection dsk-start-resico" style="color:#2f8fce"></i>
+                                <span class="dsk-start-result-main">
+                                    <span class="dsk-start-result-name">{{ c.name }}</span>
+                                    <span class="dsk-start-result-sub">{{ c.username ? c.username + '@' : '' }}{{ c.host }}:{{ c.port }}</span>
+                                </span>
+                                <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <template v-if="desktopStartActionMatches.length">
+                        <div class="dsk-start-sec">快捷操作</div>
+                        <div class="dsk-start-results">
+                            <button v-for="a in desktopStartActionMatches" :key="'sq' + a.id"
+                                    class="dsk-start-result" @click="desktopStartRunAction(a.id)">
+                                <i class="dsk-start-resico" :class="a.icon"></i>
+                                <span class="dsk-start-result-main">
+                                    <span class="dsk-start-result-name">{{ a.label }}</span>
+                                    <span class="dsk-start-result-sub">{{ a.desc }}</span>
                                 </span>
                                 <i class="el-icon-arrow-right dsk-start-result-go"></i>
                             </button>
@@ -2337,7 +2405,7 @@
         </div>
 
         <!-- 桌面空白右键菜单 -->
-        <div class="dsk-menu dsk-wall-menu" v-if="desktop.wallMenu.visible"
+        <div class="dsk-menu dsk-wall-menu" ref="deskWallMenu" v-if="desktop.wallMenu.visible"
              :style="{ left: desktop.wallMenu.x + 'px', top: desktop.wallMenu.y + 'px' }"
              @click.stop @contextmenu.prevent>
             <div class="dsk-menu-title">桌面</div>
@@ -2348,8 +2416,22 @@
             <div class="dsk-menu-item" @click="desktopWallMenuAction('refresh')">
                 <i class="el-icon-refresh"></i>刷新
             </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('newFolder')">
+                <i class="el-icon-folder-add"></i>新建文件夹
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('newFile')">
+                <i class="el-icon-document-add"></i>新建文本文件
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('upload')">
+                <i class="el-icon-upload2"></i>上传文件
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('openTerminal')">
+                <i class="el-icon-monitor"></i>在此打开终端
+            </div>
+            <div class="dsk-menu-sep"></div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('newWindow')">
-                <i class="el-icon-folder-add"></i>新建资源管理器窗口
+                <i class="el-icon-folder-opened"></i>新建资源管理器窗口
             </div>
             <div class="dsk-menu-sep"></div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('personalize')">

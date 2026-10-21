@@ -352,6 +352,7 @@ function createTerminalState(connId, conn, clientKey) {
         reconnectTimer: null,
         explicitClose: false,
         serverClosed: false,
+        notifyDisconnect: false,
         hostKeyPending: false,
         fit: null,
         sftpPath: '',
@@ -3013,6 +3014,15 @@ new Vue({
             { id: 'control', label: '设置', icon: 'el-icon-setting', color: '#54657e' },
             { id: 'connect', label: '连接管理', icon: 'el-icon-connection', color: '#2f8fce' }
         ],
+        desktopStartActions: [
+            { id: 'newTerminal', label: '在此打开终端', icon: 'el-icon-monitor', desc: '当前桌面目录' },
+            { id: 'newFolder', label: '新建文件夹', icon: 'el-icon-folder-add', desc: '当前桌面目录' },
+            { id: 'newFile', label: '新建文本文件', icon: 'el-icon-document-add', desc: '创建后直接编辑' },
+            { id: 'upload', label: '上传文件到桌面', icon: 'el-icon-upload2', desc: '选择本机文件' },
+            { id: 'refresh', label: '刷新桌面', icon: 'el-icon-refresh', desc: '重新读取桌面目录' },
+            { id: 'showDesktop', label: '显示桌面 / 还原窗口', icon: 'el-icon-s-fold', desc: '最小化或还原全部窗口' },
+            { id: 'workbench', label: '在新标签页打开工作台', icon: 'el-icon-top-right', desc: '保留当前桌面' }
+        ],
         tmNavItems: [
             { id: 'processes', label: '进程', icon: 'el-icon-s-grid' },
             { id: 'performance', label: '性能', icon: 'el-icon-data-line' },
@@ -3059,6 +3069,7 @@ new Vue({
             explorerId: '',
             zSeq: 0,
             ghost: createDesktopWindow(''),
+            snapPreview: { visible: false, kind: '', x: 0, y: 0, w: 0, h: 0 },
             wallMenu: { visible: false, x: 0, y: 0 },
             taskMenu: { visible: false, x: 0, y: 0, winId: '' },
             taskbarMenu: { visible: false, x: 0, y: 0 },
@@ -3093,6 +3104,9 @@ new Vue({
             calendarYear: 0,
             calendarMonth: 0,
             calendarSelected: '',
+            notifications: [],
+            notifUnread: 0,
+            notifOpen: false,
             settingsVisible: false,
             settingsSection: 'appearance',
             compressSub: { visible: false, x: 0, y: 0 },
@@ -4215,6 +4229,25 @@ new Vue({
                     a.plugin ? a.plugin.author : ''].join(' ').toLowerCase();
                 return text.indexOf(q) >= 0;
             });
+        },
+        desktopStartConnMatches: function () {
+            var q = this.desktopStartQuery.toLowerCase();
+            if (!q) {
+                return [];
+            }
+            return (this.connections || []).filter(function (c) {
+                var text = [c.name, c.host, c.username, c.note].join(' ').toLowerCase();
+                return text.indexOf(q) >= 0;
+            }).slice(0, 6);
+        },
+        desktopStartActionMatches: function () {
+            var q = this.desktopStartQuery.toLowerCase();
+            if (!q) {
+                return [];
+            }
+            return this.desktopStartActions.filter(function (a) {
+                return (a.label + ' ' + a.desc + ' ' + a.id).toLowerCase().indexOf(q) >= 0;
+            }).slice(0, 6);
         },
         desktopStartEntryMatches: function () {
             var q = this.desktopStartQuery.toLowerCase();
@@ -6039,7 +6072,7 @@ new Vue({
                     if (!self.desktop.visible) {
                         return;
                     }
-                    self.openDesktopWindow(p, true);
+                    self.restoreDesktopExplorerSession(p);
                     self.applyDesktopStartupApps();
                     if (self.$refs.desktopRoot) {
                         self.$refs.desktopRoot.focus();
@@ -6377,7 +6410,8 @@ new Vue({
                     y: Math.round(g.y || 0),
                     w: Math.round(g.w || 0),
                     h: Math.round(g.h || 0),
-                    max: !!w.max
+                    max: !!w.max,
+                    path: w.path || ''
                 };
             });
             try {
@@ -6393,6 +6427,30 @@ new Vue({
                 self._deskLayoutTimer = null;
                 self.saveDesktopWinLayouts();
             }, 250);
+        },
+        restoreDesktopExplorerSession: function (defaultPath) {
+            var list = this.loadDesktopWinLayouts().filter(function (e) {
+                return e && e.path;
+            }).slice(0, 6);
+            if (!list.length) {
+                this.openDesktopWindow(defaultPath, true);
+                return false;
+            }
+            var self = this;
+            list.forEach(function (e, i) {
+                var w = self.openDesktopWindow(e.path, i === 0);
+                if (!w) {
+                    return;
+                }
+                self.applyDesktopWindowGeometry(w, e);
+                w.max = !!e.max;
+                w.z = ++self.desktop.zSeq;
+                if (i === list.length - 1) {
+                    self.desktop.activeWinId = w.id;
+                    self.desktop.explorerId = w.id;
+                }
+            });
+            return true;
         },
         desktopWindowWorkArea: function () {
             var root = this.$refs.desktopRoot;
@@ -7068,16 +7126,99 @@ new Vue({
             var y = s.oy + (ev.clientY - s.startY);
             s.w.x = Math.max(0, Math.min(x, s.area.width - s.w.w));
             s.w.y = Math.max(0, Math.min(y, s.area.height - s.w.h));
+            this.updateDesktopSnapPreview(ev, s);
+        },
+        updateDesktopSnapPreview: function (ev, s) {
+            var root = this.$refs.desktopRoot;
+            var p = this.desktop.snapPreview;
+            if (!root || !s) {
+                p.visible = false;
+                return;
+            }
+            var rect = root.getBoundingClientRect();
+            var area = s.area;
+            var edge = 16;
+            var x = ev.clientX - rect.left;
+            var y = ev.clientY - rect.top;
+            var kind = '';
+            if (y <= edge) {
+                kind = 'top';
+            } else if (x <= edge) {
+                kind = 'left';
+            } else if (x >= area.width - edge) {
+                kind = 'right';
+            }
+            if (!kind) {
+                p.visible = false;
+                return;
+            }
+            var half = Math.floor(area.width / 2);
+            p.visible = true;
+            p.kind = kind;
+            if (kind === 'top') {
+                p.x = 0;
+                p.y = 0;
+                p.w = area.width;
+                p.h = area.height;
+            } else if (kind === 'left') {
+                p.x = 0;
+                p.y = 0;
+                p.w = half;
+                p.h = area.height;
+            } else {
+                p.x = half;
+                p.y = 0;
+                p.w = area.width - half;
+                p.h = area.height;
+            }
+        },
+        applyDesktopSnap: function (w, kind) {
+            if (!w || !kind) {
+                return;
+            }
+            var area = this.desktopWindowWorkArea();
+            var pre = { x: w.x, y: w.y, w: w.w, h: w.h };
+            w.normal = pre;
+            if (kind === 'top') {
+                w.max = true;
+            } else {
+                var half = Math.floor(area.width / 2);
+                w.max = false;
+                w.x = kind === 'left' ? 0 : half;
+                w.y = 0;
+                w.w = kind === 'left' ? half : area.width - half;
+                w.h = area.height;
+            }
+            var self = this;
+            this.$nextTick(function () {
+                self.setupDesktopThumbs(w);
+                if (w.type === 'terminal') {
+                    self.fitTab(w.termTab);
+                }
+            });
         },
         onDesktopWindowDragUp: function () {
             var s = this._deskMove;
+            var snapKind = this.desktop.snapPreview.visible ? this.desktop.snapPreview.kind : '';
+            this.desktop.snapPreview.visible = false;
             this._deskMove = null;
             document.removeEventListener('mousemove', this.onDesktopWindowDragMove);
             document.removeEventListener('mouseup', this.onDesktopWindowDragUp);
             if (s && s.w) {
                 s.w.dragging = false;
+                if (snapKind) {
+                    this.applyDesktopSnap(s.w, snapKind);
+                }
                 this.scheduleSaveDesktopWinLayouts();
             }
+        },
+        onDesktopTaskAppsWheel: function (ev) {
+            var el = ev.currentTarget;
+            if (!el) {
+                return;
+            }
+            var delta = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+            el.scrollLeft += delta;
         },
         startDesktopWindowResize: function (ev, w, dir) {
             if (!w || ev.button !== 0 || w.max) {
@@ -7155,6 +7296,7 @@ new Vue({
             }
         },
         stopDesktopWindowGestures: function () {
+            this.desktop.snapPreview.visible = false;
             document.removeEventListener('mousemove', this.onDesktopWindowDragMove);
             document.removeEventListener('mouseup', this.onDesktopWindowDragUp);
             document.removeEventListener('mousemove', this.onDesktopWindowResizeMove);
@@ -7183,13 +7325,40 @@ new Vue({
             this.desktop.wallMenu = {
                 visible: true,
                 x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 220)),
-                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 130))
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 360))
             };
+            var self = this;
+            this.$nextTick(function () {
+                var el = self.$refs.deskWallMenu;
+                if (!el || !self.desktop.wallMenu.visible) {
+                    return;
+                }
+                var w = el.offsetWidth || 220;
+                var h = el.offsetHeight || 340;
+                self.desktop.wallMenu.x = Math.max(8, Math.min(ev.clientX, window.innerWidth - w - 8));
+                self.desktop.wallMenu.y = Math.max(8, Math.min(ev.clientY, window.innerHeight - h - 8));
+            });
         },
         desktopWallMenuAction: function (action) {
             this.desktop.wallMenu.visible = false;
+            var surfaceWin = this.desktopSurfaceContextWin();
+            var dir = this.desktop.surface.dir;
+            if (action === 'newFolder' || action === 'newFile' || action === 'upload' || action === 'openTerminal') {
+                if (!dir) {
+                    ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
+                    return;
+                }
+            }
             if (action === 'newWindow') {
                 this.openDesktopExplorerWindow();
+            } else if (action === 'newFolder') {
+                this.desktopNewFolder(surfaceWin);
+            } else if (action === 'newFile') {
+                this.desktopNewFile(surfaceWin);
+            } else if (action === 'upload') {
+                this.pickDesktopUpload(surfaceWin);
+            } else if (action === 'openTerminal') {
+                this.openDesktopTerminalWindow(dir);
             } else if (action === 'paste') {
                 this.pasteDesktop({
                     id: '__surface__',
@@ -9569,6 +9738,9 @@ new Vue({
                 d.path = target;
                 d.pathInput = target;
                 d.loading = false;
+                if (d.type === 'explorer') {
+                    self.scheduleSaveDesktopWinLayouts();
+                }
                 var pendingName = d.pendingSelect;
                 var pendingOpen = d.pendingOpen;
                 d.pendingSelect = '';
@@ -11191,10 +11363,15 @@ new Vue({
                     ELEMENT.Message.success(files.length === 1
                         ? ('文件上传成功：' + files[0].name)
                         : ('文件上传成功：' + files.length + ' 个文件 → ' + dir));
+                    self.pushDesktopNotice('success', '上传完成',
+                        files.length === 1 ? files[0].name : (files.length + ' 个文件 → ' + dir), 'transfers');
                 } else if (ok > 0) {
                     ELEMENT.Message.warning('上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个');
+                    self.pushDesktopNotice('warning', '上传部分失败',
+                        '成功 ' + ok + ' 个，失败 ' + fail + ' 个 → ' + dir, 'transfers');
                 } else {
                     ELEMENT.Message.error('上传失败');
+                    self.pushDesktopNotice('error', '上传失败', dir, 'transfers');
                 }
                 self.desktopRefresh(d);
             });
@@ -11784,8 +11961,24 @@ new Vue({
                 return;
             }
             this.touchDesktopActivity();
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey
+                    && String(e.key || '').toLowerCase() === 'k') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (this.desktop.startOpen) {
+                    this.desktop.startOpen = false;
+                } else {
+                    this.openDesktopStart();
+                }
+                return;
+            }
             if (e.key === 'Escape' && this._marquee) {
                 this.cancelDesktopMarquee();
+                e.preventDefault();
+                return;
+            }
+            if (e.key === 'Escape' && this.desktop.notifOpen) {
+                this.desktop.notifOpen = false;
                 e.preventDefault();
                 return;
             }
@@ -11982,6 +12175,7 @@ new Vue({
             this.desktop.calendarMonth = base.getMonth();
             this.desktop.calendarOpen = true;
             this.desktop.startOpen = false;
+            this.desktop.notifOpen = false;
             this.desktop.powerOpen = false;
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
@@ -11991,6 +12185,76 @@ new Vue({
         },
         closeDesktopCalendar: function () {
             this.desktop.calendarOpen = false;
+        },
+        toggleDesktopNotifications: function () {
+            if (this.desktop.notifOpen) {
+                this.desktop.notifOpen = false;
+                return;
+            }
+            this.desktop.notifOpen = true;
+            this.desktop.notifUnread = 0;
+            this.desktop.startOpen = false;
+            this.desktop.calendarOpen = false;
+            this.desktop.powerOpen = false;
+            this.desktop.menu.visible = false;
+            this.desktop.wallMenu.visible = false;
+            this.desktop.taskMenu.visible = false;
+            this.desktop.iconMenu.visible = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.desktop.trayMenu.visible = false;
+            this.closeDesktopSubMenus();
+        },
+        clearDesktopNotifications: function () {
+            this.desktop.notifications = [];
+            this.desktop.notifUnread = 0;
+        },
+        pushDesktopNotice: function (level, title, text, target) {
+            if (!this.desktop.visible) {
+                return;
+            }
+            var d = this.desktop;
+            d.notifications.unshift({
+                id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                level: level || 'info',
+                title: title || '',
+                text: text || '',
+                target: target || '',
+                time: Date.now()
+            });
+            if (d.notifications.length > 60) {
+                d.notifications.length = 60;
+            }
+            if (!d.notifOpen) {
+                d.notifUnread = Math.min(99, d.notifUnread + 1);
+            }
+        },
+        desktopNotifIcon: function (level) {
+            if (level === 'success') {
+                return 'el-icon-circle-check';
+            }
+            if (level === 'warning') {
+                return 'el-icon-warning-outline';
+            }
+            if (level === 'error') {
+                return 'el-icon-circle-close';
+            }
+            return 'el-icon-info';
+        },
+        desktopNotifTime: function (ts) {
+            var d = new Date(ts || Date.now());
+            var p = function (n) { return (n < 10 ? '0' : '') + n; };
+            var now = new Date();
+            var sameDay = d.getFullYear() === now.getFullYear()
+                && d.getMonth() === now.getMonth()
+                && d.getDate() === now.getDate();
+            var time = p(d.getHours()) + ':' + p(d.getMinutes());
+            return sameDay ? time : (d.getMonth() + 1) + '/' + d.getDate() + ' ' + time;
+        },
+        desktopNotifClick: function (n) {
+            this.desktop.notifOpen = false;
+            if (n && n.target === 'transfers') {
+                this.openTransferDesktopWindow();
+            }
         },
         desktopCalendarShift: function (delta) {
             var d = new Date(this.desktop.calendarYear, this.desktop.calendarMonth + delta, 1);
@@ -12029,6 +12293,10 @@ new Vue({
         },
         openDesktopStart: function () {
             this.desktop.startOpen = true;
+            this.desktop.notifOpen = false;
+            if (!this.connections.length) {
+                this.loadConnections();
+            }
             this.loadDesktopPlugins(false);
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
@@ -12240,6 +12508,80 @@ new Vue({
                 }
             });
             return w;
+        },
+        desktopStartEnter: function () {
+            if (!this.desktopStartQuery) {
+                return;
+            }
+            var app = this.desktopStartAppMatches[0];
+            if (app) {
+                this.desktopLaunchApp(app.id);
+                return;
+            }
+            var action = this.desktopStartActionMatches[0];
+            if (action) {
+                this.desktopStartRunAction(action.id);
+                return;
+            }
+            var conn = this.desktopStartConnMatches[0];
+            if (conn) {
+                this.desktopStartOpenConnection(conn);
+                return;
+            }
+            var entry = this.desktopStartEntryMatches[0];
+            if (entry) {
+                this.desktopOpenLocalSearchResult(entry);
+                return;
+            }
+            this.desktopSearchServer();
+        },
+        desktopStartOpenConnection: function (c) {
+            if (!c || c.id == null) {
+                return;
+            }
+            this.desktop.startOpen = false;
+            var t = this.desktopTab;
+            if (t && t.connId === c.id) {
+                ELEMENT.Message.info('当前桌面已连接「' + c.name + '」');
+                return;
+            }
+            this.openDesktopTabForConn(c.id, this.desktop.surface.dir || '');
+        },
+        desktopStartRunAction: function (id) {
+            this.desktop.startOpen = false;
+            var dir = this.desktop.surface.dir;
+            var win = this.desktopSurfaceContextWin();
+            if (id === 'newTerminal') {
+                if (!dir) {
+                    ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
+                    return;
+                }
+                this.openDesktopTerminalWindow(dir);
+            } else if (id === 'newFolder') {
+                if (!dir) {
+                    ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
+                    return;
+                }
+                this.desktopNewFolder(win);
+            } else if (id === 'newFile') {
+                if (!dir) {
+                    ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
+                    return;
+                }
+                this.desktopNewFile(win);
+            } else if (id === 'upload') {
+                if (!dir) {
+                    ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
+                    return;
+                }
+                this.pickDesktopUpload(win);
+            } else if (id === 'refresh') {
+                this.refreshDesktopSurface();
+            } else if (id === 'showDesktop') {
+                this.toggleShowDesktop();
+            } else if (id === 'workbench') {
+                this.openTerminalInNewTab();
+            }
         },
         desktopLaunchApp: function (id) {
             if (!id || id === 'desktop') {
@@ -13137,6 +13479,13 @@ new Vue({
                         tab.hostKeyPending = false;
                         tab.reconnectAttempts = 0;
                         clearReconnectTimer(tab);
+                        if (tab.notifyDisconnect) {
+                            tab.notifyDisconnect = false;
+                            if (self.desktop.visible && self.desktopTab
+                                    && self.desktopTab.connId === tab.connId) {
+                                self.pushDesktopNotice('success', '连接已恢复', tab.title);
+                            }
+                        }
                         if (msg.notice) {
                             term.write('\r\n\x1b[33m● ' + msg.notice + '\x1b[0m\r\n');
                         }
@@ -13199,6 +13548,13 @@ new Vue({
                 }
                 if (tab.status === 'error') {
                     return;
+                }
+                if (tab.status === 'open') {
+                    tab.notifyDisconnect = true;
+                    if (self.desktop.visible && self.desktopTab
+                            && self.desktopTab.connId === tab.connId) {
+                        self.pushDesktopNotice('warning', '连接已断开', tab.title + '：正在自动重连');
+                    }
                 }
                 scheduleReconnect(self, tab);
             };
@@ -16995,6 +17351,9 @@ new Vue({
             if (self.desktop.trayMenu.visible) {
                 self.desktop.trayMenu.visible = false;
             }
+            if (self.desktop.notifOpen) {
+                self.desktop.notifOpen = false;
+            }
             if (self.taskmgr.ctxMenu.visible) {
                 self.taskmgr.ctxMenu.visible = false;
             }
@@ -17077,6 +17436,9 @@ new Vue({
             }
             if (self.desktop.trayMenu.visible) {
                 self.desktop.trayMenu.visible = false;
+            }
+            if (self.desktop.notifOpen) {
+                self.desktop.notifOpen = false;
             }
             if (self.taskmgr.ctxMenu.visible) {
                 self.taskmgr.ctxMenu.visible = false;

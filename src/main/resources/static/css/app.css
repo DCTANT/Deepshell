@@ -4185,6 +4185,29 @@ body.resizing .term-host {
     color: #ffb4b4;
 }
 
+.dsk-snap-preview {
+    position: absolute;
+    z-index: 9999;
+    pointer-events: none;
+    border: 2px solid rgba(108, 166, 255, .92);
+    border-radius: 9px;
+    background: rgba(76, 141, 255, .16);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18), 0 0 24px rgba(76, 141, 255, .28);
+    transition: left .08s ease, top .08s ease, width .08s ease, height .08s ease;
+}
+
+.dsk-snap-preview.snap-top {
+    border-radius: 0;
+}
+
+.dsk-snap-preview.snap-left {
+    border-radius: 0 9px 9px 0;
+}
+
+.dsk-snap-preview.snap-right {
+    border-radius: 9px 0 0 9px;
+}
+
 .dsk-window-layer {
     position: absolute;
     left: 0;
@@ -5781,6 +5804,169 @@ body.resizing .term-host {
 .dsk-clock-date {
     color: #8f9db2;
     font-size: 10px;
+}
+
+/* ---------- 通知中心 ---------- */
+.dsk-tray-bell {
+    position: relative;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: #9daabd;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+}
+
+.dsk-tray-bell:hover,
+.dsk-tray-bell.active {
+    background: #222c3d;
+    color: #e1ebfa;
+}
+
+.dsk-bell-dot {
+    position: absolute;
+    top: 2px;
+    right: 1px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 8px;
+    background: #e5484d;
+    color: #fff;
+    font-size: 9px;
+    line-height: 15px;
+    text-align: center;
+    box-shadow: 0 0 0 2px #12161d;
+}
+
+.dsk-notif {
+    position: absolute;
+    right: 12px;
+    bottom: 55px;
+    z-index: 4500;
+    width: 350px;
+    max-width: calc(100vw - 24px);
+    max-height: 460px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #2b3648;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #1d2431, #151a24);
+    box-shadow: 0 18px 48px rgba(3, 8, 18, .55);
+    color: #dbe4f2;
+    user-select: none;
+}
+
+.dsk-notif-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #273142;
+    color: #eef4ff;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.dsk-notif-clear,
+.dsk-notif-x {
+    border: none;
+    background: transparent;
+    color: #8fa8cc;
+    font-family: inherit;
+    font-size: 11.5px;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+}
+
+.dsk-notif-clear:hover,
+.dsk-notif-x:hover {
+    background: #26324a;
+    color: #fff;
+}
+
+.dsk-notif-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.dsk-notif-item {
+    display: flex;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #242e3e;
+    cursor: pointer;
+}
+
+.dsk-notif-item:hover {
+    background: #232d3d;
+}
+
+.dsk-notif-icon {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    font-size: 15px;
+    color: #7fa8e8;
+}
+
+.dsk-notif-item.level-success .dsk-notif-icon {
+    color: #3dd68c;
+}
+
+.dsk-notif-item.level-warning .dsk-notif-icon {
+    color: #f0b429;
+}
+
+.dsk-notif-item.level-error .dsk-notif-icon {
+    color: #ff7b7b;
+}
+
+.dsk-notif-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.dsk-notif-title {
+    color: #e6eefc;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.dsk-notif-text {
+    margin-top: 3px;
+    color: #9aa9c0;
+    font-size: 11.5px;
+    line-height: 1.45;
+    word-break: break-all;
+}
+
+.dsk-notif-time {
+    margin-top: 4px;
+    color: #6b7891;
+    font-size: 10.5px;
+}
+
+.dsk-notif-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 30px 0;
+    color: #6b7891;
+    font-size: 12px;
+}
+
+.dsk-notif-empty i {
+    font-size: 22px;
 }
 
 /* ---------- 任务栏日历 ---------- */
