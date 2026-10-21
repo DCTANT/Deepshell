@@ -153,6 +153,245 @@ function loadDesktopIdleMinutes() {
     return 0;
 }
 
+/* ---------- AI 可视化桌面：外观主题 ---------- */
+var DESKTOP_APPEARANCE_KEY = 'deepshell.desktopAppearance';
+var DESKTOP_THEME_DEFAULT = 'dark';
+
+var DESKTOP_THEMES = [
+    {
+        id: 'dark', label: '深色', desc: '深海夜色 · 冷蓝光晕',
+        accent: '#4c8dff',
+        wallpaper: 'radial-gradient(1100px 700px at 78% 6%, rgba(64, 122, 255, .30), transparent 60%),'
+            + ' radial-gradient(900px 600px at 6% 96%, rgba(34, 211, 199, .12), transparent 60%),'
+            + ' linear-gradient(140deg, #070c16 0%, #0f1a2c 46%, #0a111d 100%)',
+        windowColor: '#1b2433', windowTransparency: 6,
+        taskbarColor: '#0c1119', taskbarTransparency: 8,
+        iconFg: '#e6eefb', iconShadow: '0 1px 3px rgba(0, 0, 0, .7)',
+        gridLine: 'rgba(130, 175, 255, .05)'
+    },
+    {
+        id: 'light', label: '浅色', desc: '清爽白昼 · 柔和蓝光',
+        accent: '#2f6fd6',
+        wallpaper: 'radial-gradient(1100px 700px at 80% 4%, rgba(96, 165, 250, .30), transparent 60%),'
+            + ' radial-gradient(820px 560px at 4% 94%, rgba(251, 191, 36, .13), transparent 62%),'
+            + ' linear-gradient(135deg, #f8fbff 0%, #e9f1fb 52%, #dfeaf8 100%)',
+        windowColor: '#ffffff', windowTransparency: 6,
+        taskbarColor: '#eef2f7', taskbarTransparency: 8,
+        iconFg: '#233047', iconShadow: '0 1px 2px rgba(255, 255, 255, .85)',
+        gridLine: 'rgba(64, 110, 180, .07)'
+    },
+    {
+        id: 'spring', label: '春日', desc: '嫩芽绿 · 暖阳米色',
+        accent: '#2f9e6b',
+        wallpaper: 'radial-gradient(1000px 660px at 82% 8%, rgba(134, 239, 172, .38), transparent 62%),'
+            + ' radial-gradient(900px 600px at 4% 92%, rgba(253, 186, 116, .20), transparent 60%),'
+            + ' linear-gradient(135deg, #fbfff5 0%, #e8f6e3 50%, #f7f3e4 100%)',
+        windowColor: '#fbfdf7', windowTransparency: 8,
+        taskbarColor: '#e6f2e3', taskbarTransparency: 10,
+        iconFg: '#26402e', iconShadow: '0 1px 2px rgba(255, 255, 255, .8)',
+        gridLine: 'rgba(63, 157, 106, .08)'
+    },
+    {
+        id: 'pink', label: '粉紫', desc: '粉紫渐变 · 柔光梦幻',
+        accent: '#c14fd6',
+        wallpaper: 'radial-gradient(1100px 700px at 78% 4%, rgba(244, 114, 182, .34), transparent 62%),'
+            + ' radial-gradient(900px 620px at 8% 94%, rgba(168, 85, 247, .26), transparent 62%),'
+            + ' linear-gradient(135deg, #fff7fd 0%, #f3e8ff 48%, #fde9f4 100%)',
+        windowColor: '#fdf7ff', windowTransparency: 8,
+        taskbarColor: '#f1e5fa', taskbarTransparency: 10,
+        iconFg: '#43294f', iconShadow: '0 1px 2px rgba(255, 255, 255, .8)',
+        gridLine: 'rgba(192, 90, 214, .08)'
+    },
+    {
+        id: 'cyber', label: '赛博朋克', desc: '霓虹青紫 · 暗夜脉冲',
+        accent: '#00e5ff',
+        wallpaper: 'radial-gradient(900px 640px at 86% 10%, rgba(0, 229, 255, .26), transparent 60%),'
+            + ' radial-gradient(860px 600px at 6% 90%, rgba(255, 0, 200, .24), transparent 62%),'
+            + ' linear-gradient(140deg, #05030a 0%, #12081f 48%, #06020c 100%)',
+        windowColor: '#130f1e', windowTransparency: 10,
+        taskbarColor: '#08050e', taskbarTransparency: 8,
+        iconFg: '#f3e9ff', iconShadow: '0 0 10px rgba(0, 229, 255, .45), 0 1px 3px rgba(0, 0, 0, .85)',
+        gridLine: 'rgba(0, 229, 255, .07)'
+    },
+    {
+        id: 'classic', label: '经典', desc: '原有深蓝桌面 · 明亮窗口',
+        accent: '#3d7eff',
+        wallpaper: 'radial-gradient(1000px 620px at 76% 12%, rgba(61, 126, 255, .28), transparent 62%),'
+            + ' radial-gradient(760px 520px at 10% 92%, rgba(45, 212, 191, .10), transparent 60%),'
+            + ' linear-gradient(135deg, #14171f 0%, #16325c 52%, #1d2331 100%)',
+        windowColor: '#ffffff', windowTransparency: 2,
+        taskbarColor: '#141922', taskbarTransparency: 6,
+        iconFg: '#e1ebfa', iconShadow: '0 1px 2px rgba(0, 0, 0, .55)',
+        gridLine: 'rgba(130, 175, 255, .045)'
+    }
+];
+
+var DESKTOP_ICON_SIZES = [
+    { id: 'small', label: '小', dot: 12 },
+    { id: 'medium', label: '中', dot: 16 },
+    { id: 'large', label: '大', dot: 20 }
+];
+
+function desktopThemeById(id) {
+    for (var i = 0; i < DESKTOP_THEMES.length; i++) {
+        if (DESKTOP_THEMES[i].id === id) {
+            return DESKTOP_THEMES[i];
+        }
+    }
+    return DESKTOP_THEMES[0];
+}
+
+function desktopDefaultAppearance() {
+    var t = desktopThemeById(DESKTOP_THEME_DEFAULT);
+    return {
+        theme: t.id,
+        windowColor: t.windowColor,
+        windowTransparency: t.windowTransparency,
+        taskbarColor: t.taskbarColor,
+        taskbarTransparency: t.taskbarTransparency,
+        iconSize: 'medium'
+    };
+}
+
+function desktopClampNumber(v, min, max, fallback) {
+    var n = typeof v === 'number' ? v : parseFloat(v);
+    if (isNaN(n)) {
+        return fallback;
+    }
+    return Math.min(max, Math.max(min, n));
+}
+
+function desktopNormalizeHex(v, fallback) {
+    if (typeof v !== 'string') {
+        return fallback;
+    }
+    var s = v.trim();
+    if (/^#[0-9a-f]{3}$/i.test(s)) {
+        return ('#' + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2)
+            + s.charAt(3) + s.charAt(3)).toLowerCase();
+    }
+    if (/^#[0-9a-f]{6}$/i.test(s)) {
+        return s.toLowerCase();
+    }
+    return fallback;
+}
+
+function desktopHexToRgb(hex) {
+    var s = String(hex || '').replace('#', '');
+    if (s.length === 3) {
+        s = s.charAt(0) + s.charAt(0) + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2);
+    }
+    if (s.length !== 6) {
+        return [0, 0, 0];
+    }
+    return [
+        parseInt(s.substring(0, 2), 16),
+        parseInt(s.substring(2, 4), 16),
+        parseInt(s.substring(4, 6), 16)
+    ];
+}
+
+function desktopRgbToHex(r, g, b) {
+    var to = function (n) {
+        var s = Math.max(0, Math.min(255, Math.round(n))).toString(16);
+        return s.length < 2 ? '0' + s : s;
+    };
+    return '#' + to(r) + to(g) + to(b);
+}
+
+/* ratio > 0 向白色混合，ratio < 0 向黑色混合 */
+function desktopShadeHex(hex, ratio) {
+    var rgb = desktopHexToRgb(hex);
+    var target = ratio < 0 ? 0 : 255;
+    var p = Math.min(1, Math.abs(ratio));
+    return desktopRgbToHex(
+        rgb[0] + (target - rgb[0]) * p,
+        rgb[1] + (target - rgb[1]) * p,
+        rgb[2] + (target - rgb[2]) * p
+    );
+}
+
+function desktopColorIsDark(hex) {
+    var rgb = desktopHexToRgb(hex);
+    return (rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114) / 255 < 0.55;
+}
+
+function desktopRgba(hex, alpha) {
+    var rgb = desktopHexToRgb(hex);
+    return 'rgba(' + rgb[0] + ', ' + rgb[1] + ', ' + rgb[2] + ', ' + Math.max(0, Math.min(1, alpha)).toFixed(2) + ')';
+}
+
+/* 桌面图标大小：桌面根图标与资源管理器窗口内视图互不影响 */
+function desktopIconMetrics(size) {
+    if (size === 'small') {
+        return {
+            cellW: 80, cellH: 90, boxW: 76, boxH: 90, gap: 5,
+            app: 38, appFont: 20, appRadius: 8,
+            folderW: 46, folderH: 38, fileW: 36, fileH: 44, fileFont: 12,
+            thumb: 40, nameFont: 11, nameLine: 1.3, nameMaxH: 28,
+            padX: 10, padY: 12
+        };
+    }
+    if (size === 'large') {
+        return {
+            cellW: 120, cellH: 128, boxW: 114, boxH: 128, gap: 7,
+            app: 60, appFont: 31, appRadius: 11,
+            folderW: 66, folderH: 54, fileW: 54, fileH: 66, fileFont: 18,
+            thumb: 58, nameFont: 13, nameLine: 1.35, nameMaxH: 36,
+            padX: 14, padY: 18
+        };
+    }
+    return {
+        cellW: 96, cellH: 104, boxW: 92, boxH: 104, gap: 6,
+        app: 48, appFont: 25, appRadius: 9,
+        folderW: 54, folderH: 44, fileW: 44, fileH: 54, fileFont: 15,
+        thumb: 48, nameFont: 12, nameLine: 1.32, nameMaxH: 32,
+        padX: 12, padY: 16
+    };
+}
+
+function loadDesktopAppearance() {
+    var def = desktopDefaultAppearance();
+    try {
+        var raw = localStorage.getItem(DESKTOP_APPEARANCE_KEY);
+        var data = raw ? JSON.parse(raw) : null;
+        if (!data || typeof data !== 'object') {
+            return def;
+        }
+        var theme = desktopThemeById(data.theme);
+        var size = data.iconSize;
+        if (size !== 'small' && size !== 'medium' && size !== 'large') {
+            size = def.iconSize;
+        }
+        return {
+            theme: theme.id,
+            windowColor: desktopNormalizeHex(data.windowColor, theme.windowColor),
+            windowTransparency: desktopClampNumber(data.windowTransparency, 0, 70, theme.windowTransparency),
+            taskbarColor: desktopNormalizeHex(data.taskbarColor, theme.taskbarColor),
+            taskbarTransparency: desktopClampNumber(data.taskbarTransparency, 0, 70, theme.taskbarTransparency),
+            iconSize: size
+        };
+    } catch (e) {
+        return def;
+    }
+}
+
+function saveDesktopAppearance(app) {
+    if (!app) {
+        return;
+    }
+    try {
+        localStorage.setItem(DESKTOP_APPEARANCE_KEY, JSON.stringify({
+            theme: app.theme,
+            windowColor: app.windowColor,
+            windowTransparency: app.windowTransparency,
+            taskbarColor: app.taskbarColor,
+            taskbarTransparency: app.taskbarTransparency,
+            iconSize: app.iconSize
+        }));
+    } catch (e) { /* ignore */ }
+}
+
 /* 任务管理器「启动应用」开关（按浏览器持久化） */
 function loadDesktopStartup() {
     try {
@@ -3122,6 +3361,10 @@ new Vue({
         panelTab: 'file',
         panelWidth: 480,
         desktopClipboard: { connId: null, paths: [], names: [], cut: false },
+        /* AI 可视化桌面：外观主题（主题预设 + 自定义颜色/透明度/图标大小） */
+        desktopThemes: DESKTOP_THEMES,
+        desktopIconSizes: DESKTOP_ICON_SIZES,
+        desktopAppearance: loadDesktopAppearance(),
         /* AI 可视化桌面 */
         desktopViews: [
             { id: 'large', label: '大图标', icon: 'el-icon-menu' },
@@ -3550,6 +3793,19 @@ new Vue({
             deep: true,
             handler: function (v) {
                 try { localStorage.setItem('deepshell.hotkey', JSON.stringify(v)); } catch (e) { /* ignore */ }
+            }
+        },
+        desktopAppearance: {
+            deep: true,
+            handler: function (v) {
+                var self = this;
+                if (this._deskAppearanceSaveTimer) {
+                    clearTimeout(this._deskAppearanceSaveTimer);
+                }
+                this._deskAppearanceSaveTimer = setTimeout(function () {
+                    self._deskAppearanceSaveTimer = null;
+                    saveDesktopAppearance(v);
+                }, 180);
             }
         },
         openAfterConnect: function (v) {
@@ -4383,6 +4639,100 @@ new Vue({
         desktopBgSettings: function () {
             var t = this.desktopTab;
             return (t && t.desktopBg) || { url: '', opacity: 0.35, blur: 0 };
+        },
+        desktopAppearanceTheme: function () {
+            return desktopThemeById(this.desktopAppearance.theme);
+        },
+        desktopAppearanceScheme: function () {
+            return desktopColorIsDark(this.desktopAppearance.windowColor) ? 'dark' : 'light';
+        },
+        desktopAppearanceCustomized: function () {
+            var app = this.desktopAppearance;
+            var t = this.desktopAppearanceTheme;
+            return String(app.windowColor).toLowerCase() !== t.windowColor
+                || Number(app.windowTransparency) !== Number(t.windowTransparency)
+                || String(app.taskbarColor).toLowerCase() !== t.taskbarColor
+                || Number(app.taskbarTransparency) !== Number(t.taskbarTransparency);
+        },
+        desktopThemeStyle: function () {
+            var app = this.desktopAppearance || desktopDefaultAppearance();
+            var theme = this.desktopAppearanceTheme;
+            var winDark = desktopColorIsDark(app.windowColor);
+            var taskDark = desktopColorIsDark(app.taskbarColor);
+            var winAlpha = 1 - desktopClampNumber(app.windowTransparency, 0, 70, 6) / 100;
+            var taskAlpha = 1 - desktopClampNumber(app.taskbarTransparency, 0, 70, 8) / 100;
+            var panelAlpha = Math.max(winAlpha, 0.94);
+            var accent = theme.accent;
+            var fg = winDark ? '#e9f0fa' : '#253142';
+            var fgDim = winDark ? 'rgba(224, 234, 248, .64)' : 'rgba(37, 49, 66, .60)';
+            var line = winDark ? 'rgba(255, 255, 255, .11)' : 'rgba(18, 34, 61, .12)';
+            var subtle = winDark ? 'rgba(255, 255, 255, .045)' : 'rgba(18, 34, 61, .035)';
+            var hover = winDark ? 'rgba(255, 255, 255, .075)' : 'rgba(47, 111, 214, .075)';
+            var taskFg = taskDark ? '#e7eefb' : '#26313f';
+            var taskFgDim = taskDark ? 'rgba(226, 236, 250, .62)' : 'rgba(38, 49, 63, .58)';
+            var m = desktopIconMetrics(app.iconSize);
+            return {
+                '--dsk-wallpaper': theme.wallpaper,
+                '--dsk-grid-line': theme.gridLine,
+                '--dsk-desktop-fg': theme.iconFg,
+                '--dsk-desktop-fg-shadow': theme.iconShadow,
+                '--dsk-accent': accent,
+                '--dsk-accent-soft': desktopRgba(accent, winDark ? .20 : .12),
+                '--dsk-win-bg': desktopRgba(app.windowColor, winAlpha),
+                '--dsk-win-border': winDark ? 'rgba(148, 180, 224, .30)' : 'rgba(112, 152, 210, .50)',
+                '--dsk-win-fg': fg,
+                '--dsk-win-fg-dim': fgDim,
+                '--dsk-win-line': line,
+                '--dsk-win-subtle': subtle,
+                '--dsk-win-hover': hover,
+                '--dsk-win-selected': desktopRgba(accent, winDark ? .30 : .16),
+                '--dsk-win-title-bg': winDark ? 'rgba(255, 255, 255, .055)' : 'rgba(15, 32, 58, .045)',
+                '--dsk-win-btn-fg': winDark ? 'rgba(232, 240, 251, .76)' : '#3d4e66',
+                '--dsk-win-btn-hover': winDark ? 'rgba(255, 255, 255, .10)' : 'rgba(15, 32, 58, .08)',
+                '--dsk-win-shadow': winDark
+                    ? '0 18px 46px rgba(0, 0, 0, .50), 0 2px 8px rgba(0, 0, 0, .35)'
+                    : '0 18px 46px rgba(15, 30, 55, .28), 0 2px 8px rgba(15, 30, 55, .10)',
+                '--dsk-panel-bg': desktopRgba(app.windowColor, panelAlpha),
+                '--dsk-panel-fg': fg,
+                '--dsk-panel-fg-dim': fgDim,
+                '--dsk-panel-line': line,
+                '--dsk-panel-subtle': subtle,
+                '--dsk-panel-hover': hover,
+                '--dsk-panel-head-1': desktopShadeHex(accent, -0.56),
+                '--dsk-panel-head-2': desktopShadeHex(accent, -0.74),
+                '--dsk-panel-accent': accent,
+                '--dsk-panel-shadow': winDark
+                    ? '0 18px 48px rgba(0, 0, 0, .55)'
+                    : '0 18px 48px rgba(15, 30, 55, .24)',
+                '--dsk-card-bg': winDark ? 'rgba(255, 255, 255, .04)' : 'rgba(255, 255, 255, .55)',
+                '--dsk-field-bg': winDark ? 'rgba(255, 255, 255, .06)' : 'rgba(255, 255, 255, .72)',
+                '--dsk-taskbar-bg': desktopRgba(app.taskbarColor, taskAlpha),
+                '--dsk-taskbar-border': taskDark ? 'rgba(0, 0, 0, .45)' : 'rgba(15, 32, 58, .10)',
+                '--dsk-taskbar-fg': taskFg,
+                '--dsk-taskbar-fg-dim': taskFgDim,
+                '--dsk-taskbar-hover': taskDark ? 'rgba(255, 255, 255, .09)' : 'rgba(15, 32, 58, .07)',
+                '--dsk-taskbar-active': taskDark ? 'rgba(255, 255, 255, .14)' : 'rgba(15, 32, 58, .11)',
+                '--dsk-taskbar-line': taskDark ? 'rgba(255, 255, 255, .12)' : 'rgba(15, 32, 58, .12)',
+                '--dsk-icon-cell-w': m.cellW + 'px',
+                '--dsk-icon-cell-h': m.cellH + 'px',
+                '--dsk-icon-box-w': m.boxW + 'px',
+                '--dsk-icon-box-h': m.boxH + 'px',
+                '--dsk-icon-gap': m.gap + 'px',
+                '--dsk-icon-app': m.app + 'px',
+                '--dsk-icon-app-font': m.appFont + 'px',
+                '--dsk-icon-radius': m.appRadius + 'px',
+                '--dsk-icon-folder-w': m.folderW + 'px',
+                '--dsk-icon-folder-h': m.folderH + 'px',
+                '--dsk-icon-file-w': m.fileW + 'px',
+                '--dsk-icon-file-h': m.fileH + 'px',
+                '--dsk-icon-file-font': m.fileFont + 'px',
+                '--dsk-icon-thumb': m.thumb + 'px',
+                '--dsk-icon-name-font': m.nameFont + 'px',
+                '--dsk-icon-name-line': m.nameLine,
+                '--dsk-icon-name-max-h': m.nameMaxH + 'px',
+                '--dsk-icon-pad-x': m.padX + 'px',
+                '--dsk-icon-pad-y': m.padY + 'px'
+            };
         },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
@@ -13825,6 +14175,32 @@ new Vue({
                     self.$refs.desktopRoot.focus();
                 }
             });
+        },
+        applyDesktopTheme: function (id) {
+            var t = desktopThemeById(id);
+            var a = this.desktopAppearance;
+            a.theme = t.id;
+            a.windowColor = t.windowColor;
+            a.windowTransparency = t.windowTransparency;
+            a.taskbarColor = t.taskbarColor;
+            a.taskbarTransparency = t.taskbarTransparency;
+        },
+        setDesktopIconSize: function (size) {
+            if (size !== 'small' && size !== 'medium' && size !== 'large') {
+                return;
+            }
+            this.desktopAppearance.iconSize = size;
+        },
+        resetDesktopAppearance: function () {
+            var def = desktopDefaultAppearance();
+            var a = this.desktopAppearance;
+            a.theme = def.theme;
+            a.windowColor = def.windowColor;
+            a.windowTransparency = def.windowTransparency;
+            a.taskbarColor = def.taskbarColor;
+            a.taskbarTransparency = def.taskbarTransparency;
+            a.iconSize = def.iconSize;
+            ELEMENT.Message.success('已恢复默认外观主题');
         },
         resetDesktopSettings: function () {
             var self = this;

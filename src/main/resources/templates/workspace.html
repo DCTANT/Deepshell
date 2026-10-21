@@ -376,6 +376,9 @@
 
     <!-- AI 可视化桌面（虚拟桌面 + 多窗口资源管理器） -->
     <div class="ai-desktop" v-if="desktop.visible" ref="desktopRoot" tabindex="-1"
+         :class="{ 'dsk-scheme-dark': desktopAppearanceScheme === 'dark',
+                    'dsk-scheme-light': desktopAppearanceScheme === 'light' }"
+         :style="desktopThemeStyle" :data-dsk-theme="desktopAppearance.theme"
          @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
          @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
         <div class="dsk-wallpaper" :class="{ 'drop-active': desktop.wallDropActive }"
@@ -2197,7 +2200,144 @@
                         <template v-if="desktop.settingsSection === 'appearance'">
                             <div class="dsk-set-heading">
                                 <i class="el-icon-monitor"></i>
-                                <div><b>外观与桌面</b><span>文件视图、缩略图与终端外观</span></div>
+                                <div><b>外观与桌面</b><span>主题、窗口、任务栏、桌面图标与终端外观</span></div>
+                            </div>
+
+                            <div class="dsk-set-card dsk-appearance-card">
+                                <div class="dsk-set-row dsk-set-row-col">
+                                    <div class="dsk-theme-head">
+                                        <div class="dsk-set-info">
+                                            <b>桌面主题</b>
+                                            <span>选择主题会同时应用窗口、任务栏、壁纸和强调色，之后仍可单独微调</span>
+                                        </div>
+                                        <span class="dsk-theme-badge" v-if="desktopAppearanceCustomized">已微调</span>
+                                        <span class="dsk-theme-badge preset" v-else>{{ desktopAppearanceTheme.label }}预设</span>
+                                    </div>
+                                    <div class="dsk-appearance-preview">
+                                        <div class="dsk-ap-icons">
+                                            <span class="dsk-ap-icon"><i class="el-icon-folder-opened"></i><em>文件夹</em></span>
+                                            <span class="dsk-ap-icon"><i class="el-icon-document"></i><em>文档.txt</em></span>
+                                        </div>
+                                        <div class="dsk-ap-window">
+                                            <div class="dsk-ap-title">
+                                                <span class="dsk-ap-title-dot"></span>
+                                                <span class="dsk-ap-title-line"></span>
+                                                <span class="dsk-ap-title-btns"><i></i><i></i><i></i></span>
+                                            </div>
+                                            <div class="dsk-ap-content">
+                                                <span class="dsk-ap-side"></span>
+                                                <span class="dsk-ap-rows"><i></i><i></i><i></i><i></i></span>
+                                            </div>
+                                        </div>
+                                        <div class="dsk-ap-taskbar">
+                                            <span class="dsk-ap-logo"></span>
+                                            <span class="dsk-ap-search"></span>
+                                            <span class="dsk-ap-apps"><i></i><i></i><i></i></span>
+                                            <span class="dsk-ap-tray"></span>
+                                        </div>
+                                        <div class="dsk-ap-caption">
+                                            <b>{{ desktopAppearanceTheme.label }}</b>
+                                            <span>{{ desktopAppearanceCustomized ? '自定义配色' : desktopAppearanceTheme.desc }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="dsk-theme-grid">
+                                        <button v-for="t in desktopThemes" :key="'theme' + t.id"
+                                                class="dsk-theme-card"
+                                                :class="{ active: desktopAppearance.theme === t.id }"
+                                                :title="t.desc"
+                                                @click="applyDesktopTheme(t.id)">
+                                            <span class="dsk-theme-swatch" :style="{ background: t.wallpaper }">
+                                                <span class="dsk-theme-swatch-win"
+                                                      :style="{ background: t.windowColor }"></span>
+                                                <span class="dsk-theme-swatch-task"
+                                                      :style="{ background: t.taskbarColor }"></span>
+                                                <i v-if="desktopAppearance.theme === t.id" class="el-icon-check"></i>
+                                            </span>
+                                            <span class="dsk-theme-name">{{ t.label }}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口颜色</b>
+                                        <span>资源管理器、工具窗口和弹出面板的底色；字色会随明暗自动适配</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker v-model="desktopAppearance.windowColor"
+                                                         size="small"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">{{ desktopAppearance.windowColor }}</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口透明度</b>
+                                        <span>0% 为完全不透明，数值越高越能透出桌面背景</span>
+                                    </div>
+                                    <div class="dsk-set-slider">
+                                        <el-slider v-model="desktopAppearance.windowTransparency"
+                                                   :min="0" :max="70" :step="1"
+                                                   :show-tooltip="false"></el-slider>
+                                        <span class="dsk-set-num">{{ desktopAppearance.windowTransparency }}%</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口内容色调</b>
+                                        <span>根据窗口颜色亮度自动使用深色或浅色文字与控件</span>
+                                    </div>
+                                    <span class="dsk-set-value">
+                                        {{ desktopAppearanceScheme === 'dark' ? '深色内容' : '浅色内容' }}
+                                    </span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>任务栏颜色</b>
+                                        <span>任务栏与托盘区域的底色；开始菜单和弹出面板跟随窗口颜色</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker v-model="desktopAppearance.taskbarColor"
+                                                         size="small"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">{{ desktopAppearance.taskbarColor }}</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>任务栏透明度</b>
+                                        <span>0% 为完全不透明，任务栏会以毛玻璃效果叠加在桌面上</span>
+                                    </div>
+                                    <div class="dsk-set-slider">
+                                        <el-slider v-model="desktopAppearance.taskbarTransparency"
+                                                   :min="0" :max="70" :step="1"
+                                                   :show-tooltip="false"></el-slider>
+                                        <span class="dsk-set-num">{{ desktopAppearance.taskbarTransparency }}%</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>桌面图标大小</b>
+                                        <span>只调整桌面根图标的尺寸与网格，不影响窗口内的文件视图</span>
+                                    </div>
+                                    <div class="dsk-set-sizes">
+                                        <button v-for="s in desktopIconSizes" :key="'size' + s.id"
+                                                :class="{ active: desktopAppearance.iconSize === s.id }"
+                                                @click="setDesktopIconSize(s.id)">
+                                            <span class="dsk-size-dot"
+                                                  :style="{ width: s.dot + 'px', height: s.dot + 'px' }"></span>
+                                            {{ s.label }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>恢复默认外观</b>
+                                        <span>深色主题、默认窗口与任务栏颜色、中等桌面图标</span>
+                                    </div>
+                                    <el-button size="mini" @click="resetDesktopAppearance">恢复外观默认</el-button>
+                                </div>
+                            </div>
+
+                            <div class="dsk-set-subheading">
+                                <i class="el-icon-files"></i> 文件视图与桌面行为
                             </div>
                             <div class="dsk-set-card">
                                 <div class="dsk-set-row">
