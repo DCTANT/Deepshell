@@ -7,6 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.Properties;
 
 @SpringBootApplication
@@ -32,23 +33,49 @@ public class DeepShellApplication {
         // SQLite 不会自动创建缺失的父目录，需在数据源初始化前准备好
         Files.createDirectories(dataDir.resolve("db"));
         Files.createDirectories(dataDir.resolve("logs"));
-        // 局域网访问开关（默认仅本机 127.0.0.1），须在容器绑定端口前读取
-        String bind = "127.0.0.1";
-        try {
-            Path cfg = dataDir.resolve("network.properties");
-            if (Files.exists(cfg)) {
-                Properties p = new Properties();
-                try (InputStream in = Files.newInputStream(cfg)) {
-                    p.load(in);
-                }
-                if (Boolean.parseBoolean(p.getProperty("lan.enabled", "false"))) {
-                    bind = "0.0.0.0";
-                }
+        // 局域网访问开关：界面保存过 network.properties 时以它为准（系统属性优先级高于配置文件）；
+        // 没保存过则完全交给 application.yml 的 server.address（默认 127.0.0.1）
+        if (System.getProperty("server.address") == null
+                && System.getenv("SERVER_ADDRESS") == null
+                && !hasBindArg(args)) {
+            Boolean saved = savedLanEnabled(dataDir);
+            if (saved != null) {
+                System.setProperty("server.address", saved ? "0.0.0.0" : "127.0.0.1");
             }
-        } catch (Exception ignore) {
-            // 配置读取失败时按默认（仅本机）处理
         }
-        System.setProperty("deepshell.lan-address", bind);
-        SpringApplication.run(DeepShellApplication.class, args);
+        SpringApplication app = new SpringApplication(DeepShellApplication.class);
+        // 最低优先级兜底：即使配置文件删掉了 server.address，也默认只监听本机
+        app.setDefaultProperties(Collections.singletonMap("server.address", "127.0.0.1"));
+        app.run(args);
+    }
+
+    /** 返回 network.properties 中保存的开关；文件不存在或读取失败返回 null（交给配置默认值）。 */
+    private static Boolean savedLanEnabled(Path dataDir) {
+        Path cfg = dataDir.resolve("network.properties");
+        if (!Files.exists(cfg)) {
+            return null;
+        }
+        try (InputStream in = Files.newInputStream(cfg)) {
+            Properties p = new Properties();
+            p.load(in);
+            return Boolean.parseBoolean(p.getProperty("lan.enabled", "false"));
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    /** 命令行是否显式指定了监听地址（含旧版的 deepshell.lan-address 写法）。 */
+    private static boolean hasBindArg(String[] args) {
+        for (String arg : args) {
+            if (arg == null) {
+                continue;
+            }
+            if (arg.equals("--server.address") || arg.startsWith("--server.address=")
+                    || arg.equals("--deepshell.lan-address")
+                    || arg.startsWith("--deepshell.lan-address=")) {
+                return true;
+            }
+        }
+        return false;
     }
 }
