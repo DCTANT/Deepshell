@@ -40,6 +40,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -306,6 +307,102 @@ public class SshSessionManager {
         OpenResult(SshSession session, boolean reattached) {
             this.session = session;
             this.reattached = reattached;
+        }
+    }
+
+    /**
+     * 轻量 SFTP 通道：优先复用同一连接已打开的 SSH 会话，
+     * 没有可用会话时按保存的代理 / 跳板机链路临时建连；close 时只清理自己创建的资源。
+     */
+    public static class SftpHandle implements AutoCloseable {
+        @Getter
+        private final ChannelSftp channel;
+        private final List<Session> ownedSessions;
+        @Getter
+        private final boolean reused;
+        private final AtomicBoolean closed = new AtomicBoolean();
+
+        SftpHandle(ChannelSftp channel, List<Session> ownedSessions, boolean reused) {
+            this.channel = channel;
+            this.ownedSessions = ownedSessions;
+            this.reused = reused;
+        }
+
+        @Override
+        public void close() {
+            // 取消分发与目标线程的 finally 可能同时 close，只允许清理一次
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            try {
+                if (channel != null && channel.isConnected()) {
+                    channel.disconnect();
+                }
+            } catch (Exception ignore) {
+                // 忽略关闭异常
+            }
+            if (ownedSessions != null) {
+                try {
+                    disconnectAll(ownedSessions);
+                } catch (Exception ignore) {
+                    // 忽略关闭异常
+                }
+            }
+        }
+    }
+
+    /**
+     * 为批量文件分发打开一条独立 SFTP 通道：不创建交互 shell / tmux，
+     * 已连接的服务器直接复用现有 SSH 通道，避免额外登录。
+     */
+    public SftpHandle openSftp(Long connectionId) throws Exception {
+        if (connectionId == null) {
+            throw new IllegalArgumentException("缺少连接");
+        }
+        SshSession live = findLiveSession(connectionId);
+        if (live != null) {
+            try {
+                return new SftpHandle(openSftpChannel(live.getJsch()), null, true);
+            } catch (Exception e) {
+                log.debug("复用会话打开 SFTP 失败，改为新建连接 connection={}: {}",
+                        connectionId, e.getMessage());
+            }
+        }
+        SshConnection cfg = connectionService.get(connectionId);
+        Transport transport = connectHops(hopsForSaved(cfg));
+        try {
+            return new SftpHandle(openSftpChannel(transport.target), transport.sessions, false);
+        } catch (Exception e) {
+            disconnectAll(transport.sessions);
+            throw e;
+        }
+    }
+
+    private SshSession findLiveSession(Long connectionId) {
+        for (SshSession s : sessions.values()) {
+            if (Objects.equals(s.getConnectionId(), connectionId)
+                    && !s.isClosed()
+                    && s.getJsch() != null
+                    && s.getJsch().isConnected()) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    private static ChannelSftp openSftpChannel(Session session) throws Exception {
+        ChannelSftp channel = (ChannelSftp) session.openChannel("sftp");
+        try {
+            channel.connect(10000);
+            channel.setFilenameEncoding("UTF-8");
+            return channel;
+        } catch (Exception e) {
+            try {
+                channel.disconnect();
+            } catch (Exception ignore) {
+                // ignore
+            }
+            throw e;
         }
     }
 

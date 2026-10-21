@@ -1589,7 +1589,33 @@ new Vue({
         /* 打开连接弹窗中当前展开设置菜单的行（按 row.key 区分，最近/置顶/列表可能重复出现同一连接） */
         connMenuKey: null,
         editVisible: false,
-        editForm: { path: '', content: '', loading: false, saving: false },
+        editForm: { path: '', content: '', loading: false, saving: false, sessionId: '', tabKey: '' },
+        distribute: {
+            visible: false,
+            phase: 'edit',
+            files: [],
+            targetPath: '',
+            keyword: '',
+            ids: [],
+            dragOver: false,
+            starting: false,
+            preparePct: 0,
+            task: null,
+            error: '',
+            cancelling: false,
+            speed: 0
+        },
+        editor: {
+            find: {
+                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
+                replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
+            },
+            cursor: { line: 1, col: 1 },
+            lineCount: 1,
+            wrap: false,
+            dirty: false,
+            modeLabel: '纯文本'
+        },
         renameVisible: false,
         renameForm: { path: '', newName: '' },
         archiveDialogVisible: false,
@@ -1884,6 +1910,101 @@ new Vue({
         },
         localDownloadReady: function () {
             return !!(this.localDownloadStatus.local && this.localDownloadStatus.available);
+        },
+        distributeFileBytes: function () {
+            return this.distribute.files.reduce(function (sum, f) {
+                return sum + (f.size || 0);
+            }, 0);
+        },
+        distributeTargets: function () {
+            var kw = String(this.distribute.keyword || '').trim().toLowerCase();
+            var list = this.connections.filter(function (c) {
+                if (!kw) {
+                    return true;
+                }
+                var text = [c.name, c.host, c.username, c.port || 22].join(' ').toLowerCase();
+                return text.indexOf(kw) >= 0;
+            });
+            return list.slice().sort(function (a, b) {
+                return String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN', { numeric: true });
+            });
+        },
+        canDistribute: function () {
+            var d = this.distribute;
+            return d.files.length > 0 && d.ids.length > 0
+                && String(d.targetPath || '').trim().charAt(0) === '/'
+                && !d.starting;
+        },
+        distributeStatusText: function () {
+            var t = this.distribute.task;
+            if (!t) {
+                return '正在准备文件…';
+            }
+            if (t.status === 'running') {
+                return '正在分发到 ' + t.totalTargets + ' 台服务器…';
+            }
+            if (t.status === 'cancelled') {
+                return '分发已取消';
+            }
+            if (t.failedTargets && t.failedTargets === t.totalTargets) {
+                return '分发失败';
+            }
+            if (t.failedTargets) {
+                return '分发完成（部分失败）';
+            }
+            return '分发完成';
+        },
+        distributeStatusIcon: function () {
+            var t = this.distribute.task;
+            if (!t || t.status === 'running') {
+                return 'el-icon-loading';
+            }
+            if (t.status === 'cancelled') {
+                return 'el-icon-circle-close';
+            }
+            if (t.failedTargets && t.failedTargets === t.totalTargets) {
+                return 'el-icon-circle-close';
+            }
+            return 'el-icon-circle-check';
+        },
+        distributeOverallPct: function () {
+            var t = this.distribute.task;
+            if (!t) {
+                return Math.max(0, Math.min(99, Math.round(this.distribute.preparePct || 0)));
+            }
+            if (t.status === 'done') {
+                return 100;
+            }
+            var total = t.totalBytes || 0;
+            if (!total) {
+                return 0;
+            }
+            var pct = Math.floor((t.doneBytes || 0) * 100 / total);
+            return Math.max(0, Math.min(99, pct));
+        },
+        distributeOverallStatus: function () {
+            var t = this.distribute.task;
+            if (!t || t.status === 'running') {
+                return null;
+            }
+            if (t.status === 'cancelled') {
+                return 'warning';
+            }
+            if (t.failedTargets && t.failedTargets === t.totalTargets) {
+                return 'exception';
+            }
+            return t.failedTargets ? 'warning' : 'success';
+        },
+        distributeStatusClass: function () {
+            var t = this.distribute.task;
+            if (!t || t.status === 'running') {
+                return '';
+            }
+            if (t.status === 'cancelled' || t.failedTargets) {
+                return (t.failedTargets && t.failedTargets === t.totalTargets)
+                    ? 'dist-status-error' : 'dist-status-warn';
+            }
+            return 'dist-status-ok';
         },
         pfFirstError: function () {
             var list = this.pfRules || [];
@@ -12114,6 +12235,472 @@ new Vue({
                 }).catch(function () { /* 已由拦截器提示 */ });
         },
 
+        /* ---------- SFTP 批量分发 ---------- */
+        openDistributeDialog: function () {
+            this.stopDistributePoll();
+            this._distRawFiles = {};
+            this._distLastBytes = 0;
+            this._distLastAt = 0;
+            this._distNotifiedTaskId = '';
+            this.distribute = {
+                visible: true,
+                phase: 'edit',
+                files: [],
+                targetPath: (this.activeTab && this.activeTab.sftpPath) || '/',
+                keyword: '',
+                ids: [],
+                dragOver: false,
+                starting: false,
+                preparePct: 0,
+                task: null,
+                error: '',
+                cancelling: false,
+                speed: 0
+            };
+        },
+        pickDistributeFiles: function () {
+            var el = this.$refs.distFileInput;
+            if (el) {
+                el.value = '';
+                el.click();
+            }
+        },
+        onDistributeFilesPick: function (ev) {
+            var list = ev.target.files;
+            var files = [];
+            for (var i = 0; list && i < list.length; i++) {
+                files.push(list[i]);
+            }
+            ev.target.value = '';
+            this.addDistributeFiles(files);
+        },
+        onDistributeDrop: function (ev) {
+            this.distribute.dragOver = false;
+            var dt = ev.dataTransfer;
+            if (!dt) {
+                return;
+            }
+            var files = [];
+            var folded = 0;
+            if (dt.items && dt.items.length) {
+                for (var i = 0; i < dt.items.length; i++) {
+                    var item = dt.items[i];
+                    if (item.kind !== 'file') {
+                        continue;
+                    }
+                    if (item.webkitGetAsEntry) {
+                        var entry = item.webkitGetAsEntry();
+                        if (entry && entry.isDirectory) {
+                            folded++;
+                            continue;
+                        }
+                    }
+                    var f = item.getAsFile();
+                    if (f) {
+                        files.push(f);
+                    }
+                }
+            } else if (dt.files) {
+                for (var j = 0; j < dt.files.length; j++) {
+                    files.push(dt.files[j]);
+                }
+            }
+            if (folded) {
+                ELEMENT.Message.warning('批量分发暂只支持文件，不支持文件夹');
+            }
+            this.addDistributeFiles(files);
+        },
+        addDistributeFiles: function (files) {
+            if (!files || !files.length) {
+                return;
+            }
+            if (!this._distRawFiles) {
+                this._distRawFiles = {};
+            }
+            if (this.distribute.phase !== 'edit') {
+                return;
+            }
+            var d = this.distribute;
+            var skipped = 0;
+            for (var i = 0; i < files.length; i++) {
+                var f = files[i];
+                if (!f || !f.name) {
+                    continue;
+                }
+                if (d.files.length >= 500) {
+                    ELEMENT.Message.warning('一次最多分发 500 个文件');
+                    break;
+                }
+                var exists = false;
+                for (var j = 0; j < d.files.length; j++) {
+                    if (d.files[j].name === f.name) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) {
+                    skipped++;
+                    continue;
+                }
+                var uid = 'df' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+                this._distRawFiles[uid] = f;
+                d.files.push({ uid: uid, name: f.name, size: f.size || 0 });
+            }
+            if (skipped > 0) {
+                ELEMENT.Message.warning('已忽略 ' + skipped + ' 个同名文件');
+            }
+        },
+        removeDistributeFile: function (index) {
+            var removed = this.distribute.files.splice(index, 1)[0];
+            if (removed && this._distRawFiles) {
+                delete this._distRawFiles[removed.uid];
+            }
+        },
+        clearDistributeFiles: function () {
+            this.distribute.files = [];
+            this._distRawFiles = {};
+        },
+        toggleDistributeTarget: function (id) {
+            var ids = this.distribute.ids;
+            var i = ids.indexOf(id);
+            if (i >= 0) {
+                ids.splice(i, 1);
+            } else {
+                ids.push(id);
+            }
+        },
+        selectAllDistributeTargets: function () {
+            var ids = [];
+            for (var i = 0; i < this.distributeTargets.length; i++) {
+                ids.push(this.distributeTargets[i].id);
+            }
+            this.distribute.ids = ids;
+        },
+        clearDistributeTargets: function () {
+            this.distribute.ids = [];
+        },
+        connectionIsOpen: function (id) {
+            for (var i = 0; i < this.tabs.length; i++) {
+                if (this.tabs[i].connId === id && this.tabs[i].sessionId) {
+                    return true;
+                }
+            }
+            return false;
+        },
+        startDistribute: function () {
+            var d = this.distribute;
+            if (d.starting) {
+                return;
+            }
+            if (!d.files.length) {
+                ELEMENT.Message.warning('请先选择要分发的文件');
+                return;
+            }
+            if (!d.ids.length) {
+                ELEMENT.Message.warning('请选择至少一台目标服务器');
+                return;
+            }
+            if (String(d.targetPath || '').trim().charAt(0) !== '/') {
+                ELEMENT.Message.warning('目标目录必须是绝对路径，例如 /opt/app');
+                return;
+            }
+            var fd = new FormData();
+            var attached = 0;
+            for (var i = 0; i < d.files.length; i++) {
+                var meta = d.files[i];
+                var raw = this._distRawFiles ? this._distRawFiles[meta.uid] : null;
+                if (raw) {
+                    fd.append('files', raw, meta.name);
+                    attached++;
+                }
+            }
+            if (!attached) {
+                ELEMENT.Message.warning('文件已失效，请重新选择');
+                return;
+            }
+            for (var j = 0; j < d.ids.length; j++) {
+                fd.append('connectionIds', d.ids[j]);
+            }
+            fd.append('targetPath', String(d.targetPath).trim());
+
+            d.starting = true;
+            d.phase = 'run';
+            d.task = null;
+            d.error = '';
+            d.preparePct = 0;
+            d.speed = 0;
+            this._distLastBytes = 0;
+            this._distLastAt = 0;
+            var self = this;
+            http.post('/api/sftp/distribute', fd, {
+                timeout: 0,
+                onUploadProgress: function (e) {
+                    if (e && e.total) {
+                        d.preparePct = Math.max(1, Math.min(99, Math.round(e.loaded * 100 / e.total)));
+                    }
+                }
+            }).then(function (task) {
+                d.starting = false;
+                d.preparePct = 100;
+                if (!task || !task.id) {
+                    d.phase = 'edit';
+                    d.error = '服务端未返回分发任务';
+                    return;
+                }
+                self.applyDistributeSnapshot(task);
+                self.startDistributePoll();
+            }).catch(function (err) {
+                d.starting = false;
+                d.phase = 'edit';
+                d.preparePct = 0;
+                d.error = (err && err.message) ? err.message : '分发请求失败';
+            });
+        },
+        applyDistributeSnapshot: function (task) {
+            if (!task || !this.distribute.visible) {
+                return;
+            }
+            var now = Date.now();
+            var bytes = task.doneBytes || 0;
+            if (this._distLastAt > 0 && now > this._distLastAt) {
+                var dt = (now - this._distLastAt) / 1000;
+                var inst = (bytes - (this._distLastBytes || 0)) / dt;
+                if (inst > 0) {
+                    this.distribute.speed = Math.round(this.distribute.speed
+                        ? this.distribute.speed * 0.5 + inst * 0.5 : inst);
+                } else {
+                    this.distribute.speed = 0;
+                }
+            }
+            this._distLastAt = now;
+            this._distLastBytes = bytes;
+            this.distribute.task = task;
+            if (task.status !== 'running' && this._distNotifiedTaskId !== task.id) {
+                this._distNotifiedTaskId = task.id;
+                this.onDistributeFinished(task);
+            }
+        },
+        startDistributePoll: function () {
+            var self = this;
+            this.stopDistributePoll();
+            var task = this.distribute.task;
+            if (!task || task.status !== 'running') {
+                return;
+            }
+            var id = task.id;
+            var tick = function () {
+                self._distPollTimer = setTimeout(function () {
+                    if (!self.distribute.visible || !self.distribute.task
+                            || self.distribute.task.id !== id) {
+                        return;
+                    }
+                    http.get('/api/sftp/distribute/' + encodeURIComponent(id), { silent: true })
+                        .then(function (t) {
+                            if (!self.distribute.visible || !self.distribute.task
+                                    || self.distribute.task.id !== id) {
+                                return;
+                            }
+                            self.applyDistributeSnapshot(t);
+                            if (t && t.status === 'running') {
+                                tick();
+                            }
+                        })
+                        .catch(function (err) {
+                            if (self.distribute.visible && self.distribute.task
+                                    && self.distribute.task.id === id) {
+                                self.distribute.error = '获取分发进度失败：'
+                                    + ((err && err.message) ? err.message : '网络错误');
+                            }
+                        });
+                }, 850);
+            };
+            tick();
+        },
+        stopDistributePoll: function () {
+            if (this._distPollTimer) {
+                clearTimeout(this._distPollTimer);
+                this._distPollTimer = null;
+            }
+        },
+        cancelDistribute: function () {
+            var task = this.distribute.task;
+            if (!task || task.status !== 'running' || this.distribute.cancelling) {
+                return;
+            }
+            var self = this;
+            this.distribute.cancelling = true;
+            http.post('/api/sftp/distribute/' + encodeURIComponent(task.id) + '/cancel')
+                .then(function (t) {
+                    self.distribute.cancelling = false;
+                    self.stopDistributePoll();
+                    if (t) {
+                        self.applyDistributeSnapshot(t);
+                    }
+                    ELEMENT.Message.info('已取消分发');
+                })
+                .catch(function () {
+                    self.distribute.cancelling = false;
+                });
+        },
+        retryDistribute: function () {
+            var task = this.distribute.task;
+            if (!task || task.status === 'running') {
+                return;
+            }
+            var self = this;
+            http.post('/api/sftp/distribute/' + encodeURIComponent(task.id) + '/retry')
+                .then(function (t) {
+                    self._distNotifiedTaskId = '';
+                    self._distLastAt = 0;
+                    self._distLastBytes = 0;
+                    self.distribute.speed = 0;
+                    self.applyDistributeSnapshot(t);
+                    if (t && t.status === 'running') {
+                        self.startDistributePoll();
+                    }
+                })
+                .catch(function () { /* 已由拦截器提示 */ });
+        },
+        onDistributeFinished: function (task) {
+            this.distribute.speed = 0;
+            if (task.status === 'done') {
+                var ok = task.doneTargets || 0;
+                var failed = task.failedTargets || 0;
+                var title = '批量分发完成';
+                var type = 'success';
+                if (!ok && failed) {
+                    title = '批量分发失败';
+                    type = 'error';
+                } else if (failed) {
+                    title = '批量分发完成（部分失败）';
+                    type = 'warning';
+                }
+                ELEMENT.Notification({
+                    title: title,
+                    message: '成功 ' + ok + ' 台' + (failed ? '，失败 ' + failed + ' 台' : ''),
+                    type: type,
+                    duration: 6000
+                });
+                this.refreshDistributeDirs(task);
+            }
+        },
+        refreshDistributeDirs: function (task) {
+            var done = {};
+            for (var i = 0; i < (task.targets || []).length; i++) {
+                var t = task.targets[i];
+                if (t.status === 'done') {
+                    done[t.connectionId] = true;
+                }
+            }
+            var targetPath = task.targetPath;
+            var self = this;
+            this.tabs.forEach(function (tab) {
+                if (!tab.sessionId || !done[tab.connId]) {
+                    return;
+                }
+                var p = String(tab.sftpPath || '').replace(/\/+$/, '') || '/';
+                if (p === targetPath) {
+                    self.loadDir(tab.sftpPath, tab);
+                }
+            });
+        },
+        distributeTargetPct: function (t) {
+            if (!t) {
+                return 0;
+            }
+            if (t.status === 'done') {
+                return 100;
+            }
+            var total = t.totalBytes || 0;
+            if (!total) {
+                return 0;
+            }
+            return Math.max(0, Math.min(100, Math.floor((t.doneBytes || 0) * 100 / total)));
+        },
+        distributeTargetStatus: function (t) {
+            if (!t) {
+                return '';
+            }
+            if (t.status === 'error') {
+                return 'exception';
+            }
+            if (t.status === 'done') {
+                return 'success';
+            }
+            if (t.status === 'cancelled') {
+                return 'warning';
+            }
+            return '';
+        },
+        distributeTargetDetail: function (t) {
+            if (!t) {
+                return '';
+            }
+            if (t.status === 'pending') {
+                return '等待中';
+            }
+            if (t.status === 'connecting') {
+                return '正在建立连接…';
+            }
+            if (t.status === 'uploading') {
+                return '正在上传 ' + (t.currentFile || '') + '（'
+                    + (t.fileIndex || 0) + '/' + (t.fileCount || 0) + '） · '
+                    + this.fmtSize(t.doneBytes || 0) + ' / ' + this.fmtSize(t.totalBytes || 0);
+            }
+            if (t.status === 'done') {
+                return '已完成 ' + (t.fileCount || 0) + ' 个文件 · '
+                    + this.fmtSize(t.totalBytes || 0);
+            }
+            if (t.status === 'cancelled') {
+                return '已取消';
+            }
+            if (t.status === 'error') {
+                return t.error || '分发失败';
+            }
+            return '';
+        },
+        closeDistribute: function () {
+            var self = this;
+            this.beforeDistributeClose(function () {
+                self.distribute.visible = false;
+            });
+        },
+        beforeDistributeClose: function (done) {
+            if (this.distribute.starting) {
+                ELEMENT.Message.warning('正在上传文件准备分发，请稍候');
+                return;
+            }
+            var task = this.distribute.task;
+            if (task && task.status === 'running') {
+                var self = this;
+                this.$confirm('分发仍在进行，关闭将取消本次分发，确定？', '取消分发', {
+                    type: 'warning',
+                    confirmButtonText: '取消并关闭',
+                    cancelButtonText: '继续分发'
+                }).then(function () {
+                    self.cancelDistribute();
+                    done();
+                }).catch(function () { /* 继续分发 */ });
+                return;
+            }
+            done();
+        },
+        onDistributeClosed: function () {
+            if (this.distribute.visible) {
+                return;
+            }
+            this.stopDistributePoll();
+            this.distribute.starting = false;
+            this.distribute.cancelling = false;
+            this.distribute.dragOver = false;
+            this.distribute.phase = 'edit';
+            this.distribute.task = null;
+            this.distribute.files = [];
+            this.distribute.ids = [];
+            this.distribute.error = '';
+            this._distRawFiles = {};
+        },
+
         uploadFile: function (param) {
             var t = this.activeTab;
             if (!t || !t.sessionId) {
@@ -12710,30 +13297,85 @@ new Vue({
             if (!t || !t.sessionId || !path) {
                 return;
             }
-            this.editForm = { path: path, content: '', loading: true, saving: false };
-            this.editVisible = true;
             var self = this;
+            var seq = (this._editReqSeq || 0) + 1;
+            this._editReqSeq = seq;
+            this.resetEditorInstance();
+            this._editorOriginal = '';
+            this._editorLineSep = '\n';
+            this.editor.dirty = false;
+            this.editor.find = {
+                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
+                replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
+            };
+            this.editor.cursor = { line: 1, col: 1 };
+            this.editor.lineCount = 1;
+            this.editForm = {
+                path: path, content: '', loading: true, saving: false,
+                sessionId: t.sessionId, tabKey: t.key || ''
+            };
+            this.editVisible = true;
             http.get('/api/sftp/read', { params: { sessionId: t.sessionId, path: path } }).then(function (content) {
+                if (seq !== self._editReqSeq) {
+                    return;
+                }
                 self.editForm.content = content || '';
                 self.editForm.loading = false;
+                self._editorLineSep = self.editForm.content.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+                self.$nextTick(function () {
+                    if (seq === self._editReqSeq && self.editVisible) {
+                        self.initEditor();
+                    }
+                });
             }).catch(function () {
+                if (seq !== self._editReqSeq) {
+                    return;
+                }
                 self.editForm.loading = false;
                 self.editVisible = false;
             });
         },
         saveEdit: function () {
-            var t = this.activeTab;
             var f = this.editForm;
-            if (!t || !t.sessionId) {
+            if (!f || f.loading || f.saving) {
                 return;
+            }
+            var ownerTab = null;
+            if (f.tabKey) {
+                for (var i = 0; i < this.tabs.length; i++) {
+                    if (this.tabs[i].key === f.tabKey) {
+                        ownerTab = this.tabs[i];
+                        break;
+                    }
+                }
+            }
+            var sid = (ownerTab && ownerTab.sessionId) || f.sessionId
+                || (this.activeTab && this.activeTab.sessionId);
+            if (!sid) {
+                ELEMENT.Message.warning('会话未就绪，暂时无法保存');
+                return;
+            }
+            if (this._cm) {
+                f.content = this._cm.getValue(this._editorLineSep || '\n');
             }
             var self = this;
             f.saving = true;
-            http.post('/api/sftp/write', { sessionId: t.sessionId, path: f.path, content: f.content })
+            http.post('/api/sftp/write', { sessionId: sid, path: f.path, content: f.content })
                 .then(function () {
                     ELEMENT.Message.success('已保存到远程');
+                    self._editorOriginal = f.content;
+                    self.editor.dirty = false;
                     self.editVisible = false;
-                    if (t.sftpPath) {
+                    var t = ownerTab;
+                    if (!t) {
+                        for (var i = 0; i < self.tabs.length; i++) {
+                            if (self.tabs[i].sessionId === sid) {
+                                t = self.tabs[i];
+                                break;
+                            }
+                        }
+                    }
+                    if (t && t.sftpPath) {
                         self.loadDir(t.sftpPath, t);
                     }
                     if (self.desktop.visible) {
@@ -12744,6 +13386,570 @@ new Vue({
                 .then(function () {
                     f.saving = false;
                 });
+        },
+        beforeEditClose: function (done) {
+            this.requestEditClose(done);
+        },
+        cancelEdit: function () {
+            var self = this;
+            this.requestEditClose(function () {
+                self.editVisible = false;
+            });
+        },
+        requestEditClose: function (done) {
+            if (this.editForm.saving) {
+                return;
+            }
+            if (!this.editor.dirty) {
+                done();
+                return;
+            }
+            this.$confirm('当前修改尚未保存，关闭后将丢失。', '未保存的修改', {
+                type: 'warning',
+                confirmButtonText: '放弃修改',
+                cancelButtonText: '继续编辑'
+            }).then(function () {
+                done();
+            }).catch(function () { /* 继续编辑 */ });
+        },
+
+        /* ---------- 在线编辑器（CodeMirror） ---------- */
+        onEditOpened: function () {
+            var self = this;
+            this.$nextTick(function () {
+                if (self.editVisible && !self.editForm.loading) {
+                    self.initEditor();
+                }
+            });
+        },
+        onEditClosed: function () {
+            if (this.editVisible) {
+                return; // 关闭动画期间又打开了新文件：不要清空新编辑器
+            }
+            this.resetEditorInstance();
+            this._editorOriginal = '';
+            this._editorLineSep = '\n';
+            this.editor.dirty = false;
+            this.editor.find.replaceOpen = false;
+            this.editor.find.text = '';
+            this.editor.find.replace = '';
+            this.editor.find.total = 0;
+            this.editor.find.current = 0;
+            this.editor.find.countText = '';
+            this.editor.find.invalid = false;
+            this.editor.cursor = { line: 1, col: 1 };
+            this.editor.lineCount = 1;
+            this._editReqSeq = (this._editReqSeq || 0) + 1;
+        },
+        resetEditorInstance: function () {
+            if (this._findTimer) {
+                clearTimeout(this._findTimer);
+                this._findTimer = null;
+            }
+            this.clearEditorSearchMarks();
+            if (this.$refs.editorHost) {
+                this.$refs.editorHost.innerHTML = '';
+            }
+            this._cm = null;
+            this._findMatches = [];
+        },
+        initEditor: function () {
+            var self = this;
+            if (this._cm) {
+                this._cm.refresh();
+                return;
+            }
+            var host = this.$refs.editorHost;
+            if (!host || typeof CodeMirror === 'undefined') {
+                if (typeof CodeMirror === 'undefined') {
+                    ELEMENT.Message.error('编辑器组件加载失败，请刷新页面后重试');
+                }
+                return;
+            }
+            var content = this.editForm.content || '';
+            var info = this.editorModeForPath(this.editForm.path, content);
+            this.editor.modeLabel = info.label;
+            host.innerHTML = '';
+            var cm = CodeMirror(host, {
+                value: content,
+                mode: info.mode,
+                lineNumbers: true,
+                lineWrapping: this.editor.wrap,
+                styleActiveLine: true,
+                matchBrackets: true,
+                autoCloseBrackets: true,
+                indentUnit: 4,
+                tabSize: 4,
+                indentWithTabs: false,
+                highlightSelectionMatches: { minChars: 2, style: 'keyword-hit' },
+                extraKeys: {
+                    'Ctrl-F': function () { self.openEditFind(false); },
+                    'Cmd-F': function () { self.openEditFind(false); },
+                    'Ctrl-H': function () { self.openEditFind(true); },
+                    'Ctrl-S': function () { self.saveEdit(); },
+                    'Cmd-S': function () { self.saveEdit(); },
+                    'F3': function () { self.editorFindNext(); },
+                    'Shift-F3': function () { self.editorFindPrev(); },
+                    'Alt-C': function () { self.toggleEditFindOption('caseSensitive'); },
+                    'Alt-W': function () { self.toggleEditFindOption('wholeWord'); },
+                    'Alt-R': function () { self.toggleEditFindOption('regex'); },
+                    'Ctrl-/': 'toggleComment',
+                    'Cmd-/': 'toggleComment'
+                }
+            });
+            this._cm = cm;
+            this._editorOriginal = content;
+            cm.on('change', function () { self.onEditorChange(cm); });
+            cm.on('cursorActivity', function () { self.updateEditorCursor(cm); });
+            this.editor.lineCount = cm.lineCount();
+            this.editor.dirty = false;
+            this.updateEditorCursor(cm);
+            this.$nextTick(function () {
+                if (self._cm === cm) {
+                    cm.refresh();
+                    cm.focus();
+                }
+            });
+        },
+        updateEditorCursor: function (cm) {
+            cm = cm || this._cm;
+            if (!cm) {
+                return;
+            }
+            var c = cm.getCursor();
+            this.editor.cursor = { line: c.line + 1, col: c.ch + 1 };
+        },
+        onEditorChange: function (cm) {
+            this.editor.lineCount = cm.lineCount();
+            this.editor.dirty = cm.getValue(this._editorLineSep || '\n') !== this._editorOriginal;
+            this.updateEditorCursor(cm);
+            if (this.editor.find.text) {
+                var select = !!this._editorSelectAfterChange;
+                this._editorSelectAfterChange = false;
+                this.scheduleEditorSearch(select);
+            }
+        },
+        editorModeForPath: function (path, content) {
+            var p = String(path || '');
+            var base = p.substring(p.lastIndexOf('/') + 1).toLowerCase();
+            var dot = base.lastIndexOf('.');
+            var ext = dot > 0 ? base.substring(dot + 1) : '';
+            if (base === 'dockerfile' || base.indexOf('dockerfile.') === 0) {
+                return { mode: 'dockerfile', label: 'Dockerfile' };
+            }
+            if (base === '.bashrc' || base === '.zshrc' || base === '.bash_profile'
+                || base === '.profile' || base === '.bash_logout' || base === '.kshrc') {
+                return { mode: 'shell', label: 'Shell' };
+            }
+            if (base === '.env') {
+                return { mode: 'properties', label: 'ENV' };
+            }
+            if (base === 'nginx.conf' || /^nginx.*\.conf$/.test(base)
+                || (/\.conf$/.test(base) && p.indexOf('/nginx/') >= 0)) {
+                return { mode: 'nginx', label: 'Nginx' };
+            }
+            var map = {
+                sh: ['shell', 'Shell'], bash: ['shell', 'Shell'], zsh: ['shell', 'Shell'],
+                ksh: ['shell', 'Shell'], profile: ['shell', 'Shell'],
+                py: ['python', 'Python'], pyw: ['python', 'Python'],
+                js: ['javascript', 'JavaScript'], mjs: ['javascript', 'JavaScript'],
+                cjs: ['javascript', 'JavaScript'], jsx: ['javascript', 'JavaScript'],
+                ts: ['text/typescript', 'TypeScript'], tsx: ['text/typescript', 'TypeScript'],
+                json: ['application/json', 'JSON'],
+                html: ['htmlmixed', 'HTML'], htm: ['htmlmixed', 'HTML'],
+                xhtml: ['htmlmixed', 'HTML'], vue: ['htmlmixed', 'HTML'],
+                xml: ['xml', 'XML'], svg: ['xml', 'XML'], plist: ['xml', 'XML'],
+                css: ['css', 'CSS'], scss: ['text/x-scss', 'SCSS'], less: ['text/x-less', 'LESS'],
+                sql: ['sql', 'SQL'],
+                yml: ['yaml', 'YAML'], yaml: ['yaml', 'YAML'],
+                properties: ['properties', 'Properties'], ini: ['text/x-ini', 'INI'],
+                cfg: ['properties', '配置'], env: ['properties', 'ENV'],
+                toml: ['properties', 'TOML'], service: ['properties', 'Unit'],
+                md: ['markdown', 'Markdown'], markdown: ['markdown', 'Markdown'],
+                java: ['text/x-java', 'Java'],
+                c: ['text/x-csrc', 'C'], h: ['text/x-csrc', 'C'],
+                cpp: ['text/x-c++src', 'C++'], cc: ['text/x-c++src', 'C++'],
+                hpp: ['text/x-c++src', 'C++'], cs: ['text/x-csharp', 'C#']
+            };
+            var hit = map[ext];
+            if (hit) {
+                return { mode: hit[0], label: hit[1] };
+            }
+            if (!ext) {
+                var first = String(content || '').split('\n')[0];
+                if (/^#!.*\bpython/.test(first)) {
+                    return { mode: 'python', label: 'Python' };
+                }
+                if (/^#!.*\b(?:ba|z|k)?sh\b/.test(first)) {
+                    return { mode: 'shell', label: 'Shell' };
+                }
+            }
+            return { mode: null, label: '纯文本' };
+        },
+        openEditFind: function (withReplace) {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            var sel = cm.getSelection();
+            if (sel && sel.indexOf('\n') < 0 && sel.length <= 200) {
+                this.editor.find.text = sel;
+            }
+            if (withReplace) {
+                this.editor.find.replaceOpen = true;
+            }
+            this.applyEditorSearch(true);
+            var self = this;
+            this.$nextTick(function () {
+                self.focusEditFindInput();
+            });
+        },
+        focusEditFindInput: function () {
+            var ref = this.$refs.editFindInput;
+            var el = ref && ref.$el ? ref.$el.querySelector('input') : null;
+            if (el) {
+                el.focus();
+                el.select();
+            }
+        },
+        onEditFindKey: function (e) {
+            var key = e.key || '';
+            if (key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    this.editorFindPrev();
+                } else {
+                    this.editorFindNext();
+                }
+                return;
+            }
+            if (key === 'Escape') {
+                e.preventDefault();
+                if (this._cm) {
+                    this._cm.focus();
+                }
+                return;
+            }
+            if (e.altKey) {
+                var k = key.toLowerCase();
+                if (k === 'c') {
+                    e.preventDefault();
+                    this.toggleEditFindOption('caseSensitive');
+                } else if (k === 'w') {
+                    e.preventDefault();
+                    this.toggleEditFindOption('wholeWord');
+                } else if (k === 'r') {
+                    e.preventDefault();
+                    this.toggleEditFindOption('regex');
+                }
+            }
+        },
+        onEditReplaceKey: function (e) {
+            var key = e.key || '';
+            if (key === 'Enter') {
+                e.preventDefault();
+                if (e.ctrlKey || e.metaKey) {
+                    this.editorReplaceAll();
+                } else {
+                    this.editorReplaceOne();
+                }
+                return;
+            }
+            if (key === 'Escape') {
+                e.preventDefault();
+                if (this._cm) {
+                    this._cm.focus();
+                }
+            }
+        },
+        toggleEditReplace: function () {
+            this.editor.find.replaceOpen = !this.editor.find.replaceOpen;
+            if (this.editor.find.replaceOpen) {
+                var self = this;
+                this.$nextTick(function () {
+                    self.focusEditFindInput();
+                });
+            }
+        },
+        toggleEditWrap: function () {
+            this.editor.wrap = !this.editor.wrap;
+            if (this._cm) {
+                this._cm.setOption('lineWrapping', this.editor.wrap);
+                this._cm.refresh();
+            }
+        },
+        toggleEditFindOption: function (key) {
+            this.editor.find[key] = !this.editor.find[key];
+            this.applyEditorSearch(true);
+            this.focusEditFindInput();
+        },
+        scheduleEditorSearch: function (select) {
+            var self = this;
+            if (this._findTimer) {
+                clearTimeout(this._findTimer);
+            }
+            this._findTimer = setTimeout(function () {
+                self.applyEditorSearch(true, select !== false);
+            }, 120);
+        },
+        buildEditorSearchRegex: function () {
+            var f = this.editor.find;
+            if (!f.text) {
+                return null;
+            }
+            var source = f.text;
+            if (!f.regex) {
+                source = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+            if (f.wholeWord) {
+                var w = '[A-Za-z0-9_\\u3400-\\u9fff]';
+                source = '(?<!' + w + ')(?:' + source + ')(?!' + w + ')';
+            }
+            try {
+                return new RegExp(source, 'gm' + (f.caseSensitive ? '' : 'i'));
+            } catch (e) {
+                return null;
+            }
+        },
+        applyEditorSearch: function (resetCurrent, selectCurrent) {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            if (selectCurrent === undefined) {
+                selectCurrent = true;
+            }
+            this.clearEditorSearchMarks();
+            this._findMatches = [];
+            var f = this.editor.find;
+            f.invalid = false;
+            if (!f.text) {
+                f.total = 0;
+                f.current = 0;
+                f.countText = '';
+                return;
+            }
+            var re = this.buildEditorSearchRegex();
+            if (!re) {
+                f.total = 0;
+                f.current = 0;
+                f.countText = '正则无效';
+                f.invalid = true;
+                return;
+            }
+            var text = cm.getValue();
+            var stored = [];
+            var total = 0;
+            var m;
+            re.lastIndex = 0;
+            while ((m = re.exec(text)) !== null) {
+                if (m[0].length === 0) {
+                    re.lastIndex++;
+                    continue;
+                }
+                total++;
+                if (stored.length < 1500) {
+                    stored.push({
+                        index: m.index,
+                        length: m[0].length,
+                        whole: m[0],
+                        groups: Array.prototype.slice.call(m, 1)
+                    });
+                }
+                if (total >= 100000) {
+                    break;
+                }
+            }
+            this._findMatches = stored;
+            f.total = total;
+            if (!total) {
+                f.current = 0;
+                f.countText = '无匹配';
+                return;
+            }
+            if (resetCurrent) {
+                var cursorIndex = cm.indexFromPos(cm.getCursor());
+                f.current = 0;
+                for (var i = 0; i < stored.length; i++) {
+                    if (stored[i].index >= cursorIndex) {
+                        f.current = i;
+                        break;
+                    }
+                }
+            } else if (f.current >= stored.length) {
+                f.current = 0;
+            }
+            f.countText = (f.current + 1) + ' / ' + total + (total >= 100000 ? '+' : '');
+            this.highlightEditorMatches(selectCurrent);
+        },
+        highlightEditorMatches: function (selectCurrent) {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            this.clearEditorSearchMarks();
+            var stored = this._findMatches || [];
+            var f = this.editor.find;
+            for (var i = 0; i < stored.length; i++) {
+                var m = stored[i];
+                var cls = 'cm-search-hit' + (i === f.current ? ' cm-search-hit-current' : '');
+                try {
+                    this._cmMarks.push(cm.markText(
+                        cm.posFromIndex(m.index), cm.posFromIndex(m.index + m.length),
+                        { className: cls }
+                    ));
+                } catch (e) { /* 文件被替换时忽略失效位置 */ }
+            }
+            var cur = stored[f.current];
+            if (cur && selectCurrent !== false) {
+                cm.setSelection(cm.posFromIndex(cur.index), cm.posFromIndex(cur.index + cur.length));
+            }
+        },
+        clearEditorSearchMarks: function () {
+            var marks = this._cmMarks || [];
+            for (var i = 0; i < marks.length; i++) {
+                try {
+                    marks[i].clear();
+                } catch (e) { /* ignore */ }
+            }
+            this._cmMarks = [];
+        },
+        editorFindNext: function () {
+            var f = this.editor.find;
+            if (!f.text) {
+                return;
+            }
+            if (!this._findMatches || !this._findMatches.length) {
+                this.applyEditorSearch(true);
+                return;
+            }
+            f.current = (f.current + 1) % this._findMatches.length;
+            f.countText = (f.current + 1) + ' / ' + f.total + (f.total >= 100000 ? '+' : '');
+            this.highlightEditorMatches();
+        },
+        editorFindPrev: function () {
+            var f = this.editor.find;
+            if (!f.text) {
+                return;
+            }
+            if (!this._findMatches || !this._findMatches.length) {
+                this.applyEditorSearch(true);
+                return;
+            }
+            f.current = (f.current - 1 + this._findMatches.length) % this._findMatches.length;
+            f.countText = (f.current + 1) + ' / ' + f.total + (f.total >= 100000 ? '+' : '');
+            this.highlightEditorMatches();
+        },
+        expandEditorReplacement: function (template, whole, groups) {
+            if (!this.editor.find.regex) {
+                return template;
+            }
+            return String(template).replace(/\$(\$|&|\d{1,2})/g, function (all, token) {
+                if (token === '$') {
+                    return '$';
+                }
+                if (token === '&') {
+                    return whole;
+                }
+                var n = parseInt(token, 10);
+                if (n >= 1 && n <= groups.length) {
+                    return groups[n - 1] == null ? '' : groups[n - 1];
+                }
+                if (token.length === 2) {
+                    var first = parseInt(token.charAt(0), 10);
+                    if (first >= 1 && first <= groups.length) {
+                        return (groups[first - 1] == null ? '' : groups[first - 1]) + token.charAt(1);
+                    }
+                }
+                return all;
+            });
+        },
+        editorReplaceOne: function () {
+            var cm = this._cm;
+            var f = this.editor.find;
+            if (!cm || !f.text) {
+                return;
+            }
+            if (!this._findMatches || !this._findMatches.length) {
+                this.applyEditorSearch(true);
+                return;
+            }
+            var m = this._findMatches[f.current];
+            if (!m) {
+                this.applyEditorSearch(true);
+                return;
+            }
+            var replacement = this.expandEditorReplacement(f.replace, m.whole, m.groups);
+            this._editorSelectAfterChange = true;
+            cm.replaceRange(replacement, cm.posFromIndex(m.index), cm.posFromIndex(m.index + m.length));
+            cm.focus();
+        },
+        editorReplaceAll: function () {
+            var cm = this._cm;
+            var f = this.editor.find;
+            if (!cm || !f.text) {
+                return;
+            }
+            var re = this.buildEditorSearchRegex();
+            if (!re) {
+                ELEMENT.Message.warning('正则表达式无效，请检查后重试');
+                return;
+            }
+            var self = this;
+            var text = cm.getValue();
+            var count = 0;
+            var firstOffset = -1;
+            var result = text.replace(re, function (whole) {
+                if (!whole.length) {
+                    return whole;
+                }
+                var args = Array.prototype.slice.call(arguments);
+                var groups = args.slice(1, args.length - 2);
+                var offset = args[args.length - 2];
+                count++;
+                if (firstOffset < 0) {
+                    firstOffset = offset;
+                }
+                return self.expandEditorReplacement(f.replace, whole, groups);
+            });
+            if (!count) {
+                ELEMENT.Message.info('没有可替换的匹配项');
+                return;
+            }
+            var lastLine = cm.lineCount() - 1;
+            cm.operation(function () {
+                cm.replaceRange(result, { line: 0, ch: 0 },
+                    { line: lastLine, ch: cm.getLine(lastLine).length });
+            });
+            ELEMENT.Message.success('已全部替换 ' + count + ' 处');
+            if (firstOffset >= 0) {
+                cm.setCursor(cm.posFromIndex(Math.min(firstOffset, result.length)));
+            }
+            cm.focus();
+        },
+        onEditorGlobalKey: function (e) {
+            if (!this.editVisible) {
+                return;
+            }
+            var mod = e.ctrlKey || e.metaKey;
+            if (!mod) {
+                return;
+            }
+            var key = (e.key || '').toLowerCase();
+            if (key !== 's' && key !== 'f' && key !== 'h') {
+                return;
+            }
+            if (this._cm && this._cm.hasFocus()) {
+                return;
+            }
+            e.preventDefault();
+            if (key === 's') {
+                this.saveEdit();
+            } else if (key === 'f') {
+                this.openEditFind(false);
+            } else if (key === 'h') {
+                this.openEditFind(true);
+            }
         },
 
         /* ---------- 面板拖拽 ---------- */
@@ -13771,6 +14977,9 @@ new Vue({
         };
         ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'touchmove'].forEach(function (evt) {
             window.addEventListener(evt, markUserActivity, { passive: true });
+        });
+        document.addEventListener('keydown', function (e) {
+            self.onEditorGlobalKey(e);
         });
         setInterval(function () {
             if (!self.authStatus.enabled || document.visibilityState === 'hidden') {

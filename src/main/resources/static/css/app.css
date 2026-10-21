@@ -628,6 +628,402 @@ body.resizing .term-host {
     overflow-y: auto;
 }
 
+/* ---------- SFTP 批量分发 ---------- */
+.dist-dialog {
+    max-width: 96vw;
+}
+
+.dist-dialog .el-dialog__body {
+    padding: 8px 20px 0;
+}
+
+.dist-shell {
+    max-height: 72vh;
+    overflow: auto;
+    padding-bottom: 6px;
+}
+
+.dist-hint {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: #eef5ff;
+    color: #3d6fb8;
+    font-size: 12px;
+}
+
+.dist-hint i {
+    color: var(--accent);
+}
+
+.dist-section {
+    margin-top: 14px;
+}
+
+.dist-section-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+    margin-bottom: 6px;
+}
+
+.dist-section-title {
+    color: #2b3442;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.dist-count {
+    color: var(--text-2);
+    font-size: 11.5px;
+}
+
+.dist-drop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 86px;
+    border: 1px dashed #c6d3e7;
+    border-radius: 7px;
+    background: #fafcff;
+    color: #67768c;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: border-color .15s, background .15s, color .15s;
+}
+
+.dist-drop:hover,
+.dist-drop.over {
+    border-color: var(--accent);
+    background: #f2f7ff;
+    color: var(--accent);
+}
+
+.dist-drop i {
+    font-size: 24px;
+}
+
+.dist-drop-hint {
+    color: #9aa7bd;
+    font-size: 11px;
+}
+
+.dist-file-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    max-height: 112px;
+    overflow: auto;
+}
+
+.dist-file {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 260px;
+    padding: 4px 8px;
+    border: 1px solid #e5eaf2;
+    border-radius: 5px;
+    background: #f7f9fc;
+    font-size: 12px;
+}
+
+.dist-file i.el-icon-document {
+    color: #7b8798;
+}
+
+.dist-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dist-file-size {
+    color: #9aa7bd;
+    font-size: 11px;
+}
+
+.dist-file .el-icon-close {
+    color: #9aa7bd;
+    cursor: pointer;
+}
+
+.dist-file .el-icon-close:hover {
+    color: var(--err);
+}
+
+.dist-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.dist-label {
+    flex: 0 0 58px;
+    color: #4b5563;
+    font-size: 13px;
+}
+
+.dist-path-input {
+    flex: 1;
+}
+
+.dist-sub {
+    margin-top: 5px;
+    padding-left: 70px;
+    color: #9aa7bd;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+.dist-search {
+    margin-bottom: 6px;
+}
+
+.dist-target-list {
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid #e8edf5;
+    border-radius: 6px;
+}
+
+.dist-target {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid #f1f4f9;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: background .12s;
+}
+
+.dist-target:last-child {
+    border-bottom: none;
+}
+
+.dist-target:hover {
+    background: #f7faff;
+}
+
+.dist-target.checked {
+    background: #edf4ff;
+}
+
+.dist-target-name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #2b3442;
+    font-weight: 600;
+}
+
+.dist-target-addr {
+    color: #7b8798;
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.dist-check {
+    display: inline-flex;
+    align-items: center;
+}
+
+.dist-empty {
+    padding: 18px 12px;
+    color: #9aa7bd;
+    font-size: 12px;
+    text-align: center;
+}
+
+.dist-error {
+    margin-top: 10px;
+    color: var(--err);
+    font-size: 12px;
+}
+
+.dist-run-head {
+    padding: 4px 0 12px;
+    border-bottom: 1px solid #eef1f6;
+}
+
+.dist-run-title {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #24292f;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.dist-run-title i {
+    color: var(--accent);
+}
+
+.dist-run-title i.dist-status-ok {
+    color: var(--ok);
+}
+
+.dist-run-title i.dist-status-warn {
+    color: var(--warn);
+}
+
+.dist-run-title i.dist-status-error {
+    color: var(--err);
+}
+
+.dist-run-sub {
+    margin: 5px 0 10px;
+    color: #7b8798;
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+.dist-run-sub code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #f2f5fa;
+    color: #4b5563;
+    font-family: Consolas, "Courier New", monospace;
+}
+
+.dist-run-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 8px;
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.dist-ok {
+    color: #16a34a;
+}
+
+.dist-bad {
+    color: var(--err);
+}
+
+.dist-run-list {
+    max-height: 360px;
+    overflow: auto;
+    margin-top: 8px;
+}
+
+.dist-run-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 2px;
+    border-bottom: 1px solid #f2f5f9;
+}
+
+.dist-run-item:last-child {
+    border-bottom: none;
+}
+
+.dist-dot {
+    flex: 0 0 8px;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: #cbd5e1;
+}
+
+.dist-dot.is-connecting {
+    background: #f59e0b;
+}
+
+.dist-dot.is-uploading {
+    background: var(--accent);
+}
+
+.dist-dot.is-done {
+    background: var(--ok);
+}
+
+.dist-dot.is-error {
+    background: var(--err);
+}
+
+.dist-dot.is-cancelled {
+    background: #94a3b8;
+}
+
+.dist-run-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.dist-run-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12.5px;
+}
+
+.dist-run-name {
+    color: #2b3442;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dist-run-addr {
+    overflow: hidden;
+    color: #8a96a6;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dist-run-pct {
+    color: #6b7280;
+    font-size: 11.5px;
+}
+
+.dist-run-detail {
+    margin-top: 3px;
+    overflow: hidden;
+    color: #8a96a6;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dist-run-detail.error {
+    color: var(--err);
+    white-space: normal;
+    word-break: break-all;
+}
+
+.dist-dialog .el-progress {
+    margin-top: 4px;
+}
+
+@media (max-width: 900px) {
+    .dist-target-addr,
+    .dist-target-list .el-tag {
+        display: none;
+    }
+
+    .dist-sub {
+        padding-left: 0;
+    }
+
+    .dist-label {
+        flex-basis: 52px;
+    }
+}
+
 .fname {
     cursor: pointer;
     margin-left: 4px;
@@ -1292,6 +1688,239 @@ body.resizing .term-host {
 .edit-area textarea {
     font-family: Consolas, "Courier New", monospace;
     font-size: 12.5px;
+}
+
+/* ---------- 在线编辑器（CodeMirror） ---------- */
+.edit-dialog {
+    max-width: 96vw;
+}
+
+.edit-dialog .el-dialog__title {
+    display: inline-block;
+    max-width: calc(100% - 40px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+
+.edit-dialog .el-dialog__body {
+    padding: 10px 18px 2px;
+}
+
+.edit-shell {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 320px;
+}
+
+.edit-toolbar {
+    padding: 7px 9px;
+    background: #f7f9fc;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 7px 7px 0 0;
+}
+
+.edit-find-row {
+    display: flex;
+    align-items: center;
+    min-height: 26px;
+}
+
+.edit-find-box {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.edit-find-input {
+    flex: 0 0 230px;
+    width: 230px;
+}
+
+.edit-replace-input {
+    flex: 0 0 330px;
+    width: 330px;
+}
+
+.edit-opt,
+.edit-icon-btn,
+.edit-tool-btn {
+    height: 26px;
+    padding: 0 7px;
+    border: 1px solid #d9dee7;
+    border-radius: 5px;
+    background: #fff;
+    color: #4b5563;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 24px;
+    cursor: pointer;
+    outline: none;
+    transition: background .12s, border-color .12s, color .12s;
+}
+
+.edit-opt {
+    min-width: 28px;
+    padding: 0 6px;
+    font-family: Consolas, "Courier New", monospace;
+    font-weight: 600;
+}
+
+.edit-opt-regex {
+    letter-spacing: .5px;
+}
+
+.edit-icon-btn {
+    width: 26px;
+    padding: 0;
+    color: #6b7280;
+}
+
+.edit-opt:hover,
+.edit-icon-btn:hover,
+.edit-tool-btn:hover {
+    border-color: #a9c3ff;
+    color: var(--accent);
+}
+
+.edit-opt.active,
+.edit-tool-btn.active {
+    background: #e8f0ff;
+    border-color: #9dbcff;
+    color: var(--accent);
+}
+
+.edit-find-count {
+    min-width: 62px;
+    padding: 0 3px;
+    color: var(--text-2);
+    font-size: 11.5px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.edit-find-count.invalid {
+    color: var(--err);
+}
+
+.edit-replace-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px dashed #e2e8f1;
+}
+
+.edit-replace-hint {
+    color: #9aa7bd;
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.edit-cm-host {
+    border: 1px solid var(--border);
+    border-radius: 0 0 7px 7px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.edit-cm-host .CodeMirror {
+    height: 56vh;
+    min-height: 300px;
+    color: #24292f;
+    background: #fff;
+    font-family: Consolas, "Cascadia Code", "JetBrains Mono", "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.edit-cm-host .CodeMirror-gutters {
+    background: #f7f9fc;
+    border-right: 1px solid #eef1f6;
+}
+
+.edit-cm-host .CodeMirror-linenumber {
+    color: #9aa7bd;
+}
+
+.edit-cm-host .CodeMirror-activeline-background {
+    background: #f3f7ff;
+}
+
+.edit-cm-host .CodeMirror-matchingbracket {
+    color: #1d4ed8 !important;
+    background: #e2ecff;
+    outline: 1px solid #b9d0ff;
+}
+
+.edit-cm-host .CodeMirror-selected {
+    background: #dce8ff;
+}
+
+.edit-cm-host .CodeMirror-focused .CodeMirror-selected {
+    background: #cfe0ff;
+}
+
+.cm-search-hit {
+    background: rgba(255, 196, 0, .30);
+    border-radius: 2px;
+}
+
+.cm-search-hit-current {
+    background: rgba(255, 145, 0, .55);
+    outline: 1px solid rgba(230, 110, 0, .65);
+}
+
+.cm-keyword-hit {
+    background: rgba(61, 126, 255, .14);
+    border-bottom: 1px solid rgba(61, 126, 255, .38);
+}
+
+.edit-statusbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 28px;
+    padding: 4px 4px 2px;
+    color: var(--text-2);
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.edit-statusbar .edit-dirty {
+    color: #c2740a;
+    font-weight: 600;
+}
+
+.edit-kbd-hint {
+    color: #9aa7bd;
+}
+
+@media (max-width: 900px) {
+    .edit-find-input {
+        flex-basis: 170px;
+        width: 170px;
+    }
+
+    .edit-replace-input {
+        flex-basis: 200px;
+        width: 200px;
+    }
+
+    .edit-replace-hint,
+    .edit-kbd-hint {
+        display: none;
+    }
+
+    .edit-cm-host .CodeMirror {
+        height: 50vh;
+    }
 }
 
 /* ---------- 顶栏监控 ---------- */

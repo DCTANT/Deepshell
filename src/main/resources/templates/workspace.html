@@ -5,6 +5,7 @@
     <title>DeepShell · 工作台</title>
     <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
     <link rel="stylesheet" th:href="@{/vendor/xterm/xterm.css}">
+    <link rel="stylesheet" th:href="@{/vendor/codemirror/codemirror.min.css}">
     <link rel="stylesheet" th:href="@{/css/app.css}">
     <link rel="stylesheet" th:href="@{/css/taskmgr.css}">
 </head>
@@ -138,6 +139,9 @@
                             </el-upload>
                             <el-button size="mini" icon="el-icon-folder-opened"
                                        title="上传文件夹（保留目录结构）" @click="triggerFolderUpload"></el-button>
+                            <el-button size="mini" icon="el-icon-s-promotion"
+                                       title="批量分发文件到多台服务器的同一目录"
+                                       @click="openDistributeDialog"></el-button>
                             <input ref="folderInput" type="file" webkitdirectory multiple
                                    style="display: none" @change="onFolderInput">
                             <el-button size="mini" icon="el-icon-refresh" title="刷新当前目录"
@@ -3292,8 +3296,10 @@
                 <div class="help-title"><i class="el-icon-folder-opened"></i>文件 SFTP（右侧面板）</div>
                 <ul>
                     <li>双击目录进入 / 双击文件在线编辑；点击列头排序（名称 / 大小 / 修改时间）</li>
+                    <li>在线编辑使用 <b>CodeMirror</b>：行号、语法高亮、区分大小写 / 全词 / 正则查找、替换与全部替换、匹配项高亮、双击选中词高亮；快捷键 Ctrl+F 查找、Ctrl+H 替换、Ctrl+S 保存。终端工作台的 SFTP 面板与 AI 可视化桌面共用同一编辑器</li>
                     <li><b>拖动文件名到文件夹</b>即可移动（拖到表格边缘自动滚动找目标，移动前弹确认框）</li>
-                    <li>VSCode 图标：下载到本机用 VSCode 打开，<b>保存后自动同步回服务器</b></li>
+                    <li>VSCode 图标：下载到本机用 VSCode 打开，<b>保存后自动同步回服务器</b>（含 VSCode 原子保存，失败会自动重试）</li>
+                    <li><b>批量分发</b>：工具栏纸飞机图标打开；选择本地多个文件、目标目录与多台已保存连接，服务端并行上传到每台服务器的同一路径；已打开的会话直接复用，未连接的自动建立临时 SFTP 连接；可查看逐台进度、取消与重试失败项</li>
                     <li>工具栏：返回上一目录 / 上级目录 / 新建文件夹 / 新建文件（创建后直接打开编辑）/ 上传 / 刷新当前目录 / <b>分析磁盘占用</b> / <b>目录跟随开</b></li>
                     <li><b>目录跟随</b>（默认开启）：终端里 <code>cd</code> 到某个目录后，文件面板自动切换到该目录；手动浏览不受影响，直到下次 cd；点工具栏链接图标可开关</li>
                     <li><b>把系统里的文件直接拖进浏览器窗口</b>即可上传到当前目录（拖入时会显示目标目录提示，成功后顶部弹出提示）</li>
@@ -3357,12 +3363,225 @@
         </div>
     </el-dialog>
 
-    <el-dialog :title="'编辑远程文件 · ' + editForm.path" :visible.sync="editVisible" width="780px" top="4vh">
-        <el-input type="textarea" v-model="editForm.content" :rows="25" class="edit-area"
-                  v-loading="editForm.loading"></el-input>
+    <el-dialog :title="'编辑远程文件 · ' + editForm.path" :visible.sync="editVisible"
+               width="1040px" top="3vh" custom-class="edit-dialog"
+               :close-on-click-modal="false" :before-close="beforeEditClose"
+               destroy-on-close @opened="onEditOpened" @closed="onEditClosed">
+        <div class="edit-shell" v-loading="editForm.loading" element-loading-text="正在读取远程文件…">
+            <div class="edit-toolbar">
+                <div class="edit-find-row">
+                    <div class="edit-find-box">
+                        <el-input ref="editFindInput" size="mini" v-model="editor.find.text"
+                                  class="edit-find-input" placeholder="查找"
+                                  @input="scheduleEditorSearch(true)" @keydown.native="onEditFindKey">
+                            <i slot="prefix" class="el-icon-search"></i>
+                        </el-input>
+                        <button type="button" class="edit-opt" :class="{ active: editor.find.caseSensitive }"
+                                title="区分大小写（Alt+C）" @click="toggleEditFindOption('caseSensitive')">Aa</button>
+                        <button type="button" class="edit-opt" :class="{ active: editor.find.wholeWord }"
+                                title="全词匹配（Alt+W）" @click="toggleEditFindOption('wholeWord')">全词</button>
+                        <button type="button" class="edit-opt edit-opt-regex" :class="{ active: editor.find.regex }"
+                                title="正则表达式（Alt+R）" @click="toggleEditFindOption('regex')">.*</button>
+                        <span class="edit-find-count" :class="{ invalid: editor.find.invalid }">{{ editor.find.countText }}</span>
+                        <button type="button" class="edit-icon-btn" title="上一个匹配（Shift+F3）"
+                                @click="editorFindPrev"><i class="el-icon-arrow-up"></i></button>
+                        <button type="button" class="edit-icon-btn" title="下一个匹配（F3 / Enter）"
+                                @click="editorFindNext"><i class="el-icon-arrow-down"></i></button>
+                        <button type="button" class="edit-tool-btn" :class="{ active: editor.find.replaceOpen }"
+                                title="替换（Ctrl+H）" @click="toggleEditReplace">替换</button>
+                    </div>
+                    <span class="spacer"></span>
+                    <button type="button" class="edit-tool-btn" :class="{ active: editor.wrap }"
+                            title="自动换行" @click="toggleEditWrap">自动换行</button>
+                </div>
+                <div class="edit-replace-row" v-show="editor.find.replaceOpen">
+                    <el-input ref="editReplaceInput" size="mini" v-model="editor.find.replace"
+                              class="edit-replace-input" placeholder="替换为"
+                              @keydown.native="onEditReplaceKey">
+                        <i slot="prefix" class="el-icon-refresh"></i>
+                    </el-input>
+                    <el-button size="mini" :disabled="!editor.find.total" @click="editorReplaceOne">替换</el-button>
+                    <el-button size="mini" :disabled="!editor.find.total" @click="editorReplaceAll">全部替换</el-button>
+                    <span class="edit-replace-hint">Ctrl+Enter 全部替换 · 正则模式支持 $1 / $&amp; 分组</span>
+                </div>
+            </div>
+            <div ref="editorHost" class="edit-cm-host"></div>
+            <div class="edit-statusbar">
+                <span v-if="editor.dirty" class="edit-dirty"><i class="el-icon-edit"></i> 未保存</span>
+                <span>行 {{ editor.cursor.line }}，列 {{ editor.cursor.col }}</span>
+                <span>{{ editor.lineCount }} 行</span>
+                <span>{{ editor.modeLabel }}</span>
+                <span>UTF-8</span>
+                <span class="spacer"></span>
+                <span class="edit-kbd-hint">Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+S 保存 · 双击选中词高亮</span>
+            </div>
+        </div>
         <div slot="footer">
-            <el-button size="small" @click="editVisible = false">取消</el-button>
-            <el-button size="small" type="primary" :loading="editForm.saving" @click="saveEdit">保存到远程</el-button>
+            <el-button size="small" @click="cancelEdit">取消</el-button>
+            <el-button size="small" type="primary" :loading="editForm.saving"
+                       :disabled="editForm.loading" @click="saveEdit">保存到远程 (Ctrl+S)</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- SFTP 批量分发：本地文件 -> 多台服务器同一目录 -->
+    <el-dialog title="批量分发文件到多台服务器" :visible.sync="distribute.visible"
+               width="840px" top="4vh" custom-class="dist-dialog"
+               :close-on-click-modal="false" :before-close="beforeDistributeClose"
+               destroy-on-close @closed="onDistributeClosed">
+        <div class="dist-shell" v-if="distribute.phase === 'edit'"
+             @dragover.prevent @drop.prevent="onDistributeDrop">
+            <div class="dist-hint">
+                <i class="el-icon-info"></i>
+                选择本地文件，同时上传到多台服务器的同一目录；同名文件会被覆盖。
+            </div>
+            <div class="dist-section">
+                <div class="dist-section-head">
+                    <span class="dist-section-title">本地文件</span>
+                    <span class="dist-count" v-if="distribute.files.length">
+                        {{ distribute.files.length }} 个 · {{ fmtSize(distributeFileBytes) }}
+                    </span>
+                    <span class="spacer"></span>
+                    <el-button v-if="distribute.files.length" size="mini" type="text"
+                               @click="clearDistributeFiles">清空</el-button>
+                </div>
+                <div class="dist-drop" :class="{ over: distribute.dragOver }"
+                     @click="pickDistributeFiles"
+                     @dragover.prevent.stop="distribute.dragOver = true"
+                     @dragleave.prevent="distribute.dragOver = false"
+                     @drop.prevent.stop="onDistributeDrop">
+                    <i class="el-icon-upload"></i>
+                    <span>点击选择文件，或拖入浏览器窗口</span>
+                    <span class="dist-drop-hint">支持多选，文件名和扩展名保持不变</span>
+                </div>
+                <input ref="distFileInput" type="file" multiple style="display: none"
+                       @change="onDistributeFilesPick">
+                <div class="dist-file-list" v-if="distribute.files.length">
+                    <div class="dist-file" v-for="(f, i) in distribute.files" :key="f.uid">
+                        <i class="el-icon-document"></i>
+                        <span class="dist-file-name" :title="f.name">{{ f.name }}</span>
+                        <span class="dist-file-size">{{ fmtSize(f.size) }}</span>
+                        <i class="el-icon-close" title="移除" @click.stop="removeDistributeFile(i)"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="dist-section">
+                <div class="dist-row">
+                    <span class="dist-label">目标目录</span>
+                    <el-input v-model="distribute.targetPath" size="small" class="dist-path-input"
+                              placeholder="/opt/app" @keyup.enter.native="startDistribute">
+                        <i slot="prefix" class="el-icon-folder-opened"></i>
+                    </el-input>
+                </div>
+                <div class="dist-sub">所有服务器使用同一绝对路径；目录不存在时自动逐级创建。</div>
+            </div>
+            <div class="dist-section">
+                <div class="dist-section-head">
+                    <span class="dist-section-title">目标服务器</span>
+                    <span class="dist-count">已选 {{ distribute.ids.length }} / {{ connections.length }}</span>
+                    <span class="spacer"></span>
+                    <el-button size="mini" type="text" @click="selectAllDistributeTargets">全选</el-button>
+                    <el-button size="mini" type="text" :disabled="!distribute.ids.length"
+                               @click="clearDistributeTargets">清空</el-button>
+                </div>
+                <el-input v-model="distribute.keyword" size="mini" class="dist-search"
+                          prefix-icon="el-icon-search" clearable
+                          placeholder="搜索名称 / 主机 / 用户名"></el-input>
+                <div class="dist-target-list">
+                    <div v-for="c in distributeTargets" :key="c.id" class="dist-target"
+                         :class="{ checked: distribute.ids.indexOf(c.id) >= 0 }"
+                         @click="toggleDistributeTarget(c.id)">
+                        <span class="dist-check" @click.stop>
+                            <el-checkbox :value="distribute.ids.indexOf(c.id) >= 0"
+                                         @change="toggleDistributeTarget(c.id)"></el-checkbox>
+                        </span>
+                        <span class="dist-target-name">{{ c.name }}</span>
+                        <span class="dist-target-addr">{{ c.username }}@{{ c.host }}:{{ c.port }}</span>
+                        <span class="spacer"></span>
+                        <el-tag v-if="connectionIsOpen(c.id)" size="mini" type="success" effect="plain">已连接</el-tag>
+                        <el-tag v-if="c.groupName" size="mini" type="info" effect="plain">{{ c.groupName }}</el-tag>
+                    </div>
+                    <div v-if="!distributeTargets.length" class="dist-empty">
+                        {{ connections.length ? '没有匹配的连接' : '暂无已保存的连接' }}
+                    </div>
+                </div>
+                <div class="dist-sub">已打开的会话会直接复用，未连接的服务器会自动建立临时 SFTP 连接。</div>
+            </div>
+            <div class="dist-error" v-if="distribute.error">{{ distribute.error }}</div>
+        </div>
+        <div class="dist-shell" v-else @dragover.prevent @drop.prevent>
+            <div class="dist-run-head">
+                <div class="dist-run-title">
+                    <i :class="[distributeStatusIcon, distributeStatusClass]"></i>
+                    {{ distributeStatusText }}
+                </div>
+                <template v-if="distribute.task">
+                    <div class="dist-run-sub">
+                        目标目录 <code>{{ distribute.task.targetPath }}</code> ·
+                        {{ distribute.task.files.length }} 个文件 ·
+                        {{ distribute.task.totalTargets }} 台服务器
+                    </div>
+                    <el-progress :percentage="distributeOverallPct"
+                                 :status="distributeOverallStatus" :stroke-width="8"
+                                 :show-text="false"></el-progress>
+                    <div class="dist-run-stats">
+                        <span><b class="dist-ok">{{ distribute.task.doneTargets }}</b> 成功</span>
+                        <span v-if="distribute.task.failedTargets">
+                            <b class="dist-bad">{{ distribute.task.failedTargets }}</b> 失败
+                        </span>
+                        <span v-if="distribute.task.cancelledTargets">
+                            已取消 {{ distribute.task.cancelledTargets }}
+                        </span>
+                        <span>{{ fmtSize(distribute.task.doneBytes) }} / {{ fmtSize(distribute.task.totalBytes) }}</span>
+                        <span v-if="distribute.speed > 0">{{ fmtRate(distribute.speed) }}</span>
+                    </div>
+                </template>
+                <template v-else>
+                    <div class="dist-run-sub">正在把文件上传到应用服务器并准备分发…</div>
+                    <el-progress :percentage="distribute.preparePct" :stroke-width="8"
+                                 :show-text="false"></el-progress>
+                </template>
+            </div>
+            <div class="dist-run-list" v-if="distribute.task && distribute.task.targets.length">
+                <div v-for="t in distribute.task.targets" :key="t.connectionId" class="dist-run-item">
+                    <span class="dist-dot" :class="'is-' + t.status"></span>
+                    <div class="dist-run-main">
+                        <div class="dist-run-line">
+                            <span class="dist-run-name">{{ t.name }}</span>
+                            <span class="dist-run-addr">{{ t.username }}@{{ t.host }}:{{ t.port }}</span>
+                            <span class="spacer"></span>
+                            <span class="dist-run-pct">{{ distributeTargetPct(t) }}%</span>
+                        </div>
+                        <el-progress :percentage="distributeTargetPct(t)"
+                                     :status="distributeTargetStatus(t)" :stroke-width="5"
+                                     :show-text="false"></el-progress>
+                        <div class="dist-run-detail" :class="{ error: t.status === 'error' }">
+                            {{ distributeTargetDetail(t) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="dist-error" v-if="distribute.error">{{ distribute.error }}</div>
+        </div>
+        <div slot="footer">
+            <template v-if="distribute.phase === 'edit'">
+                <el-button size="small" @click="distribute.visible = false">取消</el-button>
+                <el-button size="small" type="primary" :loading="distribute.starting"
+                           :disabled="!canDistribute" @click="startDistribute">
+                    开始分发<template v-if="distribute.ids.length">（{{ distribute.ids.length }} 台）</template>
+                </el-button>
+            </template>
+            <template v-else>
+                <el-button v-if="distribute.starting" size="small" disabled>正在准备…</el-button>
+                <el-button v-else-if="distribute.task && distribute.task.status === 'running'"
+                           size="small" :loading="distribute.cancelling"
+                           @click="cancelDistribute">取消分发</el-button>
+                <el-button v-if="!distribute.starting && distribute.task && distribute.task.status !== 'running'
+                                  && distribute.task.failedTargets"
+                           size="small" @click="retryDistribute">重试失败项</el-button>
+                <el-button v-if="!distribute.starting
+                                  && !(distribute.task && distribute.task.status === 'running')"
+                           size="small" type="primary" @click="closeDistribute">关闭</el-button>
+            </template>
         </div>
     </el-dialog>
 
@@ -3931,6 +4150,7 @@
 <script th:src="@{/vendor/xterm/xterm.js}"></script>
 <script th:src="@{/vendor/xterm-addon-fit/xterm-addon-fit.js}"></script>
 <script th:src="@{/vendor/xterm-addon-search/xterm-addon-search.js}"></script>
+<script th:src="@{/vendor/codemirror/codemirror.min.js}"></script>
 <script th:src="@{/js/conn-form.js}"></script>
 <script th:src="@{/js/workspace.js}"></script>
 </body>
