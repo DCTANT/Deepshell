@@ -1429,6 +1429,18 @@ Vue.component('term-cmd-bar', {
     }
 });
 
+Vue.component('editor-menu-bar', {
+    template: '#editor-menu-bar-tpl',
+    props: {
+        state: { type: Object, default: function () { return {}; } }
+    },
+    methods: {
+        emitCommand: function (cmd) {
+            this.$emit('command', cmd);
+        }
+    }
+});
+
 /* AI 桌面文本编辑器应用：多标签、新建 / 打开 / 保存 / 另存为 */
 Vue.component('desktop-text-editor', {
     props: {
@@ -1448,6 +1460,9 @@ Vue.component('desktop-text-editor', {
                 replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
             },
             wrap: false,
+            lineNumbers: true,
+            activeLine: true,
+            fontSize: 13,
             opening: false,
             saving: false,
             picker: {
@@ -1492,6 +1507,14 @@ Vue.component('desktop-text-editor', {
             }
             return this.validName(this.picker.name)
                 && this.normalizeDir(this.picker.dir).charAt(0) === '/';
+        },
+        menuState: function () {
+            return {
+                wrap: this.wrap,
+                lineNumbers: this.lineNumbers,
+                activeLine: this.activeLine,
+                fontSize: this.fontSize
+            };
         }
     },
     watch: {
@@ -1548,9 +1571,9 @@ Vue.component('desktop-text-editor', {
             var cm = CodeMirror(host, {
                 value: '',
                 mode: null,
-                lineNumbers: true,
+                lineNumbers: this.lineNumbers,
                 lineWrapping: this.wrap,
-                styleActiveLine: true,
+                styleActiveLine: this.activeLine,
                 matchBrackets: true,
                 autoCloseBrackets: true,
                 indentUnit: 4,
@@ -1571,6 +1594,9 @@ Vue.component('desktop-text-editor', {
                     'Ctrl-F': function () { self.openFind(false); },
                     'Cmd-F': function () { self.openFind(false); },
                     'Ctrl-H': function () { self.openFind(true); },
+                    'Ctrl-G': function () { self.gotoLine(); },
+                    'Cmd-G': function () { self.gotoLine(); },
+                    'Alt-Z': function () { self.toggleWrap(); },
                     'F3': function () { self.findNext(); },
                     'Shift-F3': function () { self.findPrev(); },
                     'Alt-C': function () { self.toggleOption('caseSensitive'); },
@@ -1581,6 +1607,7 @@ Vue.component('desktop-text-editor', {
                 }
             });
             this._cm = cm;
+            cm.getWrapperElement().style.fontSize = this.fontSize + 'px';
             this._docMap = {};
             this._docSeq = 0;
             this._untitledSeq = 0;
@@ -1824,14 +1851,14 @@ Vue.component('desktop-text-editor', {
             this.setWinState();
         },
         setWinState: function () {
-            if (!this.win) {
-                return;
-            }
             var doc = this.activeDoc;
-            this.win.editorDirty = this.docsDirty;
-            this.win.editorTitle = doc ? doc.title : '文本编辑器';
-            this.win.editorSubtitle = doc ? (doc.path || '未命名') : '未命名';
-            this.win.editorPath = doc && doc.path ? doc.path : '';
+            if (this.win) {
+                this.win.editorDirty = this.docsDirty;
+                this.win.editorTitle = doc ? doc.title : '文本编辑器';
+                this.win.editorSubtitle = doc ? (doc.path || '未命名') : '未命名';
+                this.win.editorPath = doc && doc.path ? doc.path : '';
+            }
+            this.$emit('title-change', doc ? doc.title : '');
         },
         /* ---------- 打开 / 保存 / 另存为 ---------- */
         openPicker: function (mode, keepCloseAfter) {
@@ -2177,8 +2204,241 @@ Vue.component('desktop-text-editor', {
             }
             return { mode: null, label: '纯文本' };
         },
+        /* ---------- 菜单命令与编辑操作 ---------- */
+        hasDirtyDocs: function () {
+            return this.docsDirty;
+        },
+        onMenuCommand: function (cmd) {
+            var cm = this._cm;
+            if (cmd === 'file.new') {
+                this.newDoc();
+            } else if (cmd === 'file.open') {
+                this.openPicker('open');
+            } else if (cmd === 'file.save') {
+                this.save();
+            } else if (cmd === 'file.saveAs') {
+                this.saveAs();
+            } else if (cmd === 'file.close') {
+                if (this.activeDoc) {
+                    this.closeDoc(this.activeDoc);
+                }
+            } else if (cmd === 'edit.undo') {
+                if (cm) { cm.undo(); cm.focus(); }
+            } else if (cmd === 'edit.redo') {
+                if (cm) { cm.redo(); cm.focus(); }
+            } else if (cmd === 'edit.cut') {
+                this.cutSelection();
+            } else if (cmd === 'edit.copy') {
+                this.copySelection();
+            } else if (cmd === 'edit.paste') {
+                this.pasteClipboard();
+            } else if (cmd === 'edit.delete') {
+                this.deleteSelection();
+            } else if (cmd === 'edit.find') {
+                this.openFind(false);
+            } else if (cmd === 'edit.replace') {
+                this.openFind(true);
+            } else if (cmd === 'edit.gotoLine') {
+                this.gotoLine();
+            } else if (cmd === 'select.all') {
+                if (cm) { cm.execCommand('selectAll'); cm.focus(); }
+            } else if (cmd === 'select.line') {
+                this.selectCurrentLine();
+            } else if (cmd === 'select.none') {
+                this.clearSelection();
+            } else if (cmd === 'view.wrap') {
+                this.toggleWrap();
+            } else if (cmd === 'view.lineNumbers') {
+                this.toggleLineNumbers();
+            } else if (cmd === 'view.activeLine') {
+                this.toggleActiveLine();
+            } else if (cmd === 'view.zoomIn') {
+                this.setFontSize(this.fontSize + 1);
+            } else if (cmd === 'view.zoomOut') {
+                this.setFontSize(this.fontSize - 1);
+            } else if (cmd === 'view.zoomReset') {
+                this.setFontSize(13);
+            } else if (cmd === 'help.shortcuts') {
+                this.showShortcuts();
+            } else if (cmd === 'help.about') {
+                this.showAbout();
+            }
+        },
+        gotoLine: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            this.$prompt('输入要跳转的行号（1 - ' + cm.lineCount() + '）', '转到行', {
+                inputPattern: /^\d+$/,
+                inputErrorMessage: '请输入数字',
+                inputValue: String(this.cursor.line)
+            }).then(function (res) {
+                var n = parseInt(res.value, 10);
+                n = Math.max(1, Math.min(cm.lineCount(), n));
+                cm.setCursor({ line: n - 1, ch: 0 });
+                cm.scrollIntoView({ line: n - 1, ch: 0 }, 80);
+                cm.focus();
+            }).catch(function () { /* 取消 */ });
+        },
+        copySelection: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            var sel = cm.getSelection();
+            if (!sel) {
+                ELEMENT.Message.info('没有选中内容');
+                return;
+            }
+            var self = this;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(sel).then(function () {
+                    ELEMENT.Message.success('已复制');
+                }).catch(function () {
+                    self.copyFallback();
+                });
+            } else {
+                this.copyFallback();
+            }
+        },
+        copyFallback: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            cm.focus();
+            try {
+                document.execCommand('copy');
+                ELEMENT.Message.success('已复制');
+            } catch (e) {
+                ELEMENT.Message.warning('复制失败，请使用 Ctrl+C');
+            }
+        },
+        cutSelection: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            var sel = cm.getSelection();
+            if (!sel) {
+                ELEMENT.Message.info('没有选中内容');
+                return;
+            }
+            var remove = function () {
+                cm.replaceSelection('');
+                cm.focus();
+                ELEMENT.Message.success('已剪切');
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(sel).then(remove).catch(function () {
+                    cm.focus();
+                    try {
+                        document.execCommand('copy');
+                        remove();
+                    } catch (e) {
+                        // ignore
+                    }
+                });
+            } else {
+                cm.focus();
+                try {
+                    document.execCommand('copy');
+                    remove();
+                } catch (e) {
+                    // ignore
+                }
+            }
+        },
+        pasteClipboard: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(function (text) {
+                    if (text) {
+                        cm.replaceSelection(text);
+                    }
+                    cm.focus();
+                }).catch(function () {
+                    ELEMENT.Message.warning('浏览器未授权读取剪贴板，请使用 Ctrl+V');
+                });
+            } else {
+                ELEMENT.Message.warning('当前浏览器不支持读取剪贴板，请使用 Ctrl+V');
+            }
+        },
+        deleteSelection: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            if (cm.somethingSelected()) {
+                cm.replaceSelection('');
+            } else {
+                cm.execCommand('delCharAfter');
+            }
+            cm.focus();
+        },
+        selectCurrentLine: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            var c = cm.getCursor();
+            cm.setSelection({ line: c.line, ch: 0 }, { line: c.line, ch: cm.getLine(c.line).length });
+            cm.focus();
+        },
+        clearSelection: function () {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            cm.setCursor(cm.getCursor('head'));
+            cm.focus();
+        },
+        toggleLineNumbers: function () {
+            this.lineNumbers = !this.lineNumbers;
+            if (this._cm) {
+                this._cm.setOption('lineNumbers', this.lineNumbers);
+                this._cm.focus();
+            }
+        },
+        toggleActiveLine: function () {
+            this.activeLine = !this.activeLine;
+            if (this._cm) {
+                this._cm.setOption('styleActiveLine', this.activeLine);
+                this._cm.focus();
+            }
+        },
+        setFontSize: function (size) {
+            this.fontSize = Math.max(10, Math.min(24, size));
+            if (this._cm) {
+                this._cm.getWrapperElement().style.fontSize = this.fontSize + 'px';
+                this._cm.refresh();
+            }
+        },
+        showShortcuts: function () {
+            this.$alert('<div style="line-height:1.9;font-size:13px;color:#4b5563">'
+                + '<b>文件</b><br>Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为<br>'
+                + '<b>编辑</b><br>Ctrl+Z 撤销 · Ctrl+Y 重做 · Ctrl+X / C / V 剪切 / 复制 / 粘贴<br>'
+                + 'Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+G 转到行<br>'
+                + '<b>选择</b><br>Ctrl+A 全选<br>'
+                + '<b>视图</b><br>Alt+Z 自动换行</div>', '快捷键', {
+                dangerouslyUseHTMLString: true,
+                confirmButtonText: '知道了'
+            });
+        },
+        showAbout: function () {
+            this.$alert('DeepShell 文本编辑器<br>基于 CodeMirror 5.65.16 · 支持多标签、远程文件、查找替换与语法高亮',
+                '关于编辑器', {
+                    dangerouslyUseHTMLString: true,
+                    confirmButtonText: '知道了'
+                });
+        },
         /* ---------- 查找 / 替换 ---------- */
         focusFind: function () {
+
             var ref = this.$refs.editFindInput;
             var el = ref && ref.$el ? ref.$el.querySelector('input') : null;
             if (el) {
@@ -2254,12 +2514,17 @@ Vue.component('desktop-text-editor', {
             }
         },
         onEditorKey: function (e) {
+            if (e.altKey && (e.key || '').toLowerCase() === 'z') {
+                e.preventDefault();
+                this.toggleWrap();
+                return;
+            }
             var mod = e.ctrlKey || e.metaKey;
             if (!mod) {
                 return;
             }
             var key = (e.key || '').toLowerCase();
-            if (['n', 'o', 's', 'f', 'h'].indexOf(key) < 0) {
+            if (['n', 'o', 's', 'f', 'h', 'g'].indexOf(key) < 0) {
                 return;
             }
             if (this._cm && this._cm.hasFocus()) {
@@ -2278,6 +2543,8 @@ Vue.component('desktop-text-editor', {
                 this.openFind(false);
             } else if (key === 'h') {
                 this.openFind(true);
+            } else if (key === 'g') {
+                this.gotoLine();
             }
         },
         toggleReplace: function () {
@@ -2736,6 +3003,10 @@ new Vue({
         connMenuKey: null,
         editVisible: false,
         editForm: { path: '', content: '', loading: false, saving: false, sessionId: '', tabKey: '' },
+        editTab: null,
+        editPendingPath: '',
+        editPendingSeq: 0,
+        editDialogTitle: '',
         distribute: {
             visible: false,
             phase: 'edit',
@@ -8730,12 +9001,49 @@ new Vue({
                 return;
             }
             this.desktop.iconDragKey = item.key;
-            this.desktop.iconSelected = item.key;
-            this.desktop.iconSelectedKeys = [item.key];
+            if (this.desktop.iconSelectedKeys.indexOf(item.key) < 0) {
+                this.desktop.iconSelectedKeys = [item.key];
+                this.desktop.iconSelected = item.key;
+            } else {
+                this.desktop.iconSelected = item.key;
+            }
+            this.desktop.focusSurface = true;
+            this._deskFileDrag = null;
+            if (item.type !== 'app') {
+                var self = this;
+                var selected = this.desktopSelectedIconItems().filter(function (i) {
+                    return i.type !== 'app';
+                });
+                if (!selected.length) {
+                    selected = [item];
+                }
+                var paths = [];
+                var names = [];
+                selected.forEach(function (i) {
+                    if (!i.path) {
+                        return;
+                    }
+                    paths.push(i.path);
+                    names.push(i.entry ? i.entry.name : i.label);
+                });
+                if (paths.length) {
+                    this._deskFileDrag = {
+                        win: { type: 'surface', path: this.desktop.surface.dir, dragNames: [] },
+                        paths: paths,
+                        names: names,
+                        fromSurface: true
+                    };
+                }
+            }
             if (ev.dataTransfer) {
-                ev.dataTransfer.effectAllowed = 'move';
+                ev.dataTransfer.effectAllowed = 'copyMove';
                 try {
-                    ev.dataTransfer.setData('text/plain', item.key);
+                    ev.dataTransfer.setData('text/plain',
+                        (this._deskFileDrag && this._deskFileDrag.paths[0]) || item.key);
+                    if (this._deskFileDrag) {
+                        ev.dataTransfer.setData('application/x-deepshell-paths',
+                            JSON.stringify(this._deskFileDrag.paths));
+                    }
                 } catch (e) { /* ignore */ }
             }
         },
@@ -8771,6 +9079,14 @@ new Vue({
         onDesktopIconDragEnd: function () {
             this.desktop.iconDragKey = '';
             this.desktop.iconDropKey = '';
+            if (this._deskFileDrag && this._deskFileDrag.fromSurface) {
+                this._deskFileDrag = null;
+            }
+            this.desktop.windows.forEach(function (w) {
+                w.winDragOver = false;
+                w.fileDragOver = false;
+                w.dropTarget = '';
+            });
         },
         openDesktopIconMenu: function (ev, item) {
             if (!item) {
@@ -10911,6 +11227,15 @@ new Vue({
             if (drag.win === d && this.trimSlash(destDir) === this.trimSlash(d.path)) {
                 return;
             }
+            var self = this;
+            var sameParent = drag.paths.every(function (src) {
+                return self.trimSlash(src.substring(0, src.lastIndexOf('/')) || '/')
+                    === self.trimSlash(destDir);
+            });
+            if (sameParent) {
+                ELEMENT.Message.info('文件已在该目录中');
+                return;
+            }
             var invalid = drag.paths.some(function (src) {
                 return destDir === src || destDir.indexOf(src + '/') === 0;
             });
@@ -10924,7 +11249,8 @@ new Vue({
                 win: drag.win,
                 targetWin: d,
                 dest: destDir,
-                title: '复制或剪切文件'
+                title: '复制或剪切文件',
+                fromSurface: !!drag.fromSurface
             });
         },
         onDesktopSurfaceDragOver: function (ev, win) {
@@ -10982,6 +11308,15 @@ new Vue({
             if (drag.win === d || !d.path) {
                 return;
             }
+            var self = this;
+            var sameParent = drag.paths.every(function (src) {
+                return self.trimSlash(src.substring(0, src.lastIndexOf('/')) || '/')
+                    === self.trimSlash(d.path);
+            });
+            if (sameParent) {
+                ELEMENT.Message.info('文件已在该目录中');
+                return;
+            }
             var invalid = drag.paths.some(function (src) {
                 return d.path === src || d.path.indexOf(src + '/') === 0;
             });
@@ -10995,7 +11330,8 @@ new Vue({
                 win: drag.win,
                 targetWin: d,
                 dest: d.path,
-                title: '复制或剪切文件'
+                title: '复制或剪切文件',
+                fromSurface: !!drag.fromSurface
             });
         },
         onDesktopSurfaceDragLeave: function (ev, win) {
@@ -11049,6 +11385,15 @@ new Vue({
             if (drag.win === win || !win.path) {
                 return;
             }
+            var self = this;
+            var sameParent = drag.paths.every(function (src) {
+                return self.trimSlash(src.substring(0, src.lastIndexOf('/')) || '/')
+                    === self.trimSlash(win.path);
+            });
+            if (sameParent) {
+                ELEMENT.Message.info('文件已在该目录中');
+                return;
+            }
             var invalid = drag.paths.some(function (src) {
                 return win.path === src || win.path.indexOf(src + '/') === 0;
             });
@@ -11062,7 +11407,8 @@ new Vue({
                 win: drag.win,
                 targetWin: win,
                 dest: win.path,
-                title: '复制或剪切文件'
+                title: '复制或剪切文件',
+                fromSurface: !!drag.fromSurface
             });
         },
         /* ---------- 从资源管理器拖到桌面 ---------- */
@@ -11104,6 +11450,19 @@ new Vue({
                 ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
                 return;
             }
+            if (drag.fromSurface) {
+                // 从桌面拖回桌面本身：保持原状
+                return;
+            }
+            var self = this;
+            var sameParent = drag.paths.every(function (src) {
+                return self.trimSlash(src.substring(0, src.lastIndexOf('/')) || '/')
+                    === self.trimSlash(dest);
+            });
+            if (sameParent) {
+                ELEMENT.Message.info('文件已在该目录中');
+                return;
+            }
             this.openDesktopDropDialog({
                 paths: drag.paths.slice(),
                 names: drag.names.slice(),
@@ -11111,7 +11470,8 @@ new Vue({
                 targetWin: null,
                 dest: dest,
                 title: '放到桌面',
-                isDesktop: true
+                isDesktop: true,
+                fromSurface: !!drag.fromSurface
             });
         },
         openDesktopDropDialog: function (opts) {
@@ -11124,6 +11484,7 @@ new Vue({
                 dest: opts.dest || '',
                 title: opts.title || '复制或剪切文件',
                 isDesktop: !!opts.isDesktop,
+                fromSurface: !!opts.fromSurface,
                 busy: false
             };
         },
@@ -11149,7 +11510,7 @@ new Vue({
                         return self.desktopMoveTo(dd.paths.slice(), dd.dest, dd.win, dd.targetWin, true);
                     })
                     .then(function () {
-                        if (dd.isDesktop) {
+                        if (dd.isDesktop || dd.fromSurface) {
                             self.loadDesktopSurface();
                         }
                     })
@@ -14770,125 +15131,57 @@ new Vue({
             }
             this.openRemoteEdit(t, this.pathJoin(t.sftpPath, row.name));
         },
-        /* 通用：在线编辑任意远程文件（SFTP 面板与可视化桌面共用） */
+        /* 终端工作台的文本编辑器：仍用弹窗承载，内部复用桌面编辑器组件 */
         openRemoteEdit: function (t, path) {
             if (!t || !t.sessionId || !path) {
                 return;
             }
-            var self = this;
-            var seq = (this._editReqSeq || 0) + 1;
-            this._editReqSeq = seq;
-            this.resetEditorInstance();
-            this._editorOriginal = '';
-            this._editorLineSep = '\n';
-            this.editor.dirty = false;
-            this.editor.find = {
-                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
-                replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
-            };
-            this.editor.cursor = { line: 1, col: 1 };
-            this.editor.lineCount = 1;
-            this.editForm = {
-                path: path, content: '', loading: true, saving: false,
-                sessionId: t.sessionId, tabKey: t.key || ''
-            };
+            this.editTab = t;
+            this.editPendingPath = path;
+            this.editPendingSeq = (this.editPendingSeq || 0) + 1;
+            this.editDialogTitle = '';
             this.editVisible = true;
-            http.get('/api/sftp/read', { params: { sessionId: t.sessionId, path: path } }).then(function (content) {
-                if (seq !== self._editReqSeq) {
-                    return;
-                }
-                self.editForm.content = content || '';
-                self.editForm.loading = false;
-                self._editorLineSep = self.editForm.content.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
-                self.$nextTick(function () {
-                    if (seq === self._editReqSeq && self.editVisible) {
-                        self.initEditor();
-                    }
-                });
-            }).catch(function () {
-                if (seq !== self._editReqSeq) {
-                    return;
-                }
-                self.editForm.loading = false;
-                self.editVisible = false;
-            });
         },
-        saveEdit: function () {
-            var f = this.editForm;
-            if (!f || f.loading || f.saving) {
+        saveDialogEdit: function () {
+            var ed = this.$refs.terminalEditor;
+            if (ed) {
+                ed.save();
+            }
+        },
+        onDialogEditorSaved: function (payload) {
+            var path = payload && payload.path;
+            if (!path) {
                 return;
             }
-            var ownerTab = null;
-            if (f.tabKey) {
-                for (var i = 0; i < this.tabs.length; i++) {
-                    if (this.tabs[i].key === f.tabKey) {
-                        ownerTab = this.tabs[i];
-                        break;
-                    }
-                }
-            }
-            var sid = (ownerTab && ownerTab.sessionId) || f.sessionId
-                || (this.activeTab && this.activeTab.sessionId);
-            if (!sid) {
-                ELEMENT.Message.warning('会话未就绪，暂时无法保存');
+            var t = this.editTab || this.activeTab;
+            if (!t || !t.sessionId || !t.sftpPath) {
                 return;
             }
-            if (this._cm) {
-                f.content = this._cm.getValue(this._editorLineSep || '\n');
+            var dir = path.substring(0, path.lastIndexOf('/')) || '/';
+            var p = String(t.sftpPath).replace(/\/+$/, '') || '/';
+            if (p === dir) {
+                this.loadDir(t.sftpPath, t);
             }
-            var self = this;
-            f.saving = true;
-            http.post('/api/sftp/write', { sessionId: sid, path: f.path, content: f.content })
-                .then(function () {
-                    ELEMENT.Message.success('已保存到远程');
-                    self._editorOriginal = f.content;
-                    self.editor.dirty = false;
-                    self.editVisible = false;
-                    var t = ownerTab;
-                    if (!t) {
-                        for (var i = 0; i < self.tabs.length; i++) {
-                            if (self.tabs[i].sessionId === sid) {
-                                t = self.tabs[i];
-                                break;
-                            }
-                        }
-                    }
-                    if (t && t.sftpPath) {
-                        self.loadDir(t.sftpPath, t);
-                    }
-                    if (self.desktop.visible) {
-                        self.desktopRefresh();
-                    }
-                })
-                .catch(function () { /* 已提示 */ })
-                .then(function () {
-                    f.saving = false;
-                });
         },
         beforeEditClose: function (done) {
-            this.requestEditClose(done);
+            var ed = this.$refs.terminalEditor;
+            if (ed && ed.hasDirtyDocs && ed.hasDirtyDocs()) {
+                this.$confirm('有未保存的修改，关闭后将丢失。', '未保存的修改', {
+                    type: 'warning',
+                    confirmButtonText: '放弃修改',
+                    cancelButtonText: '继续编辑'
+                }).then(function () {
+                    done();
+                }).catch(function () { /* 继续编辑 */ });
+                return;
+            }
+            done();
         },
         cancelEdit: function () {
             var self = this;
-            this.requestEditClose(function () {
+            this.beforeEditClose(function () {
                 self.editVisible = false;
             });
-        },
-        requestEditClose: function (done) {
-            if (this.editForm.saving) {
-                return;
-            }
-            if (!this.editor.dirty) {
-                done();
-                return;
-            }
-            this.$confirm('当前修改尚未保存，关闭后将丢失。', '未保存的修改', {
-                type: 'warning',
-                confirmButtonText: '放弃修改',
-                cancelButtonText: '继续编辑'
-            }).then(function () {
-                done();
-            }).catch(function () { /* 继续编辑 */ });
         },
 
         /* ---------- 在线编辑器（CodeMirror） ---------- */
@@ -14902,22 +15195,11 @@ new Vue({
         },
         onEditClosed: function () {
             if (this.editVisible) {
-                return; // 关闭动画期间又打开了新文件：不要清空新编辑器
+                return;
             }
-            this.resetEditorInstance();
-            this._editorOriginal = '';
-            this._editorLineSep = '\n';
-            this.editor.dirty = false;
-            this.editor.find.replaceOpen = false;
-            this.editor.find.text = '';
-            this.editor.find.replace = '';
-            this.editor.find.total = 0;
-            this.editor.find.current = 0;
-            this.editor.find.countText = '';
-            this.editor.find.invalid = false;
-            this.editor.cursor = { line: 1, col: 1 };
-            this.editor.lineCount = 1;
-            this._editReqSeq = (this._editReqSeq || 0) + 1;
+            this.editTab = null;
+            this.editPendingPath = '';
+            this.editDialogTitle = '';
         },
         resetEditorInstance: function () {
             if (this._findTimer) {
@@ -16456,9 +16738,6 @@ new Vue({
         };
         ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart', 'touchmove'].forEach(function (evt) {
             window.addEventListener(evt, markUserActivity, { passive: true });
-        });
-        document.addEventListener('keydown', function (e) {
-            self.onEditorGlobalKey(e);
         });
         setInterval(function () {
             if (!self.authStatus.enabled || document.visibilityState === 'hidden') {
