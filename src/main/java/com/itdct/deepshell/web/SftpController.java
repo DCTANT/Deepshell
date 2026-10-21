@@ -97,14 +97,14 @@ public class SftpController {
 
     /** 复制/粘贴：把多个文件或文件夹复制到 destDir 目录下 */
     @PostMapping("/copy")
-    public R<Void> copy(@RequestBody CopyReq req) throws Exception {
+    public R<List<String>> copy(@RequestBody CopyReq req) throws Exception {
         if (req == null) {
             throw new IllegalArgumentException("请求参数缺失");
         }
-        sftp.copy(req.getSessionId(), req.getPaths(), req.getDestDir());
-        int count = req.getPaths() == null ? 0 : req.getPaths().size();
+        List<String> created = sftp.copy(req.getSessionId(), req.getPaths(), req.getDestDir());
+        int count = created == null ? 0 : created.size();
         audit.record("FILE_COPY", req.getDestDir(), "OK", "复制 " + count + " 项");
-        return R.ok();
+        return R.ok(created);
     }
 
     @PostMapping("/delete")

@@ -255,8 +255,8 @@ public class SftpService {
         return s;
     }
 
-    /** 复制文件或文件夹到目标目录（同名目标存在时按 Windows 习惯生成「- 副本」） */
-    public void copy(String sessionId, List<String> paths, String destDir) throws Exception {
+    /** 复制文件或文件夹到目标目录（同名目标存在时按 Windows 习惯生成「- 副本」），返回实际生成的名称 */
+    public List<String> copy(String sessionId, List<String> paths, String destDir) throws Exception {
         if (paths == null || paths.isEmpty()) {
             throw new IllegalArgumentException("没有要复制的文件");
         }
@@ -264,11 +264,12 @@ public class SftpService {
             throw new IllegalArgumentException("目标目录为空");
         }
         final String dest = trimTrailingSlash(destDir.trim());
-        withSftp(sessionId, c -> {
+        return withSftp(sessionId, c -> {
             SftpATTRS destAttrs = c.stat(dest);
             if (!destAttrs.isDir()) {
                 throw new IllegalArgumentException("目标不是目录");
             }
+            List<String> created = new ArrayList<>();
             for (String raw : paths) {
                 if (raw == null || raw.trim().isEmpty()) {
                     continue;
@@ -287,8 +288,9 @@ public class SftpService {
                     log.info("复制目标同名，自动重命名: {} -> {}", name, targetName);
                 }
                 copyRecursive(c, src, join(dest, targetName), 0);
+                created.add(targetName);
             }
-            return null;
+            return created;
         });
     }
 

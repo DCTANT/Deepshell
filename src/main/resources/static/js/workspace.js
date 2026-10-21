@@ -9295,6 +9295,7 @@ new Vue({
                 var ok = 0;
                 var fail = 0;
                 var failed = [];
+                var movedNames = [];
                 sources.forEach(function (src) {
                     chain = chain.then(function () {
                         return http.post('/api/sftp/move', {
@@ -9303,6 +9304,7 @@ new Vue({
                             destDir: dest
                         }).then(function () {
                             ok++;
+                            movedNames.push(src.substring(src.lastIndexOf('/') + 1));
                         }).catch(function () {
                             fail++;
                             failed.push(src);
@@ -9334,6 +9336,11 @@ new Vue({
                             self.desktopRefresh(w);
                         }
                     });
+                    if (d.type !== 'surface' && self.trimSlash(dest) === self.trimSlash(d.path)
+                            && movedNames.length) {
+                        d.pendingSelect = movedNames;
+                        d.pendingOpen = false;
+                    }
                     self.desktopRefresh(d);
                     if (dirs[self.desktop.surface.dir] || dest === self.desktop.surface.dir) {
                         self.refreshDesktopSurface();
@@ -9345,9 +9352,15 @@ new Vue({
                 sessionId: t.sessionId,
                 destDir: dest,
                 paths: sources
-            }).then(function () {
+            }).then(function (created) {
                 loading.close();
                 ELEMENT.Message.success('已粘贴 ' + sources.length + ' 项');
+                var pastedNames = Array.isArray(created) ? created.filter(function (n) { return !!n; }) : [];
+                if (pastedNames.length && d.type !== 'surface'
+                        && self.trimSlash(dest) === self.trimSlash(d.path)) {
+                    d.pendingSelect = pastedNames;
+                    d.pendingOpen = false;
+                }
                 self.desktopRefresh(d);
             }).catch(function () {
                 loading.close();
@@ -9790,22 +9803,22 @@ new Vue({
                 if (d.type === 'explorer') {
                     self.scheduleSaveDesktopWinLayouts();
                 }
-                var pendingName = d.pendingSelect;
+                var pendingSel = d.pendingSelect;
+                var pendingNames = Array.isArray(pendingSel)
+                    ? pendingSel.filter(function (n) { return !!n; })
+                    : (pendingSel ? [pendingSel] : []);
                 var pendingOpen = d.pendingOpen;
                 d.pendingSelect = '';
                 d.pendingOpen = false;
-                var pendingHit = null;
-                if (pendingName) {
-                    pendingHit = (list || []).find(function (r) { return r.name === pendingName; });
-                    if (pendingHit) {
-                        d.selected = [pendingName];
-                        d.lastSelected = pendingName;
-                    }
-                }
-                if (pendingHit) {
-                    self.scrollDesktopEntry(pendingName, d);
+                var pendingHits = pendingNames.length
+                    ? (list || []).filter(function (r) { return pendingNames.indexOf(r.name) >= 0; })
+                    : [];
+                if (pendingHits.length) {
+                    d.selected = pendingHits.map(function (r) { return r.name; });
+                    d.lastSelected = d.selected[d.selected.length - 1];
+                    self.scrollDesktopEntry(d.selected, d);
                     if (pendingOpen) {
-                        self.desktopOpenEntry(pendingHit, d);
+                        self.desktopOpenEntry(pendingHits[0], d);
                     }
                 } else {
                     self.$nextTick(function () {
@@ -10164,22 +10177,26 @@ new Vue({
                 m.win.marquee.visible = false;
             }
         },
-        scrollDesktopEntry: function (name, win) {
+        scrollDesktopEntry: function (names, win) {
             var self = this;
             var d = win || this.desk;
+            var wanted = Array.isArray(names) ? names : [names];
             this.$nextTick(function () {
                 var root = self.deskFilesEl(d);
                 if (!root) {
                     return;
                 }
                 var els = root.querySelectorAll('.dsk-item, .dsk-row');
+                var last = null;
                 for (var i = 0; i < els.length; i++) {
-                    if (els[i].getAttribute('data-name') === name) {
-                        try {
-                            els[i].scrollIntoView({ block: 'nearest' });
-                        } catch (e) { /* ignore */ }
-                        break;
+                    if (wanted.indexOf(els[i].getAttribute('data-name')) >= 0) {
+                        last = els[i];
                     }
+                }
+                if (last) {
+                    try {
+                        last.scrollIntoView({ block: 'nearest' });
+                    } catch (e) { /* ignore */ }
                 }
             });
         },
