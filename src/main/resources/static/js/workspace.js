@@ -179,7 +179,10 @@ function createDesktopWindow(id) {
         /* 桌面代码编辑器窗口 */
         editorPath: '',
         editorTitle: '',
+        editorSubtitle: '',
         editorDirty: false,
+        editorPendingPath: '',
+        editorPendingSeq: 0,
         path: '',
         pathInput: '',
         pathEditing: false,
@@ -1426,48 +1429,93 @@ Vue.component('term-cmd-bar', {
     }
 });
 
-/* AI 桌面内的代码编辑器：每个文件一个独立窗口实例 */
-Vue.component('desktop-code-editor', {
+/* AI 桌面文本编辑器应用：多标签、新建 / 打开 / 保存 / 另存为 */
+Vue.component('desktop-text-editor', {
     props: {
         tab: { type: Object, default: null },
-        path: { type: String, default: '' },
-        win: { type: Object, default: null }
+        win: { type: Object, default: null },
+        pendingPath: { type: String, default: '' },
+        pendingSeq: { type: Number, default: 0 }
     },
-    template: '#desktop-code-editor-tpl',
+    template: '#desktop-text-editor-tpl',
     data: function () {
         return {
-            loading: true,
-            saving: false,
-            error: '',
+            docs: [],
+            activeId: '',
+            cursor: { line: 1, col: 1 },
             find: {
                 text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
                 replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
             },
-            cursor: { line: 1, col: 1 },
-            lineCount: 1,
             wrap: false,
-            dirty: false,
-            modeLabel: '纯文本'
+            opening: false,
+            saving: false,
+            picker: {
+                visible: false, mode: 'open', dir: '/', entries: [], loading: false,
+                error: '', selected: null, name: ''
+            },
+            closeAsk: { visible: false, docId: '', title: '' }
         };
     },
-    mounted: function () {
-        this.loadFile();
-        var self = this;
-        if (typeof ResizeObserver !== 'undefined') {
-            this._resizeObserver = new ResizeObserver(function () {
-                clearTimeout(self._resizeTimer);
-                self._resizeTimer = setTimeout(function () {
-                    if (self._cm) {
-                        self._cm.refresh();
-                    }
-                }, 80);
+    computed: {
+        activeDoc: function () {
+            for (var i = 0; i < this.docs.length; i++) {
+                if (this.docs[i].id === this.activeId) {
+                    return this.docs[i];
+                }
+            }
+            return this.docs.length ? this.docs[0] : null;
+        },
+        docsDirty: function () {
+            return this.docs.some(function (d) {
+                return d.dirty;
             });
-            this._resizeObserver.observe(this.$el);
+        },
+        closeAskDoc: function () {
+            return this.findDoc(this.closeAsk.docId);
+        },
+        closeAskTitle: function () {
+            var d = this.closeAskDoc;
+            return d ? d.title : '';
+        },
+        pickerFullPath: function () {
+            if (this.picker.mode === 'save') {
+                var name = String(this.picker.name || '').trim();
+                return name ? this.joinPath(this.picker.dir, name) : this.picker.dir;
+            }
+            var sel = this.picker.selected;
+            return sel ? this.joinPath(this.picker.dir, sel.name) : this.picker.dir;
+        },
+        pickerCanConfirm: function () {
+            if (this.picker.mode === 'open') {
+                return !!(this.picker.selected && !this.picker.selected.dir);
+            }
+            return this.validName(this.picker.name)
+                && this.normalizeDir(this.picker.dir).charAt(0) === '/';
         }
+    },
+    watch: {
+        pendingSeq: function () {
+            if (this.pendingPath) {
+                this.openPath(this.pendingPath);
+            }
+        }
+    },
+    mounted: function () {
+        this.initEditor();
+        this.setupResize();
+        var self = this;
+        this.$nextTick(function () {
+            if (self.pendingPath) {
+                self.openPath(self.pendingPath);
+            } else {
+                self.createUntitled();
+            }
+        });
     },
     beforeDestroy: function () {
         this._destroyed = true;
-        this._reqSeq = (this._reqSeq || 0) + 1;
+        this._pickerSeq = (this._pickerSeq || 0) + 1;
         if (this._findTimer) {
             clearTimeout(this._findTimer);
             this._findTimer = null;
@@ -1482,92 +1530,24 @@ Vue.component('desktop-code-editor', {
         }
         this.clearMarks();
         this._cm = null;
+        this._docMap = {};
     },
     methods: {
+        /* ---------- 初始化与文档管理 ---------- */
         sessionId: function () {
             return this.tab && this.tab.sessionId;
         },
-        fileName: function (p) {
-            var s = String(p || '');
-            var idx = s.lastIndexOf('/');
-            return idx >= 0 ? (s.substring(idx + 1) || '/') : s;
-        },
-        setDirty: function (v) {
-            this.dirty = !!v;
-            if (this.win) {
-                this.win.editorDirty = !!v;
-            }
-        },
-        loadFile: function () {
-            var self = this;
-            var sid = this.sessionId();
-            if (!sid || !this.path) {
-                this.loading = false;
-                this.error = '会话未就绪，无法读取文件';
-                return;
-            }
-            this._reqSeq = (this._reqSeq || 0) + 1;
-            var seq = this._reqSeq;
-            this.loading = true;
-            this.error = '';
-            this.find = {
-                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
-                replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
-            };
-            this.setDirty(false);
-            if (this.win) {
-                this.win.editorTitle = this.fileName(this.path) || '代码编辑器';
-            }
-            this.resetEditorDom();
-            http.get('/api/sftp/read', { params: { sessionId: sid, path: this.path } })
-                .then(function (content) {
-                    if (self._destroyed || seq !== self._reqSeq) {
-                        return;
-                    }
-                    self.loading = false;
-                    self._original = content || '';
-                    self._lineSep = self._original.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
-                    self._editorSelectAfterChange = false;
-                    self.$nextTick(function () {
-                        if (!self._destroyed && seq === self._reqSeq) {
-                            self.initEditor();
-                        }
-                    });
-                })
-                .catch(function (err) {
-                    if (self._destroyed || seq !== self._reqSeq) {
-                        return;
-                    }
-                    self.loading = false;
-                    self.error = (err && err.message) ? err.message : '读取文件失败';
-                });
-        },
-        resetEditorDom: function () {
-            this.clearMarks();
-            if (this.$refs.editorHost) {
-                this.$refs.editorHost.innerHTML = '';
-            }
-            this._cm = null;
-            this._findMatches = [];
-        },
         initEditor: function () {
             var self = this;
-            if (this._cm) {
-                this._cm.refresh();
-                return;
-            }
             var host = this.$refs.editorHost;
             if (!host || typeof CodeMirror === 'undefined') {
-                this.error = '编辑器组件加载失败';
+                ELEMENT.Message.error('编辑器组件加载失败，请刷新页面后重试');
                 return;
             }
-            var content = this._original || '';
-            var info = this.modeForPath(this.path, content);
-            this.modeLabel = info.label;
             host.innerHTML = '';
             var cm = CodeMirror(host, {
-                value: content,
-                mode: info.mode,
+                value: '',
+                mode: null,
                 lineNumbers: true,
                 lineWrapping: this.wrap,
                 styleActiveLine: true,
@@ -1578,11 +1558,19 @@ Vue.component('desktop-code-editor', {
                 indentWithTabs: false,
                 highlightSelectionMatches: { minChars: 2, style: 'keyword-hit' },
                 extraKeys: {
+                    'Ctrl-N': function () { self.newDoc(); },
+                    'Cmd-N': function () { self.newDoc(); },
+                    'Ctrl-O': function () { self.openPicker('open'); },
+                    'Cmd-O': function () { self.openPicker('open'); },
+                    'Ctrl-S': function () { self.save(); },
+                    'Cmd-S': function () { self.save(); },
+                    'Shift-Ctrl-S': function () { self.saveAs(); },
+                    'Shift-Cmd-S': function () { self.saveAs(); },
+                    'Ctrl-Shift-S': function () { self.saveAs(); },
+                    'Cmd-Shift-S': function () { self.saveAs(); },
                     'Ctrl-F': function () { self.openFind(false); },
                     'Cmd-F': function () { self.openFind(false); },
                     'Ctrl-H': function () { self.openFind(true); },
-                    'Ctrl-S': function () { self.save(); },
-                    'Cmd-S': function () { self.save(); },
                     'F3': function () { self.findNext(); },
                     'Shift-F3': function () { self.findPrev(); },
                     'Alt-C': function () { self.toggleOption('caseSensitive'); },
@@ -1593,34 +1581,544 @@ Vue.component('desktop-code-editor', {
                 }
             });
             this._cm = cm;
-            this.lineCount = cm.lineCount();
-            this.updateCursor(cm);
+            this._docMap = {};
+            this._docSeq = 0;
+            this._untitledSeq = 0;
+            this._switching = false;
+            this._closeAfterSaveDocId = '';
+            this._pendingOpen = '';
             cm.on('change', function () { self.onChange(cm); });
-            cm.on('cursorActivity', function () { self.updateCursor(cm); });
-            this.$nextTick(function () {
-                if (!self._destroyed && self._cm === cm) {
-                    cm.refresh();
-                    cm.focus();
-                }
-            });
+            cm.on('cursorActivity', function () { self.onCursorActivity(cm); });
         },
-        updateCursor: function (cm) {
-            cm = cm || this._cm;
-            if (!cm) {
+        setupResize: function () {
+            var self = this;
+            if (typeof ResizeObserver === 'undefined') {
                 return;
             }
-            var c = cm.getCursor();
-            this.cursor = { line: c.line + 1, col: c.ch + 1 };
+            this._resizeObserver = new ResizeObserver(function () {
+                clearTimeout(self._resizeTimer);
+                self._resizeTimer = setTimeout(function () {
+                    if (self._cm) {
+                        self._cm.refresh();
+                    }
+                }, 80);
+            });
+            this._resizeObserver.observe(this.$el);
+        },
+        createDoc: function (path, content, info, lineSep) {
+            var id = 'doc' + (++this._docSeq);
+            var title = path ? this.baseName(path) : ('未命名-' + (++this._untitledSeq));
+            var cmDoc = CodeMirror.Doc(content || '', info.mode);
+            this._docMap[id] = cmDoc;
+            var doc = {
+                id: id,
+                path: path || null,
+                title: title,
+                original: content || '',
+                lineSep: lineSep || '\n',
+                dirty: false,
+                modeInfo: info,
+                modeLabel: info.label,
+                lineCount: cmDoc.lineCount(),
+                cursor: { line: 0, ch: 0 },
+                scrollTop: 0
+            };
+            this.docs.push(doc);
+            return doc;
+        },
+        createUntitled: function () {
+            var active = this.activeDoc;
+            if (active && !active.path && !active.dirty
+                    && this._docMap[active.id] && this._docMap[active.id].getValue() === '') {
+                this.activateDoc(active);
+                return active;
+            }
+            var doc = this.createDoc(null, '', { mode: null, label: '纯文本' }, '\n');
+            this.activateDoc(doc);
+            return doc;
+        },
+        newDoc: function () {
+            if (!this._cm) {
+                return;
+            }
+            var active = this.activeDoc;
+            if (active && !active.path && !active.dirty
+                    && this._docMap[active.id] && this._docMap[active.id].getValue() === '') {
+                this._cm.focus();
+                return;
+            }
+            this.createUntitled();
+        },
+        activateDoc: function (doc) {
+            if (!doc || !this._cm || !this._docMap[doc.id]) {
+                return;
+            }
+            var self = this;
+            var cm = this._cm;
+            var prev = this.activeDoc;
+            if (this.activeId === doc.id && cm.getDoc() === this._docMap[doc.id]) {
+                this.setWinState();
+                cm.focus();
+                return;
+            }
+            if (prev && this._docMap[prev.id]) {
+                prev.cursor = cm.getCursor();
+                prev.scrollTop = cm.getScrollInfo().top;
+            }
+            this.clearMarks();
+            this._switching = true;
+            cm.swapDoc(this._docMap[doc.id]);
+            this._switching = false;
+            this.activeId = doc.id;
+            cm.setOption('mode', doc.modeInfo ? doc.modeInfo.mode : null);
+            cm.setCursor(doc.cursor || { line: 0, ch: 0 });
+            cm.scrollTo(0, doc.scrollTop || 0);
+            var activeCursor = cm.getCursor();
+            this.cursor = { line: activeCursor.line + 1, col: activeCursor.ch + 1 };
+            this.updateStatus();
+            this.setWinState();
+            if (this.find.text) {
+                this.$nextTick(function () {
+                    self.applySearch(true);
+                });
+            } else {
+                this.find.total = 0;
+                this.find.current = 0;
+                this.find.countText = '';
+            }
+            this.$nextTick(function () {
+                cm.refresh();
+                cm.focus();
+            });
+        },
+        removeDoc: function (doc) {
+            if (!doc) {
+                return;
+            }
+            var idx = this.docs.indexOf(doc);
+            if (idx < 0) {
+                return;
+            }
+            var wasActive = this.activeId === doc.id;
+            delete this._docMap[doc.id];
+            this.docs.splice(idx, 1);
+            if (!this.docs.length) {
+                this.activeId = '';
+                this.createUntitled();
+                return;
+            }
+            if (wasActive) {
+                this.activateDoc(this.docs[Math.min(idx, this.docs.length - 1)]);
+            } else {
+                this.setWinState();
+            }
+        },
+        findDoc: function (id) {
+            for (var i = 0; i < this.docs.length; i++) {
+                if (this.docs[i].id === id) {
+                    return this.docs[i];
+                }
+            }
+            return null;
+        },
+        openPath: function (path) {
+            path = String(path || '').trim();
+            if (!path || path.charAt(0) !== '/') {
+                ELEMENT.Message.warning('文件路径不合法');
+                return;
+            }
+            for (var i = 0; i < this.docs.length; i++) {
+                if (this.docs[i].path === path) {
+                    this.activateDoc(this.docs[i]);
+                    return;
+                }
+            }
+            var sid = this.sessionId();
+            if (!sid) {
+                ELEMENT.Message.warning('请先连接服务器后再打开文件');
+                if (!this.docs.length) {
+                    this.createUntitled();
+                }
+                return;
+            }
+            if (!this._openingPaths) {
+                this._openingPaths = {};
+            }
+            if (this._openingPaths[path]) {
+                return;
+            }
+            this._openingPaths[path] = true;
+            var self = this;
+            this.opening = true;
+            http.get('/api/sftp/read', { params: { sessionId: sid, path: path } })
+                .then(function (content) {
+                    if (self._destroyed) {
+                        return;
+                    }
+                    if (self._openingPaths) {
+                        delete self._openingPaths[path];
+                    }
+                    self.opening = false;
+                    var text = content || '';
+                    var info = self.modeForPath(path, text);
+                    var lineSep = text.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+                    var blank = null;
+                    var active = self.activeDoc;
+                    if (active && !active.path && !active.dirty
+                            && self._docMap[active.id] && self._docMap[active.id].getValue() === '') {
+                        blank = active;
+                    }
+                    var doc = self.createDoc(path, text, info, lineSep);
+                    self.activateDoc(doc);
+                    if (blank) {
+                        self.removeDoc(blank);
+                    }
+                    self.picker.visible = false;
+                    self.picker.error = '';
+                })
+                .catch(function (err) {
+                    if (self._destroyed) {
+                        return;
+                    }
+                    if (self._openingPaths) {
+                        delete self._openingPaths[path];
+                    }
+                    self.opening = false;
+                    self.picker.error = (err && err.message) ? err.message : '打开文件失败';
+                    if (!self.docs.length) {
+                        self.createUntitled();
+                    }
+                });
         },
         onChange: function (cm) {
-            this.lineCount = cm.lineCount();
-            this.setDirty(cm.getValue(this._lineSep || '\n') !== this._original);
-            this.updateCursor(cm);
-            if (this.find.text) {
-                var select = !!this._editorSelectAfterChange;
-                this._editorSelectAfterChange = false;
-                this.scheduleSearch(select);
+            if (this._switching) {
+                return;
             }
+            var doc = this.activeDoc;
+            if (!doc) {
+                return;
+            }
+            var content = cm.getValue(doc.lineSep || '\n');
+            doc.dirty = content !== doc.original;
+            doc.lineCount = cm.lineCount();
+            this.updateStatus();
+            if (this.find.text) {
+                this.scheduleSearch(false);
+            }
+        },
+        onCursorActivity: function (cm) {
+            var c = cm.getCursor();
+            this.cursor = { line: c.line + 1, col: c.ch + 1 };
+            var doc = this.activeDoc;
+            if (doc) {
+                doc.cursor = { line: c.line, ch: c.ch };
+            }
+        },
+        updateStatus: function () {
+            var doc = this.activeDoc;
+            if (doc && this._cm) {
+                doc.lineCount = this._cm.lineCount();
+                var c = this._cm.getCursor();
+                this.cursor = { line: c.line + 1, col: c.ch + 1 };
+            }
+            this.setWinState();
+        },
+        setWinState: function () {
+            if (!this.win) {
+                return;
+            }
+            var doc = this.activeDoc;
+            this.win.editorDirty = this.docsDirty;
+            this.win.editorTitle = doc ? doc.title : '文本编辑器';
+            this.win.editorSubtitle = doc ? (doc.path || '未命名') : '未命名';
+            this.win.editorPath = doc && doc.path ? doc.path : '';
+        },
+        /* ---------- 打开 / 保存 / 另存为 ---------- */
+        openPicker: function (mode, keepCloseAfter) {
+            if (!this.sessionId()) {
+                ELEMENT.Message.warning('请先连接服务器后再打开或保存文件');
+                return;
+            }
+            if (!keepCloseAfter) {
+                this._closeAfterSaveDocId = '';
+            }
+            var doc = this.activeDoc;
+            var tabDir = this.tab && (this.tab.sftpPath || this.tab.sftpHome);
+            var dir = doc && doc.path ? this.dirOf(doc.path) : this.normalizeDir(tabDir || '/');
+            var name = doc && doc.path ? this.baseName(doc.path) : 'untitled.txt';
+            this.picker = {
+                visible: true,
+                mode: mode,
+                dir: dir,
+                entries: [],
+                loading: true,
+                error: '',
+                selected: null,
+                name: mode === 'save' ? name : ''
+            };
+            this.loadPicker(dir);
+        },
+        loadPicker: function (dir) {
+            var d = this.normalizeDir(dir);
+            if (d.charAt(0) !== '/') {
+                this.picker.error = '请输入绝对路径，例如 /opt/app';
+                return;
+            }
+            var sid = this.sessionId();
+            if (!sid) {
+                this.picker.error = '会话未就绪';
+                return;
+            }
+            this.picker.dir = d;
+            this.picker.loading = true;
+            this.picker.error = '';
+            this.picker.selected = null;
+            this._pickerSeq = (this._pickerSeq || 0) + 1;
+            var seq = this._pickerSeq;
+            var self = this;
+            http.get('/api/sftp/list', { params: { sessionId: sid, path: d }, silent: true })
+                .then(function (list) {
+                    if (self._destroyed || seq !== self._pickerSeq || !self.picker.visible) {
+                        return;
+                    }
+                    self.picker.entries = Array.isArray(list) ? list : [];
+                    self.picker.loading = false;
+                })
+                .catch(function (err) {
+                    if (self._destroyed || seq !== self._pickerSeq || !self.picker.visible) {
+                        return;
+                    }
+                    self.picker.loading = false;
+                    self.picker.entries = [];
+                    self.picker.error = (err && err.message) ? err.message : '目录读取失败';
+                });
+        },
+        pickerSelect: function (entry) {
+            this.picker.selected = entry;
+            if (this.picker.mode === 'save' && !entry.dir) {
+                this.picker.name = entry.name;
+            }
+        },
+        pickerDbl: function (entry) {
+            if (!entry) {
+                return;
+            }
+            if (entry.dir) {
+                this.loadPicker(this.joinPath(this.picker.dir, entry.name));
+                return;
+            }
+            if (this.picker.mode === 'open') {
+                this.pickerConfirm();
+            } else {
+                this.picker.name = entry.name;
+            }
+        },
+        pickerUp: function () {
+            this.loadPicker(this.dirOf(this.picker.dir));
+        },
+        pickerCancel: function () {
+            this.picker.visible = false;
+            this._closeAfterSaveDocId = '';
+        },
+        pickerBeforeClose: function (done) {
+            this._closeAfterSaveDocId = '';
+            done();
+        },
+        pickerConfirm: function () {
+            var p = this.picker;
+            if (p.mode === 'open') {
+                if (!p.selected || p.selected.dir) {
+                    return;
+                }
+                this.openPath(this.joinPath(p.dir, p.selected.name));
+                return;
+            }
+            var name = String(p.name || '').trim();
+            if (!this.validName(name)) {
+                ELEMENT.Message.warning('文件名不能包含 / 或 \\，也不能是 . 或 ..');
+                return;
+            }
+            var path = this.joinPath(p.dir, name);
+            var exists = (p.entries || []).some(function (e) {
+                return !e.dir && e.name === name;
+            });
+            var self = this;
+            if (exists) {
+                this.$confirm('目标文件已存在，是否覆盖？', '另存为', {
+                    type: 'warning',
+                    confirmButtonText: '覆盖',
+                    cancelButtonText: '取消'
+                }).then(function () {
+                    self.saveAsTo(path);
+                }).catch(function () { /* 取消 */ });
+            } else {
+                this.saveAsTo(path);
+            }
+        },
+        saveAsTo: function (path) {
+            var doc = this.activeDoc;
+            if (!doc) {
+                return;
+            }
+            var self = this;
+            this.saveDocTo(doc, path).then(function () {
+                self.picker.visible = false;
+                if (self._closeAfterSaveDocId === doc.id) {
+                    self._closeAfterSaveDocId = '';
+                    self.removeDoc(doc);
+                }
+            }).catch(function (err) {
+                self.picker.error = (err && err.message) ? err.message : '保存失败';
+            });
+        },
+        saveDocTo: function (doc, path) {
+            var self = this;
+            var sid = this.sessionId();
+            if (!sid) {
+                return Promise.reject(new Error('会话未就绪'));
+            }
+            var cmDoc = this._docMap[doc.id];
+            if (!cmDoc) {
+                return Promise.reject(new Error('文档不存在'));
+            }
+            var content = cmDoc.getValue(doc.lineSep || '\n');
+            this.saving = true;
+            return http.post('/api/sftp/write', {
+                sessionId: sid,
+                path: path,
+                content: content
+            }).then(function () {
+                self.saving = false;
+                doc.path = path;
+                doc.title = self.baseName(path);
+                doc.original = content;
+                doc.dirty = false;
+                var info = self.modeForPath(path, content);
+                doc.modeInfo = info;
+                doc.modeLabel = info.label;
+                if (self.activeId === doc.id && self._cm) {
+                    self._cm.setOption('mode', info.mode);
+                }
+                self.updateStatus();
+                self.setWinState();
+                ELEMENT.Message.success('已保存到 ' + path);
+                self.$emit('saved', { path: path });
+            }).catch(function (err) {
+                self.saving = false;
+                throw err;
+            });
+        },
+        save: function () {
+            var doc = this.activeDoc;
+            if (!doc) {
+                return;
+            }
+            if (!this.sessionId()) {
+                ELEMENT.Message.warning('请先连接服务器后再保存文件');
+                return;
+            }
+            if (this.saving) {
+                return;
+            }
+            if (!doc.path) {
+                this.openPicker('save');
+                return;
+            }
+            var self = this;
+            this.saveDocTo(doc, doc.path).catch(function (err) {
+                ELEMENT.Message.error((err && err.message) ? err.message : '保存失败');
+            });
+        },
+        saveAs: function () {
+            if (this.saving) {
+                return;
+            }
+            if (!this.sessionId()) {
+                ELEMENT.Message.warning('请先连接服务器后再保存文件');
+                return;
+            }
+            this.openPicker('save');
+        },
+        closeDoc: function (doc) {
+            if (!doc) {
+                return;
+            }
+            if (doc.dirty) {
+                this.closeAsk = { visible: true, docId: doc.id, title: doc.title };
+                return;
+            }
+            this.removeDoc(doc);
+        },
+        closeAskSave: function () {
+            var doc = this.findDoc(this.closeAsk.docId);
+            this.closeAsk.visible = false;
+            if (!doc) {
+                return;
+            }
+            var self = this;
+            if (doc.path) {
+                this.saveDocTo(doc, doc.path).then(function () {
+                    self.removeDoc(doc);
+                }).catch(function (err) {
+                    ELEMENT.Message.error((err && err.message) ? err.message : '保存失败');
+                });
+            } else {
+                this.activateDoc(doc);
+                this._closeAfterSaveDocId = doc.id;
+                this.openPicker('save', true);
+            }
+        },
+        closeAskDiscard: function () {
+            var doc = this.findDoc(this.closeAsk.docId);
+            this.closeAsk.visible = false;
+            this._closeAfterSaveDocId = '';
+            if (doc) {
+                this.removeDoc(doc);
+            }
+        },
+        closeAskCancel: function () {
+            this.closeAsk.visible = false;
+            this._closeAfterSaveDocId = '';
+        },
+        /* ---------- 路径与格式化 ---------- */
+        baseName: function (p) {
+            var s = String(p || '');
+            var idx = s.lastIndexOf('/');
+            return idx >= 0 ? (s.substring(idx + 1) || '/') : s;
+        },
+        dirOf: function (p) {
+            var s = this.normalizeDir(p);
+            if (s === '/') {
+                return '/';
+            }
+            var idx = s.lastIndexOf('/');
+            return idx <= 0 ? '/' : s.substring(0, idx);
+        },
+        joinPath: function (dir, name) {
+            var d = this.normalizeDir(dir);
+            return d === '/' ? '/' + name : d + '/' + name;
+        },
+        normalizeDir: function (p) {
+            var s = String(p || '').trim();
+            if (!s) {
+                return '/';
+            }
+            if (s.charAt(0) !== '/') {
+                s = '/' + s;
+            }
+            while (s.length > 1 && s.charAt(s.length - 1) === '/') {
+                s = s.substring(0, s.length - 1);
+            }
+            return s;
+        },
+        validName: function (name) {
+            var s = String(name || '').trim();
+            return !!s && s !== '.' && s !== '..' && s.length <= 255
+                && s.indexOf('/') < 0 && s.indexOf('\\') < 0
+                && s.indexOf('\n') < 0 && s.indexOf('\r') < 0;
+        },
+        fmtSize: function (n) {
+            return this.$root.fmtSize(n);
         },
         modeForPath: function (path, content) {
             var p = String(path || '');
@@ -1679,6 +2177,7 @@ Vue.component('desktop-code-editor', {
             }
             return { mode: null, label: '纯文本' };
         },
+        /* ---------- 查找 / 替换 ---------- */
         focusFind: function () {
             var ref = this.$refs.editFindInput;
             var el = ref && ref.$el ? ref.$el.querySelector('input') : null;
@@ -1760,18 +2259,24 @@ Vue.component('desktop-code-editor', {
                 return;
             }
             var key = (e.key || '').toLowerCase();
-            if (key !== 's' && key !== 'f' && key !== 'h') {
+            if (['n', 'o', 's', 'f', 'h'].indexOf(key) < 0) {
                 return;
             }
             if (this._cm && this._cm.hasFocus()) {
                 return;
             }
             e.preventDefault();
-            if (key === 's') {
+            if (key === 's' && e.shiftKey) {
+                this.saveAs();
+            } else if (key === 's') {
                 this.save();
+            } else if (key === 'n') {
+                this.newDoc();
+            } else if (key === 'o') {
+                this.openPicker('open');
             } else if (key === 'f') {
                 this.openFind(false);
-            } else {
+            } else if (key === 'h') {
                 this.openFind(true);
             }
         },
@@ -1826,7 +2331,7 @@ Vue.component('desktop-code-editor', {
         },
         applySearch: function (resetCurrent, selectCurrent) {
             var cm = this._cm;
-            if (!cm) {
+            if (!cm || !this.activeDoc) {
                 return;
             }
             if (selectCurrent === undefined) {
@@ -2043,33 +2548,6 @@ Vue.component('desktop-code-editor', {
                 cm.setCursor(cm.posFromIndex(Math.min(firstOffset, result.length)));
             }
             cm.focus();
-        },
-        save: function () {
-            var sid = this.sessionId();
-            var f = this.find;
-            if (!sid) {
-                ELEMENT.Message.warning('会话未就绪，无法保存');
-                return;
-            }
-            if (!this._cm || this.saving) {
-                return;
-            }
-            var self = this;
-            var content = this._cm.getValue(this._lineSep || '\n');
-            this.saving = true;
-            this.error = '';
-            http.post('/api/sftp/write', { sessionId: sid, path: this.path, content: content })
-                .then(function () {
-                    self.saving = false;
-                    self._original = content;
-                    self.setDirty(false);
-                    ELEMENT.Message.success('已保存到远程');
-                    self.$emit('saved', { path: self.path });
-                })
-                .catch(function (err) {
-                    self.saving = false;
-                    self.error = (err && err.message) ? err.message : '保存失败';
-                });
         }
     }
 });
@@ -2096,6 +2574,8 @@ new Vue({
         desktopAppIcons: [
             { key: 'app:explorer', type: 'app', action: 'explorer', label: '资源管理器',
               icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { key: 'app:editor', type: 'app', action: 'editor', label: '文本编辑器',
+              icon: 'el-icon-edit-outline', color: '#3d7eff' },
             { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
               icon: 'el-icon-monitor', color: '#22a06b' },
             { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
@@ -2113,6 +2593,7 @@ new Vue({
         pluginMgrError: '',
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+            { id: 'editor', label: '文本编辑器', icon: 'el-icon-edit-outline', color: '#3d7eff' },
             { id: 'terminal', label: '新建终端', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'taskmgr', label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' },
@@ -2734,6 +3215,14 @@ new Vue({
         desktopTransferWin: function () {
             for (var i = 0; i < this.desktop.windows.length; i++) {
                 if (this.desktop.windows[i].type === 'transfer') {
+                    return this.desktop.windows[i];
+                }
+            }
+            return null;
+        },
+        desktopEditorWindow: function () {
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                if (this.desktop.windows[i].type === 'editor') {
                     return this.desktop.windows[i];
                 }
             }
@@ -5363,7 +5852,7 @@ new Vue({
                 return w.pluginTitle || w.pluginName || '插件应用';
             }
             if (w && w.type === 'editor') {
-                var editorName = w.editorTitle || this.desktopBaseName(w.editorPath) || '代码编辑器';
+                var editorName = w.editorTitle || this.desktopBaseName(w.editorPath) || '文本编辑器';
                 return w.editorDirty ? editorName + ' •' : editorName;
             }
             var p = (w && w.path) || '';
@@ -5419,7 +5908,7 @@ new Vue({
                 return '桌面插件' + ver + ' · 沙箱运行';
             }
             if (w && w.type === 'editor') {
-                return '代码编辑器 · ' + (w.editorPath || '');
+                return '文本编辑器 · ' + (w.editorSubtitle || w.editorPath || '未命名');
             }
             var path = (w && w.path) || '';
             return host ? (path ? host + ' · ' + path : host) : path;
@@ -7938,6 +8427,8 @@ new Vue({
             if (item.type === 'app') {
                 if (item.action === 'explorer') {
                     this.openDesktopExplorerWindow('/');
+                } else if (item.action === 'editor') {
+                    this.openDesktopEditorApp();
                 } else if (item.action === 'terminal') {
                     this.openDesktopTerminalWindow();
                 } else if (item.action === 'transfers') {
@@ -10073,30 +10564,26 @@ new Vue({
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
-        /* 桌面中的文件编辑：打开独立的编辑器窗口（终端工作台仍使用弹窗） */
-        openDesktopEditorWindow: function (tab, path) {
-            tab = tab || this.desktopTab;
-            if (!tab || !tab.sessionId || !path) {
-                return null;
-            }
+        /* 桌面中的文件编辑：复用“文本编辑器”应用窗口（终端工作台仍使用弹窗） */
+        openDesktopEditorApp: function () {
             if (!this.desktop.visible) {
-                this.openRemoteEdit(tab, path);
                 return null;
             }
-            for (var i = 0; i < this.desktop.windows.length; i++) {
-                var existed = this.desktop.windows[i];
-                if (existed.type === 'editor' && existed.editorPath === path) {
-                    this.restoreDesktopWindow(existed);
-                    return existed;
-                }
+            var w = this.desktopEditorWindow;
+            if (w) {
+                this.restoreDesktopWindow(w);
+                return w;
             }
-            var w = this.addDesktopWindow('editor');
-            w.editorPath = path;
-            w.editorTitle = this.desktopBaseName(path) || '代码编辑器';
+            w = this.addDesktopWindow('editor');
+            w.editorPath = '';
+            w.editorTitle = '文本编辑器';
+            w.editorSubtitle = '未命名';
             w.editorDirty = false;
+            w.editorPendingPath = '';
+            w.editorPendingSeq = 0;
             var area = this.desktopWindowWorkArea();
-            var width = Math.min(area.width - 20, Math.max(720, Math.round(area.width * 0.76)));
-            var height = Math.min(area.height - 20, Math.max(440, Math.round(area.height * 0.82)));
+            var width = Math.min(area.width - 20, Math.max(760, Math.round(area.width * 0.82)));
+            var height = Math.min(area.height - 20, Math.max(480, Math.round(area.height * 0.88)));
             width = Math.max(Math.min(520, area.width), width);
             height = Math.max(Math.min(320, area.height), height);
             this.applyDesktopWindowGeometry(w, {
@@ -10111,6 +10598,26 @@ new Vue({
                     self.$refs.desktopRoot.focus();
                 }
             });
+            return w;
+        },
+        openDesktopEditorWindow: function (tab, path) {
+            tab = tab || this.desktopTab;
+            if (!this.desktop.visible) {
+                if (tab && path && tab.sessionId) {
+                    this.openRemoteEdit(tab, path);
+                }
+                return null;
+            }
+            var w = this.desktopEditorWindow;
+            if (!w) {
+                w = this.openDesktopEditorApp();
+            } else {
+                this.restoreDesktopWindow(w);
+            }
+            if (w && path) {
+                w.editorPendingPath = path;
+                w.editorPendingSeq = (w.editorPendingSeq || 0) + 1;
+            }
             return w;
         },
         onDesktopEditorSaved: function (payload) {
@@ -11243,6 +11750,10 @@ new Vue({
             var self = this;
             if (id === 'taskmgr') {
                 this.openTaskManager();
+                return;
+            }
+            if (id === 'editor') {
+                this.openDesktopEditorApp();
                 return;
             }
             if (id === 'ai') {

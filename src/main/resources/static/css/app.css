@@ -1944,69 +1944,317 @@ body.resizing .term-host {
     color: #9aa7bd;
 }
 
-/* AI 桌面里的编辑器窗口 */
-.dsk-code-editor {
+/* ---------- AI 桌面文本编辑器应用 ---------- */
+.dsk-text-editor {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
     background: #fff;
+    color: var(--text);
 }
 
-.dsk-code-editor .edit-toolbar {
+.te-toolbar {
     flex: 0 0 auto;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    border-radius: 0;
-    padding: 6px 10px;
-    overflow-x: auto;
-}
-
-.dsk-code-editor .edit-find-row,
-.dsk-code-editor .edit-replace-row {
+    display: flex;
+    align-items: center;
     flex-wrap: wrap;
-    row-gap: 6px;
+    gap: 4px;
+    padding: 6px 10px;
+    background: #f7f9fc;
+    border-bottom: 1px solid var(--border);
 }
 
-.dsk-code-editor .edit-cm-host {
-    flex: 1;
-    min-height: 0;
-    border: none;
-    border-radius: 0;
+.te-btn {
+    height: 28px;
+    padding: 0 9px;
+    border: 1px solid #d9dee7;
+    border-radius: 6px;
+    background: #fff;
+    color: #4b5563;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s, border-color .12s, color .12s;
 }
 
-.dsk-code-editor .edit-cm-host .CodeMirror {
-    height: 100%;
-    min-height: 0;
+.te-btn:hover {
+    border-color: #a9c3ff;
+    color: var(--accent);
 }
 
-.dsk-code-editor .edit-statusbar {
-    flex: 0 0 auto;
-    padding: 4px 10px;
-    border-top: 1px solid #eef1f6;
+.te-btn.active {
+    background: #e8f0ff;
+    border-color: #9dbcff;
+    color: var(--accent);
 }
 
-.dsk-editor-save {
-    min-width: 62px;
+.te-btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
 }
 
-.dsk-editor-error {
-    max-width: 42%;
+.te-sep {
+    width: 1px;
+    height: 20px;
+    margin: 0 4px;
+    background: #e3e9f2;
+}
+
+.te-active-path {
+    max-width: 38%;
     overflow: hidden;
-    color: var(--err);
+    color: #8a96a6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.dsk-editor-missing {
+.te-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 4px 8px 0;
+    overflow-x: auto;
+    background: #eef2f8;
+    border-bottom: 1px solid #dfe6f1;
+}
+
+.te-tab {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 100px;
+    max-width: 220px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 7px 7px 0 0;
+    color: #5c6b7e;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.te-tab:hover {
+    background: rgba(255, 255, 255, .65);
+}
+
+.te-tab.active {
+    background: #fff;
+    border-color: #dfe6f1;
+    color: #2b3442;
+    box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.te-tab-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.te-tab-dirty {
+    color: #f59e0b;
+    font-weight: 700;
+}
+
+.te-tab-close {
+    padding: 2px;
+    border-radius: 50%;
+    color: #9aa7bd;
+    font-size: 12px;
+}
+
+.te-tab-close:hover {
+    background: #ffe9e9;
+    color: var(--err);
+}
+
+.te-tab-add {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 30px;
+    border: none;
+    border-radius: 7px 7px 0 0;
+    background: transparent;
+    color: #7b8798;
+    cursor: pointer;
+}
+
+.te-tab-add:hover {
+    background: #fff;
+    color: var(--accent);
+}
+
+.te-findbar {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    overflow-x: auto;
+    border: none;
+    border-bottom: 1px solid #eef1f6;
+    border-radius: 0;
+    background: #fbfcfe;
+}
+
+.te-findbar .edit-find-row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+}
+
+.te-findbar .edit-kbd-hint {
+    font-size: 11px;
+}
+
+.te-editor-host {
     flex: 1;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+}
+
+.te-editor-host .CodeMirror {
+    height: 100%;
+    min-height: 0;
+}
+
+.te-statusbar {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    overflow: hidden;
+    border-top: 1px solid #eef1f6;
+}
+
+.te-statusbar .edit-kbd-hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.te-status-path {
+    max-width: 42%;
+    overflow: hidden;
+    font-family: Consolas, "Courier New", monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.te-opening {
+    color: var(--accent);
+}
+
+/* 远程文件选择 / 另存为 */
+.te-picker-dialog {
+    max-width: 96vw;
+}
+
+.te-picker-dialog .el-dialog__body {
+    padding: 10px 18px 4px;
+}
+
+.te-picker-bar {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
+}
+
+.te-picker-bar .el-input {
+    flex: 1;
+}
+
+.te-picker-list {
+    height: 300px;
+    margin-top: 8px;
+    overflow: auto;
+    border: 1px solid #e8edf5;
+    border-radius: 7px;
     background: #fff;
-    color: #8a96a6;
+}
+
+.te-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid #f4f6fa;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+
+.te-picker-row:last-child {
+    border-bottom: none;
+}
+
+.te-picker-row:hover {
+    background: #f7faff;
+}
+
+.te-picker-row.selected {
+    background: #eaf2ff;
+}
+
+.te-picker-row i {
+    color: #6b7a90;
+}
+
+.te-picker-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.te-picker-size {
+    color: #9aa7bd;
+    font-size: 11px;
+}
+
+.te-picker-empty {
+    padding: 40px;
+    color: #9aa7bd;
     font-size: 12px;
+    text-align: center;
+}
+
+.te-picker-save {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    color: #4b5563;
+    font-size: 12.5px;
+}
+
+.te-picker-save .el-input {
+    flex: 1;
+}
+
+.te-picker-full {
+    margin-top: 8px;
+    overflow: hidden;
+    color: #8a96a6;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.te-picker-error {
+    margin-top: 6px;
+    color: var(--err);
+    font-size: 12px;
+}
+
+.te-close-dialog .te-close-text {
+    color: #4b5563;
+    font-size: 13px;
+    line-height: 1.6;
 }
 
 @media (max-width: 900px) {
