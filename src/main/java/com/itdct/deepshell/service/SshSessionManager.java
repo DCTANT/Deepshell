@@ -1063,6 +1063,31 @@ public class SshSessionManager {
         return execRaw(s, command, timeoutMs, Integer.MAX_VALUE, () -> false).output;
     }
 
+    /**
+     * 在已保存连接上执行一次命令：优先复用该连接的活动会话，未连接时按保存的代理 / 跳板机配置
+     * 临时建连，执行完立即断开。用于批量命令、服务管理等不依赖当前终端标签的后台操作。
+     */
+    public ExecResult execOnSavedConnection(Long connectionId, String command, long timeoutMs, int maxBytes)
+            throws Exception {
+        if (connectionId == null) {
+            throw new IllegalArgumentException("缺少连接");
+        }
+        SshSession live = findLiveSession(connectionId);
+        if (live != null) {
+            // 合并 stderr，批量命令的报错也能回传
+            return parseWrappedOutput(execRaw(live, "exec 2>&1\n" + command, timeoutMs,
+                    maxBytes, () -> false));
+        }
+        SshConnection cfg = connectionService.get(connectionId);
+        Transport transport = connectHops(hopsForSaved(cfg));
+        try {
+            return parseWrappedOutput(execRaw(transport.target, "saved-" + connectionId,
+                    "exec 2>&1\n" + command, timeoutMs, maxBytes, () -> false));
+        } finally {
+            disconnectAll(transport.sessions);
+        }
+    }
+
     /** exec 通道原始执行结果（内部载体） */
     static class RawExec {
         volatile String output = "";
@@ -1080,7 +1105,12 @@ public class SshSessionManager {
      */
     private RawExec execRaw(SshSession s, String command, long timeoutMs, int maxBytes,
                             BooleanSupplier cancelled) throws Exception {
-        ChannelExec exec = (ChannelExec) s.getJsch().openChannel("exec");
+        return execRaw(s.getJsch(), s.getId(), command, timeoutMs, maxBytes, cancelled);
+    }
+
+    private RawExec execRaw(Session jsch, String label, String command, long timeoutMs, int maxBytes,
+                            BooleanSupplier cancelled) throws Exception {
+        ChannelExec exec = (ChannelExec) jsch.openChannel("exec");
         exec.setCommand(command);
         // 立即向远端 stdin 发 EOF：读取标准输入的命令（如无参数 cat）直接结束而不是挂起
         exec.setInputStream(null);
@@ -1107,7 +1137,7 @@ public class SshSessionManager {
                 r.output = new String(bos.toByteArray(), StandardCharsets.UTF_8);
                 r.done = true;
             }
-        }, "ssh-exec-" + s.getId());
+        }, "ssh-exec-" + label);
         reader.setDaemon(true);
         reader.start();
         long deadline = System.currentTimeMillis() + Math.max(1L, timeoutMs);

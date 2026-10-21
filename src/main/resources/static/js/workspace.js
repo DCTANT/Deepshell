@@ -1590,6 +1590,10 @@ Vue.component('desktop-text-editor', {
                 open: false, text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
                 replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
             },
+            filter: {
+                on: false, text: '', caseSensitive: false, regex: false,
+                rows: [], total: 0, truncated: false, error: ''
+            },
             wrap: false,
             lineNumbers: true,
             activeLine: true,
@@ -1673,6 +1677,10 @@ Vue.component('desktop-text-editor', {
         if (this._findTimer) {
             clearTimeout(this._findTimer);
             this._findTimer = null;
+        }
+        if (this._filterTimer) {
+            clearTimeout(this._filterTimer);
+            this._filterTimer = null;
         }
         if (this._resizeTimer) {
             clearTimeout(this._resizeTimer);
@@ -1842,6 +1850,9 @@ Vue.component('desktop-text-editor', {
                 this.find.current = 0;
                 this.find.countText = '';
             }
+            if (this.filter.on) {
+                this.applyFilter();
+            }
             this.$nextTick(function () {
                 cm.refresh();
                 cm.focus();
@@ -1961,6 +1972,9 @@ Vue.component('desktop-text-editor', {
             if (this.find.open && this.find.text) {
                 this.scheduleSearch(false);
             }
+            if (this.filter.on) {
+                this.scheduleFilter();
+            }
         },
         onCursorActivity: function (cm) {
             var c = cm.getCursor();
@@ -1969,6 +1983,136 @@ Vue.component('desktop-text-editor', {
             if (doc) {
                 doc.cursor = { line: c.line, ch: c.ch };
             }
+        },
+        /* ---------- 行过滤：只读视图，只显示匹配到的行 ---------- */
+        scheduleFilter: function () {
+            var self = this;
+            clearTimeout(this._filterTimer);
+            this._filterTimer = setTimeout(function () {
+                self.applyFilter();
+            }, 120);
+        },
+        onFilterToggle: function () {
+            this.applyFilter();
+            var self = this;
+            this.$nextTick(function () {
+                if (self.filter.on && self.$refs.filterInput) {
+                    self.$refs.filterInput.focus();
+                }
+                if (!self.filter.on && self._cm) {
+                    self._cm.refresh();
+                    self._cm.focus();
+                }
+            });
+        },
+        toggleFilterOption: function (key) {
+            this.filter[key] = !this.filter[key];
+            this.applyFilter();
+        },
+        applyFilter: function () {
+            var f = this.filter;
+            if (!f.on) {
+                f.rows = [];
+                f.total = 0;
+                f.truncated = false;
+                f.error = '';
+                return;
+            }
+            var doc = this.activeDoc;
+            var cmDoc = doc && this._docMap[doc.id];
+            if (!cmDoc) {
+                f.rows = [];
+                f.total = 0;
+                return;
+            }
+            var text = cmDoc.getValue(doc.lineSep || '\n');
+            var lines = text.split(/\r?\n/);
+            var needle = f.text || '';
+            var re = null;
+            f.error = '';
+            if (needle && f.regex) {
+                try {
+                    re = new RegExp(needle, 'g' + (f.caseSensitive ? '' : 'i'));
+                } catch (e) {
+                    f.error = '正则表达式不合法';
+                    f.rows = [];
+                    f.total = 0;
+                    f.truncated = false;
+                    return;
+                }
+            }
+            var rows = [];
+            var total = 0;
+            var limit = 2000;
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i];
+                var ranges = [];
+                if (needle) {
+                    if (re) {
+                        re.lastIndex = 0;
+                        var m;
+                        var guard = 0;
+                        while ((m = re.exec(line)) !== null) {
+                            if (m[0].length === 0) {
+                                re.lastIndex++;
+                                if (re.lastIndex > line.length) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            ranges.push([m.index, m.index + m[0].length]);
+                            if (++guard > 200) {
+                                break;
+                            }
+                        }
+                        if (!ranges.length) {
+                            continue;
+                        }
+                    } else {
+                        var hay = f.caseSensitive ? line : line.toLowerCase();
+                        var nee = f.caseSensitive ? needle : needle.toLowerCase();
+                        var pos = hay.indexOf(nee);
+                        if (pos < 0) {
+                            continue;
+                        }
+                        while (pos >= 0) {
+                            ranges.push([pos, pos + nee.length]);
+                            pos = hay.indexOf(nee, pos + Math.max(1, nee.length));
+                            if (ranges.length > 200) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                total++;
+                if (rows.length < limit) {
+                    rows.push({ no: i + 1, segs: this.filterSegments(line, ranges) });
+                }
+            }
+            f.rows = rows;
+            f.total = total;
+            f.truncated = total > rows.length;
+        },
+        filterSegments: function (line, ranges) {
+            if (!ranges || !ranges.length) {
+                return [{ text: line, hit: false }];
+            }
+            var segs = [];
+            var pos = 0;
+            for (var i = 0; i < ranges.length; i++) {
+                var r = ranges[i];
+                if (r[0] > pos) {
+                    segs.push({ text: line.slice(pos, r[0]), hit: false });
+                }
+                if (r[1] > r[0]) {
+                    segs.push({ text: line.slice(r[0], r[1]), hit: true });
+                }
+                pos = Math.max(pos, r[1]);
+            }
+            if (pos < line.length) {
+                segs.push({ text: line.slice(pos), hit: false });
+            }
+            return segs;
         },
         updateStatus: function () {
             var doc = this.activeDoc;
@@ -3013,6 +3157,9 @@ new Vue({
             { id: 'terminal', label: '新建终端', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'taskmgr', label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' },
+            { id: 'services', label: '服务与计划任务', icon: 'el-icon-s-tools', color: '#0f766e' },
+            { id: 'nettool', label: '网络工具箱', icon: 'el-icon-share', color: '#7c3aed' },
+            { id: 'batchcmd', label: '多机命令', icon: 'el-icon-copy-document', color: '#b45309' },
             { id: 'file', label: '资源管理器', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
@@ -3117,6 +3264,7 @@ new Vue({
             settingsVisible: false,
             settingsSection: 'appearance',
             compressSub: { visible: false, x: 0, y: 0 },
+            extractSub: { visible: false, x: 0, y: 0 },
             downloadSub: { visible: false, x: 0, y: 0 },
             thumbnailsEnabled: loadDesktopThumbs(),
             showHidden: loadDesktopShowHidden(),
@@ -3152,6 +3300,45 @@ new Vue({
             ctxMenu: { visible: false, x: 0, y: 0, kind: '', key: '', title: '' },
             runVisible: false,
             runText: ''
+        },
+        /* 服务与计划任务 */
+        servicesApp: {
+            tab: 'services',
+            loading: false,
+            error: '',
+            keyword: '',
+            onlyRunning: false,
+            items: [],
+            busy: '',
+            cronLoading: false,
+            cronLoaded: false,
+            cronError: '',
+            cron: { user: [], system: [], timers: [] },
+            newCron: '',
+            addingCron: false
+        },
+        /* 网络工具箱 */
+        netTool: {
+            tool: 'ping',
+            target: '',
+            port: '80',
+            running: false,
+            error: '',
+            output: '',
+            exitCode: null,
+            durationMs: 0,
+            timedOut: false,
+            at: 0
+        },
+        /* 多机命令 */
+        batchCmd: {
+            ids: [],
+            keyword: '',
+            command: '',
+            running: false,
+            error: '',
+            items: [],
+            elapsedMs: 0
         },
         connectDialogVisible: false,
         connFilter: 'all',
@@ -3204,6 +3391,7 @@ new Vue({
         renameForm: { path: '', newName: '' },
         archiveDialogVisible: false,
         archiveSaving: false,
+        archiveExtracting: false,
         archiveSources: [],
         archiveLastFormat: 'zip',
         archiveForm: { format: 'zip', name: '', level: 'normal', overwrite: false },
@@ -3710,7 +3898,31 @@ new Vue({
                 return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr'
                     || w.type === 'transfer' || w.type === 'disk' || w.type === 'connect'
                     || w.type === 'dirs' || w.type === 'cmd' || w.type === 'plugin'
-                    || w.type === 'editor';
+                    || w.type === 'editor' || w.type === 'services'
+                    || w.type === 'nettool' || w.type === 'batchcmd';
+            });
+        },
+        filteredServiceRows: function () {
+            var q = String(this.servicesApp.keyword || '').trim().toLowerCase();
+            var onlyRunning = this.servicesApp.onlyRunning;
+            return (this.servicesApp.items || []).filter(function (s) {
+                if (onlyRunning && s.active !== 'active') {
+                    return false;
+                }
+                if (!q) {
+                    return true;
+                }
+                return String(s.unit + ' ' + (s.description || '')).toLowerCase().indexOf(q) >= 0;
+            });
+        },
+        batchConnectionRows: function () {
+            var q = String(this.batchCmd.keyword || '').trim().toLowerCase();
+            return (this.connections || []).filter(function (c) {
+                if (!q) {
+                    return true;
+                }
+                return String(c.name + ' ' + c.host + ' ' + (c.username || ''))
+                    .toLowerCase().indexOf(q) >= 0;
             });
         },
         /* ---------- 任务管理器 ---------- */
@@ -4217,6 +4429,18 @@ new Vue({
         desktopMenuHasFile: function () {
             return this.desktopSelectedRows(this.desktopMenuContextWin())
                 .some(function (r) { return !r.dir; });
+        },
+        desktopMenuCanExtract: function () {
+            var t = this.desktop.menu.target;
+            return !!t && !this.desktopMenuMulti && !t.dir
+                && !!this.desktopArchiveFormat(t.name);
+        },
+        desktopMenuExtractName: function () {
+            var t = this.desktop.menu.target;
+            return t ? t.name : '';
+        },
+        desktopMenuExtractFolder: function () {
+            return this.desktopArchiveBase(this.desktopMenuExtractName);
         },
         archiveNameExists: function () {
             var name = (this.archiveForm.name || '').trim();
@@ -6280,6 +6504,15 @@ new Vue({
             if (type === 'taskmgr') {
                 return 'el-icon-cpu';
             }
+            if (type === 'services') {
+                return 'el-icon-s-tools';
+            }
+            if (type === 'nettool') {
+                return 'el-icon-share';
+            }
+            if (type === 'batchcmd') {
+                return 'el-icon-copy-document';
+            }
             if (type === 'connect') {
                 return 'el-icon-connection';
             }
@@ -6320,6 +6553,15 @@ new Vue({
             }
             if (w && w.type === 'taskmgr') {
                 return '任务管理器';
+            }
+            if (w && w.type === 'services') {
+                return '服务与计划任务';
+            }
+            if (w && w.type === 'nettool') {
+                return '网络工具箱';
+            }
+            if (w && w.type === 'batchcmd') {
+                return '多机命令';
             }
             if (w && w.type === 'connect') {
                 return '连接管理';
@@ -6372,6 +6614,19 @@ new Vue({
             }
             if (w && w.type === 'taskmgr') {
                 return host ? host + ' · 进程与性能' : '进程与性能';
+            }
+            if (w && w.type === 'services') {
+                var svcText = this.servicesApp.tab === 'cron'
+                    ? '计划任务' : (this.servicesApp.items.length + ' 个服务');
+                return host ? host + ' · ' + svcText : svcText;
+            }
+            if (w && w.type === 'nettool') {
+                var netText = '连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : '');
+                return host ? host + ' · ' + netText : netText;
+            }
+            if (w && w.type === 'batchcmd') {
+                return (this.batchCmd.ids.length || 0) + ' 台服务器'
+                    + (host ? ' · 当前 ' + host : '');
             }
             if (w && w.type === 'trash') {
                 var trashText = ((w.trashItems || []).length) + ' 项';
@@ -6791,6 +7046,351 @@ new Vue({
                 }
             });
             return w;
+        },
+        /* ---------- 服务与计划任务 ---------- */
+        openDesktopServicesWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return null;
+            }
+            var existing = this.desktopWindowOfType('services');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                if (!this.servicesApp.items.length) {
+                    this.loadDesktopServices();
+                }
+                return existing;
+            }
+            this.servicesApp.items = [];
+            this.servicesApp.keyword = '';
+            this.servicesApp.error = '';
+            this.servicesApp.busy = '';
+            this.servicesApp.tab = 'services';
+            this.servicesApp.cronLoaded = false;
+            this.servicesApp.cron = { user: [], system: [], timers: [] };
+            var w = this.addDesktopWindow('services');
+            var area = this.desktopWindowWorkArea();
+            this.centerDesktopWindow(w, 960, Math.max(540, Math.round(area.height * 0.84)));
+            this.loadDesktopServices();
+            return w;
+        },
+        loadDesktopServices: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                this.servicesApp.error = '当前桌面未连接服务器';
+                return;
+            }
+            var self = this;
+            this.servicesApp.loading = true;
+            this.servicesApp.error = '';
+            http.get('/api/services/list', { params: { sessionId: t.sessionId } })
+                .then(function (d) {
+                    self.servicesApp.items = Array.isArray(d) ? d : [];
+                    self.servicesApp.loading = false;
+                })
+                .catch(function (e) {
+                    self.servicesApp.loading = false;
+                    self.servicesApp.error = (e && e.message) ? e.message : '读取服务列表失败';
+                });
+        },
+        switchServicesTab: function (tab) {
+            this.servicesApp.tab = tab;
+            if (tab === 'cron') {
+                this.loadDesktopCron();
+            }
+        },
+        refreshServicesTab: function () {
+            if (this.servicesApp.tab === 'cron') {
+                this.loadDesktopCron(true);
+            } else {
+                this.loadDesktopServices();
+            }
+        },
+        runServiceAction: function (item, action) {
+            var self = this;
+            var labels = { start: '启动', stop: '停止', restart: '重启', enable: '设置开机自启', disable: '取消开机自启' };
+            if (action === 'stop' || action === 'restart') {
+                this.$confirm('确定要' + labels[action] + '服务「' + item.unit + '」吗？', '服务操作',
+                    { type: 'warning' }).then(function () {
+                    self.execServiceAction(item, action, labels[action]);
+                }).catch(function () { /* 取消 */ });
+                return;
+            }
+            this.execServiceAction(item, action, labels[action]);
+        },
+        serviceStateLabel: function (item) {
+            if (!item) {
+                return '—';
+            }
+            var labels = {
+                running: '运行中', exited: '已退出', dead: '已停止', failed: '失败',
+                start: '启动中', stop: '停止中', reloading: '重载中',
+                activating: '启动中', deactivating: '停止中', stopped: '已停止'
+            };
+            return labels[item.sub] || item.sub || item.active || '—';
+        },
+        serviceEnabledLabel: function (item) {
+            if (!item) {
+                return '—';
+            }
+            var labels = {
+                enabled: '已启用', 'enabled-runtime': '运行时启用', disabled: '已禁用',
+                static: '静态', masked: '已屏蔽', indirect: '间接',
+                generated: '自动生成', transient: '临时', unknown: '未知'
+            };
+            return labels[item.enabled] || item.enabled || '—';
+        },
+        execServiceAction: function (item, action, label) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            if (this.servicesApp.busy) {
+                return;
+            }
+            var self = this;
+            this.servicesApp.busy = item.unit + ':' + action;
+            var done = function () {
+                self.servicesApp.busy = '';
+            };
+            http.post('/api/services/action', {
+                sessionId: t.sessionId,
+                unit: item.unit,
+                action: action
+            }).then(function () {
+                done();
+                ELEMENT.Message.success(label + '成功：' + item.unit);
+                self.loadDesktopServices();
+            }).catch(function () {
+                done();
+            });
+        },
+        loadDesktopCron: function (force) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                this.servicesApp.cronError = '当前桌面未连接服务器';
+                return;
+            }
+            if (this.servicesApp.cronLoading || (!force && this.servicesApp.cronLoaded)) {
+                return;
+            }
+            var self = this;
+            this.servicesApp.cronLoading = true;
+            this.servicesApp.cronError = '';
+            http.get('/api/services/cron', { params: { sessionId: t.sessionId } })
+                .then(function (d) {
+                    self.applyDesktopCron(d);
+                })
+                .catch(function (e) {
+                    self.servicesApp.cronLoading = false;
+                    self.servicesApp.cronError = (e && e.message) ? e.message : '读取计划任务失败';
+                });
+        },
+        applyDesktopCron: function (data) {
+            this.servicesApp.cron = data && typeof data === 'object'
+                ? { user: data.user || [], system: data.system || [], timers: data.timers || [] }
+                : { user: [], system: [], timers: [] };
+            this.servicesApp.cronLoaded = true;
+            this.servicesApp.cronLoading = false;
+        },
+        addDesktopCron: function () {
+            var t = this.desktopTab;
+            var line = (this.servicesApp.newCron || '').trim();
+            if (!t || !t.sessionId) {
+                return;
+            }
+            if (!line) {
+                ELEMENT.Message.warning('请输入计划任务行');
+                return;
+            }
+            if (this.servicesApp.addingCron) {
+                return;
+            }
+            var self = this;
+            this.servicesApp.addingCron = true;
+            http.post('/api/services/cron/add', { sessionId: t.sessionId, line: line })
+                .then(function (d) {
+                    self.servicesApp.addingCron = false;
+                    self.servicesApp.newCron = '';
+                    self.applyDesktopCron(d);
+                    ELEMENT.Message.success('已添加计划任务');
+                })
+                .catch(function () {
+                    self.servicesApp.addingCron = false;
+                });
+        },
+        deleteDesktopCron: function (line) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                return;
+            }
+            var self = this;
+            this.$confirm('确定删除这条用户计划任务？\n' + line, '删除计划任务', { type: 'warning' })
+                .then(function () {
+                    return http.post('/api/services/cron/delete', {
+                        sessionId: t.sessionId,
+                        line: line
+                    });
+                })
+                .then(function (d) {
+                    if (d) {
+                        self.applyDesktopCron(d);
+                        ELEMENT.Message.success('已删除计划任务');
+                    }
+                })
+                .catch(function () { /* 取消或失败 */ });
+        },
+        /* ---------- 网络工具箱 ---------- */
+        openDesktopNetToolWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return null;
+            }
+            var existing = this.desktopWindowOfType('nettool');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            this.netTool.running = false;
+            this.netTool.error = '';
+            this.netTool.output = '';
+            this.netTool.exitCode = null;
+            this.netTool.durationMs = 0;
+            this.netTool.timedOut = false;
+            this.netTool.at = 0;
+            var w = this.addDesktopWindow('nettool');
+            this.centerDesktopWindow(w, 780, 500);
+            return w;
+        },
+        runNetTool: function () {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || this.netTool.running) {
+                return;
+            }
+            var target = (this.netTool.target || '').trim();
+            if (!target) {
+                ELEMENT.Message.warning('请输入主机名或 IP 地址');
+                return;
+            }
+            var port = parseInt(this.netTool.port, 10);
+            if (this.netTool.tool === 'port' && (!port || port < 1 || port > 65535)) {
+                ELEMENT.Message.warning('端口范围应为 1-65535');
+                return;
+            }
+            var self = this;
+            this.netTool.running = true;
+            this.netTool.error = '';
+            this.netTool.output = '';
+            this.netTool.exitCode = null;
+            this.netTool.timedOut = false;
+            this.netTool.at = 0;
+            http.post('/api/nettools/run', {
+                sessionId: t.sessionId,
+                tool: this.netTool.tool,
+                target: target,
+                port: this.netTool.tool === 'port' ? port : null
+            }).then(function (d) {
+                self.netTool.running = false;
+                self.netTool.output = (d && d.output) || '';
+                self.netTool.exitCode = d ? d.exitCode : null;
+                self.netTool.durationMs = d ? (d.durationMs || 0) : 0;
+                self.netTool.timedOut = !!(d && d.timedOut);
+                self.netTool.at = Date.now();
+            }).catch(function (e) {
+                self.netTool.running = false;
+                self.netTool.error = (e && e.message) ? e.message : '执行失败';
+            });
+        },
+        /* ---------- 多机命令 ---------- */
+        openDesktopBatchCommandWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            this.loadConnections();
+            this.loadSnippets();
+            var existing = this.desktopWindowOfType('batchcmd');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var cur = this.desktopTab && this.desktopTab.connId != null ? this.desktopTab.connId : null;
+            this.batchCmd.ids = cur == null ? [] : [cur];
+            this.batchCmd.keyword = '';
+            this.batchCmd.command = '';
+            this.batchCmd.error = '';
+            this.batchCmd.items = [];
+            this.batchCmd.elapsedMs = 0;
+            this.batchCmd.running = false;
+            var w = this.addDesktopWindow('batchcmd');
+            var area = this.desktopWindowWorkArea();
+            this.centerDesktopWindow(w, 1000, Math.max(560, Math.round(area.height * 0.82)));
+            return w;
+        },
+        batchUseSnippet: function (snippet) {
+            if (!snippet) {
+                return;
+            }
+            this.batchCmd.command = snippet.command || '';
+        },
+        toggleBatchTarget: function (id, checked) {
+            var ids = this.batchCmd.ids || (this.batchCmd.ids = []);
+            var i = ids.indexOf(id);
+            if (checked && i < 0) {
+                ids.push(id);
+            } else if (!checked && i >= 0) {
+                ids.splice(i, 1);
+            }
+        },
+        selectAllBatchTargets: function () {
+            var ids = this.batchCmd.ids || (this.batchCmd.ids = []);
+            this.batchConnectionRows.forEach(function (c) {
+                if (ids.indexOf(c.id) < 0) {
+                    ids.push(c.id);
+                }
+            });
+        },
+        clearBatchTargets: function () {
+            this.batchCmd.ids = [];
+        },
+        runBatchCommand: function () {
+            var ids = (this.batchCmd.ids || []).slice();
+            var command = (this.batchCmd.command || '').trim();
+            if (!ids.length) {
+                ELEMENT.Message.warning('请至少选择一台服务器');
+                return;
+            }
+            if (!command) {
+                ELEMENT.Message.warning('请输入要执行的命令');
+                return;
+            }
+            if (this.batchCmd.running) {
+                return;
+            }
+            var self = this;
+            this.batchCmd.running = true;
+            this.batchCmd.error = '';
+            this.batchCmd.items = [];
+            this.batchCmd.elapsedMs = 0;
+            http.post('/api/batch-command/run', {
+                connectionIds: ids,
+                command: command,
+                timeoutSec: 60
+            }).then(function (d) {
+                self.batchCmd.running = false;
+                self.batchCmd.items = (d && d.items) || [];
+                self.batchCmd.elapsedMs = (d && d.elapsedMs) || 0;
+            }).catch(function (e) {
+                self.batchCmd.running = false;
+                self.batchCmd.error = (e && e.message) ? e.message : '执行失败';
+            });
         },
         openDesktopTerminalWindow: function (startDir) {
             if (!this.desktop.visible) {
@@ -9095,6 +9695,8 @@ new Vue({
                         sortBy: 'name',
                         sortDir: 'asc'
                     });
+                } else if (this.desktopArchiveFormat(item.entry.name)) {
+                    ELEMENT.Message.info('压缩包请右键选择「解压」');
                 } else if (this.desktopTab && this.desktopTab.sessionId) {
                     this.openDesktopEditorWindow(this.desktopTab, item.path);
                 }
@@ -10350,6 +10952,8 @@ new Vue({
                 this.openDesktopVideoPreview(row, d);
             } else if (this.isDesktopAudio(row)) {
                 this.openDesktopAudioPreview(row, d);
+            } else if (this.desktopArchiveFormat(row.name)) {
+                ELEMENT.Message.info('压缩包请右键选择「解压」');
             } else {
                 this.desktopOpenEdit(row, d);
             }
@@ -10693,6 +11297,10 @@ new Vue({
                 this.desktopOpenArchiveDialog('zip', ctxWin);
             } else if (action.indexOf('compress:') === 0) {
                 this.desktopOpenArchiveDialog(action.substring('compress:'.length), ctxWin);
+            } else if (action === 'extractHere') {
+                this.desktopExtractArchive(target, ctxWin, false);
+            } else if (action === 'extractToFolder') {
+                this.desktopExtractArchive(target, ctxWin, true);
             } else if (action === 'preview') {
                 if (target && this.isDesktopImage(target)) {
                     this.openDesktopImagePreview(target, ctxWin);
@@ -10765,6 +11373,98 @@ new Vue({
             }
             return '.zip';
         },
+        desktopArchiveFormat: function (name) {
+            var n = String(name || '').toLowerCase();
+            if (/\.(zip|jar|war)$/.test(n)) {
+                return 'zip';
+            }
+            if (/\.(tar|tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz)$/.test(n)) {
+                return 'tar';
+            }
+            if (/\.7z$/.test(n)) {
+                return '7z';
+            }
+            if (/\.rar$/.test(n)) {
+                return 'rar';
+            }
+            if (/\.gz$/.test(n)) {
+                return 'gzip';
+            }
+            if (/\.bz2$/.test(n)) {
+                return 'bzip2';
+            }
+            if (/\.xz$/.test(n)) {
+                return 'xz';
+            }
+            return '';
+        },
+        desktopArchiveBase: function (name) {
+            var n = String(name || '');
+            var lower = n.toLowerCase();
+            var exts = ['.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.tbz', '.txz',
+                '.zip', '.jar', '.war', '.tar', '.7z', '.rar', '.gz', '.bz2', '.xz'];
+            for (var i = 0; i < exts.length; i++) {
+                if (lower.slice(-exts[i].length) === exts[i]) {
+                    var base = n.slice(0, n.length - exts[i].length);
+                    return base || 'extracted';
+                }
+            }
+            return n || 'extracted';
+        },
+        parentDirOf: function (path) {
+            var s = String(path || '');
+            var idx = s.lastIndexOf('/');
+            return idx <= 0 ? '/' : s.substring(0, idx);
+        },
+        desktopExtractArchive: function (target, win, toFolder) {
+            var t = this.desktopTab;
+            if (!t || !t.sessionId || !target) {
+                return;
+            }
+            var format = this.desktopArchiveFormat(target.name);
+            if (!format) {
+                ELEMENT.Message.warning('暂不支持解压该格式');
+                return;
+            }
+            if (this.archiveExtracting) {
+                return;
+            }
+            var d = win || this.desk;
+            var archivePath = this.desktopEntryPath(target, d);
+            var parent = this.parentDirOf(archivePath);
+            var folderName = this.desktopArchiveBase(target.name);
+            var destDir = toFolder ? this.pathJoin(parent, folderName) : parent;
+            var self = this;
+            this.archiveExtracting = true;
+            var loading = ELEMENT.Message({
+                message: '正在解压 ' + target.name + ' …',
+                duration: 0,
+                iconClass: 'el-icon-loading'
+            });
+            http.post('/api/sftp/extract', {
+                sessionId: t.sessionId,
+                path: archivePath,
+                destDir: destDir,
+                overwrite: false
+            }).then(function (res) {
+                loading.close();
+                self.archiveExtracting = false;
+                if (res && res.skipped) {
+                    ELEMENT.Message.info('目标文件已存在，已跳过解压');
+                } else {
+                    ELEMENT.Message.success(toFolder
+                        ? ('已解压到 ' + folderName + '/')
+                        : ('已解压到当前目录：' + parent));
+                }
+                if (d && d.type !== 'surface') {
+                    d.pendingSelect = toFolder ? folderName : target.name;
+                }
+                self.desktopRefresh(d);
+            }).catch(function () {
+                loading.close();
+                self.archiveExtracting = false;
+            });
+        },
         positionDesktopSub: function (ev, sub, estimatedHeight) {
             var item = ev && ev.currentTarget;
             var menu = this.$refs.deskMenu;
@@ -10800,6 +11500,7 @@ new Vue({
                 return;
             }
             this.closeDesktopDownloadSub();
+            this.closeDesktopExtractSub();
             if (!this.positionDesktopSub(ev, this.desktop.compressSub, 320)) {
                 return;
             }
@@ -10813,12 +11514,33 @@ new Vue({
                 this.desktop.compressSub = { visible: false, x: 0, y: 0 };
             }
         },
+        openDesktopExtractSub: function (ev) {
+            if (this.desktop.extractSub.visible) {
+                this.closeDesktopExtractSub();
+                return;
+            }
+            this.closeDesktopCompressSub();
+            this.closeDesktopDownloadSub();
+            if (!this.positionDesktopSub(ev, this.desktop.extractSub, 140)) {
+                return;
+            }
+            var self = this;
+            this.$nextTick(function () {
+                self.fitDesktopSubHeight('deskExtractSub', self.desktop.extractSub);
+            });
+        },
+        closeDesktopExtractSub: function () {
+            if (this.desktop.extractSub.visible) {
+                this.desktop.extractSub = { visible: false, x: 0, y: 0 };
+            }
+        },
         openDesktopDownloadSub: function (ev) {
             if (this.desktop.downloadSub.visible) {
                 this.closeDesktopDownloadSub();
                 return;
             }
             this.closeDesktopCompressSub();
+            this.closeDesktopExtractSub();
             if (!this.positionDesktopSub(ev, this.desktop.downloadSub, 140)) {
                 return;
             }
@@ -10834,6 +11556,7 @@ new Vue({
         },
         closeDesktopSubMenus: function () {
             this.closeDesktopCompressSub();
+            this.closeDesktopExtractSub();
             this.closeDesktopDownloadSub();
         },
         desktopOpenArchiveDialog: function (format, win) {
@@ -13000,6 +13723,18 @@ new Vue({
             var self = this;
             if (id === 'taskmgr') {
                 this.openTaskManager();
+                return;
+            }
+            if (id === 'services') {
+                this.openDesktopServicesWindow();
+                return;
+            }
+            if (id === 'nettool') {
+                this.openDesktopNetToolWindow();
+                return;
+            }
+            if (id === 'batchcmd') {
+                this.openDesktopBatchCommandWindow();
                 return;
             }
             if (id === 'editor') {
