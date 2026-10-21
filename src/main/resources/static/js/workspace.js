@@ -169,6 +169,13 @@ function createDesktopWindow(id) {
         id: id || '',
         type: 'explorer',
         termTab: null,
+        /* 桌面插件应用窗口 */
+        pluginId: '',
+        pluginName: '',
+        pluginTitle: '',
+        pluginVersion: '',
+        pluginIconUrl: '',
+        pluginUrl: '',
         path: '',
         pathInput: '',
         pathEditing: false,
@@ -1446,6 +1453,12 @@ new Vue({
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
               icon: 'el-icon-chat-dot-round', color: '#3d7eff' }
         ],
+        /* 已安装的桌面应用插件（由后端扫描数据目录） */
+        desktopPlugins: [],
+        pluginMgrVisible: false,
+        pluginMgrLoading: false,
+        pluginImporting: false,
+        pluginMgrError: '',
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
             { id: 'terminal', label: '新建终端', icon: 'el-icon-monitor', color: '#22a06b' },
@@ -1717,6 +1730,8 @@ new Vue({
             ['FILE_EDIT', '在线编辑'],
             ['FILE_CHMOD', '修改权限'],
             ['FILE_COMPRESS', '压缩'],
+            ['PLUGIN_INSTALL', '安装插件'],
+            ['PLUGIN_DELETE', '卸载插件'],
             ['CONNECTION_CREATE', '新建连接'],
             ['CONNECTION_UPDATE', '编辑连接'],
             ['CONNECTION_DELETE', '删除连接'],
@@ -2100,7 +2115,7 @@ new Vue({
             return this.desktop.windows.filter(function (w) {
                 return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr'
                     || w.type === 'transfer' || w.type === 'disk' || w.type === 'connect'
-                    || w.type === 'dirs' || w.type === 'cmd';
+                    || w.type === 'dirs' || w.type === 'cmd' || w.type === 'plugin';
             });
         },
         /* ---------- 任务管理器 ---------- */
@@ -2622,13 +2637,28 @@ new Vue({
         desktopStartQuery: function () {
             return (this.desktop.startSearch || '').trim();
         },
+        desktopStartPluginApps: function () {
+            return (this.desktopPlugins || []).map(function (p) {
+                return {
+                    id: 'plugin:' + p.id,
+                    label: p.name,
+                    iconUrl: p.iconUrl || '',
+                    color: '#eef3fb',
+                    plugin: p,
+                    desc: p.description || ''
+                };
+            });
+        },
         desktopStartAppMatches: function () {
             var q = this.desktopStartQuery.toLowerCase();
             if (!q) {
                 return [];
             }
-            return this.desktopStartApps.filter(function (a) {
-                return a.label.toLowerCase().indexOf(q) >= 0 || a.id.indexOf(q) >= 0;
+            return this.desktopStartApps.concat(this.desktopStartPluginApps).filter(function (a) {
+                var text = [a.label, a.id,
+                    a.plugin ? a.plugin.description : '',
+                    a.plugin ? a.plugin.author : ''].join(' ').toLowerCase();
+                return text.indexOf(q) >= 0;
             });
         },
         desktopStartEntryMatches: function () {
@@ -4619,6 +4649,9 @@ new Vue({
             if (type === 'cmd') {
                 return 'el-icon-caret-right';
             }
+            if (type === 'plugin') {
+                return 'el-icon-s-grid';
+            }
             return 'el-icon-folder-opened';
         },
         desktopWindowTitle: function (w) {
@@ -4645,6 +4678,9 @@ new Vue({
             }
             if (w && w.type === 'cmd') {
                 return '快捷命令';
+            }
+            if (w && w.type === 'plugin') {
+                return w.pluginTitle || w.pluginName || '插件应用';
             }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
@@ -4693,6 +4729,10 @@ new Vue({
                 var conv = t ? this.aiActiveConv(t) : null;
                 var title = conv && conv.title ? conv.title : '';
                 return host ? (title ? host + ' · ' + title : host) : title;
+            }
+            if (w && w.type === 'plugin') {
+                var ver = w.pluginVersion ? ' · v' + w.pluginVersion : '';
+                return '桌面插件' + ver + ' · 沙箱运行';
             }
             var path = (w && w.path) || '';
             return host ? (path ? host + ' · ' + path : host) : path;
@@ -10209,6 +10249,7 @@ new Vue({
         },
         openDesktopStart: function () {
             this.desktop.startOpen = true;
+            this.loadDesktopPlugins(false);
             this.desktop.menu.visible = false;
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
@@ -10268,11 +10309,167 @@ new Vue({
                 ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
             }
         },
+        /* ---------- 桌面应用插件 ---------- */
+        loadDesktopPlugins: function (showError) {
+            var self = this;
+            this.pluginMgrLoading = true;
+            http.get('/api/desktop/plugins', { silent: !showError }).then(function (list) {
+                self.desktopPlugins = Array.isArray(list) ? list : [];
+                self.pluginMgrLoading = false;
+                self.pluginMgrError = '';
+            }).catch(function (err) {
+                self.pluginMgrLoading = false;
+                if (showError) {
+                    self.pluginMgrError = (err && err.message) ? err.message : '加载插件失败';
+                }
+            });
+        },
+        openPluginManager: function () {
+            this.desktop.startOpen = false;
+            this.desktop.powerOpen = false;
+            this.desktop.wallMenu.visible = false;
+            this.pluginMgrVisible = true;
+            this.pluginMgrError = '';
+            this.loadDesktopPlugins(true);
+        },
+        pickPluginZip: function () {
+            var el = this.$refs.pluginZipInput;
+            if (el) {
+                el.value = '';
+                el.click();
+            }
+        },
+        onPluginZipPick: function (ev) {
+            var input = ev.target;
+            var file = input.files && input.files[0];
+            input.value = '';
+            if (!file) {
+                return;
+            }
+            if (!/\.zip$/i.test(file.name)) {
+                ELEMENT.Message.warning('请选择 ZIP 插件包');
+                return;
+            }
+            var self = this;
+            var fd = new FormData();
+            fd.append('file', file, file.name);
+            this.pluginImporting = true;
+            this.pluginMgrError = '';
+            http.post('/api/desktop/plugins/import', fd, { timeout: 0 })
+                .then(function (info) {
+                    ELEMENT.Message.success((info && info.updated ? '插件已更新：' : '插件已安装：')
+                        + (info && info.name ? info.name : file.name));
+                    self.loadDesktopPlugins(true);
+                })
+                .catch(function (err) {
+                    self.pluginMgrError = (err && err.message) ? err.message : '插件安装失败';
+                })
+                .then(function () {
+                    self.pluginImporting = false;
+                });
+        },
+        deletePlugin: function (p) {
+            if (!p) {
+                return;
+            }
+            var self = this;
+            this.$confirm('卸载插件「' + p.name + '」？插件文件将从数据目录中删除。', '卸载插件', {
+                type: 'warning',
+                confirmButtonText: '卸载',
+                cancelButtonText: '取消'
+            }).then(function () {
+                return http.delete('/api/desktop/plugins/' + encodeURIComponent(p.id));
+            }).then(function () {
+                self.closePluginWindows(p.id);
+                self.loadDesktopPlugins(true);
+                ELEMENT.Message.success('已卸载 ' + p.name);
+            }).catch(function () { /* 取消或失败（已提示） */ });
+        },
+        closePluginWindows: function (id) {
+            var wins = this.desktop.windows.filter(function (w) {
+                return w.type === 'plugin' && w.pluginId === id;
+            });
+            for (var i = 0; i < wins.length; i++) {
+                this.closeDesktopWindow(wins[i]);
+            }
+        },
+        launchDesktopPlugin: function (id) {
+            var plugin = null;
+            for (var i = 0; i < this.desktopPlugins.length; i++) {
+                if (this.desktopPlugins[i].id === id) {
+                    plugin = this.desktopPlugins[i];
+                    break;
+                }
+            }
+            if (!plugin) {
+                ELEMENT.Message.warning('插件不存在或已卸载');
+                this.loadDesktopPlugins(true);
+                return;
+            }
+            this.openDesktopPlugin(plugin);
+        },
+        openDesktopPlugin: function (plugin) {
+            if (!plugin || !plugin.entryUrl) {
+                return null;
+            }
+            if (!this.desktop.visible) {
+                ELEMENT.Message.warning('请先进入 AI 可视化桌面');
+                return null;
+            }
+            var existing = null;
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                var win = this.desktop.windows[i];
+                if (win.type === 'plugin' && win.pluginId === plugin.id) {
+                    existing = win;
+                    break;
+                }
+            }
+            if (existing) {
+                // 插件更新后重新打开时刷新 iframe 地址
+                existing.pluginUrl = plugin.entryUrl;
+                existing.pluginName = plugin.name;
+                existing.pluginTitle = plugin.title || plugin.name;
+                existing.pluginVersion = plugin.version || '';
+                existing.pluginIconUrl = plugin.iconUrl || '';
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var w = this.addDesktopWindow('plugin');
+            w.pluginId = plugin.id;
+            w.pluginName = plugin.name;
+            w.pluginTitle = plugin.title || plugin.name;
+            w.pluginVersion = plugin.version || '';
+            w.pluginIconUrl = plugin.iconUrl || '';
+            w.pluginUrl = plugin.entryUrl;
+            var area = this.desktopWindowWorkArea();
+            var width = Math.min(area.width - 20, Math.max(520, Number(plugin.windowWidth) || 760));
+            var height = Math.min(area.height - 20, Math.max(320, Number(plugin.windowHeight) || 520));
+            width = Math.max(Math.min(520, area.width), width);
+            height = Math.max(Math.min(320, area.height), height);
+            this.applyDesktopWindowGeometry(w, {
+                x: Math.round((area.width - width) / 2),
+                y: Math.round((area.height - height) / 2),
+                w: width,
+                h: height
+            });
+            this.pluginMgrVisible = false;
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
         desktopLaunchApp: function (id) {
             if (!id || id === 'desktop') {
                 return;
             }
             this.desktop.startOpen = false;
+            if (id.indexOf('plugin:') === 0) {
+                this.launchDesktopPlugin(id.substring(7));
+                return;
+            }
             var self = this;
             if (id === 'taskmgr') {
                 this.openTaskManager();
@@ -14967,6 +15164,7 @@ new Vue({
         self.loadFolders();
         self.loadSnippets();
         self.loadAppInfo();
+        self.loadDesktopPlugins(false);
         self.loadLocalDownloadStatus();
         self.loadAuthStatus();
         self.loadAiRuntimeConfig();

@@ -30,6 +30,7 @@ public class AuthWebConfig implements WebMvcConfigurer {
                         "/css/**",
                         "/js/**",
                         "/vendor/**",
+                        "/plugin-assets/**",
                         "/favicon.ico",
                         "/error");
     }

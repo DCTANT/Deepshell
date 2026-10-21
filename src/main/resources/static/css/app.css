@@ -3846,6 +3846,36 @@ body.resizing .term-host {
     font-size: 15px;
 }
 
+.dsk-plugin-title-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    object-fit: contain;
+}
+
+.dsk-task-plugin-icon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    border-radius: 3px;
+    object-fit: contain;
+}
+
+.dsk-plugin-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    background: #fff;
+}
+
+.dsk-plugin-frame {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border: 0;
+    background: #fff;
+}
+
 .dsk-window:not(.active) .dsk-titlebar-icon {
     color: #7e8ca3;
 }
@@ -5658,6 +5688,199 @@ body.resizing .term-host {
     border-radius: 6px;
     font-size: 13px;
     flex: 0 0 auto;
+}
+
+.dsk-start-appico.has-img {
+    background: #eef3fb !important;
+    box-shadow: none;
+}
+
+.dsk-start-appico img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border-radius: 8px;
+    object-fit: contain;
+}
+
+.dsk-start-appico.small img {
+    border-radius: 6px;
+}
+
+.dsk-start-sec-plugins {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dsk-start-sec-link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: #3d7eff;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.dsk-start-sec-link:hover {
+    text-decoration: underline;
+}
+
+.dsk-start-plugin-empty {
+    margin: 2px 0 8px;
+    padding: 10px 8px;
+    border: 1px dashed #d7e2f2;
+    border-radius: 7px;
+    color: #9aa7bd;
+    font-size: 11.5px;
+    text-align: center;
+}
+
+.dsk-start-plugin-empty button {
+    padding: 0 3px;
+    border: none;
+    background: none;
+    color: #3d7eff;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.dsk-start-plugin-empty button:hover {
+    text-decoration: underline;
+}
+
+/* ---------- 桌面应用插件管理 ---------- */
+.plugin-dialog {
+    max-width: 94vw;
+}
+
+.plugin-dialog .el-dialog__body {
+    padding: 10px 20px 4px;
+}
+
+.plugin-mgr-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 9px 12px;
+    border-radius: 6px;
+    background: #eef5ff;
+    color: #3d6fb8;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.plugin-mgr-hint i {
+    margin-top: 2px;
+}
+
+.plugin-mgr-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0 8px;
+}
+
+.plugin-mgr-actions .dim {
+    color: #9aa7bd;
+    font-size: 11.5px;
+}
+
+.plugin-mgr-error {
+    margin: 6px 0;
+    color: var(--err);
+    font-size: 12px;
+}
+
+.plugin-mgr-list {
+    min-height: 90px;
+    max-height: 340px;
+    overflow: auto;
+    border: 1px solid #e8edf5;
+    border-radius: 7px;
+}
+
+.plugin-mgr-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #f1f4f9;
+}
+
+.plugin-mgr-item:last-child {
+    border-bottom: none;
+}
+
+.plugin-mgr-icon {
+    flex: 0 0 38px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 9px;
+    background: #eef3fb;
+    color: #5b8def;
+    font-size: 20px;
+}
+
+.plugin-mgr-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.plugin-mgr-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.plugin-mgr-name {
+    color: #2b3442;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.plugin-mgr-version {
+    margin-left: 6px;
+    color: #8a96a6;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.plugin-mgr-desc {
+    margin-top: 2px;
+    overflow: hidden;
+    color: #6b7280;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plugin-mgr-meta {
+    margin-top: 2px;
+    color: #9aa7bd;
+    font-size: 11px;
+}
+
+.plugin-mgr-empty {
+    padding: 26px;
+    color: #9aa7bd;
+    font-size: 12px;
+    text-align: center;
+}
+
+.plugin-mgr-tip {
+    margin-top: 10px;
+    color: #9aa7bd;
+    font-size: 11.5px;
+    line-height: 1.6;
+}
+
+.plugin-mgr-tip i {
+    margin-right: 4px;
 }
 
 .dsk-start-applabel {
