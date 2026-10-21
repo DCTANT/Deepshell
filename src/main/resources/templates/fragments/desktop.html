@@ -1,0 +1,2813 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<body>
+<!-- AI 可视化桌面（虚拟桌面 + 多窗口资源管理器） -->
+    <div th:fragment="desktop" class="ai-desktop" v-if="desktop.visible" ref="desktopRoot" tabindex="-1"
+         :class="{ 'dsk-scheme-dark': desktopAppearanceScheme === 'dark',
+                    'dsk-scheme-light': desktopAppearanceScheme === 'light' }"
+         :style="desktopThemeStyle" :data-dsk-theme="desktopAppearance.theme"
+         @click="onDesktopSurfaceClick" @mousedown="touchDesktopActivity"
+         @wheel="touchDesktopActivity" @touchstart="touchDesktopActivity">
+        <div class="dsk-wallpaper" :class="{ 'drop-active': desktop.wallDropActive }"
+             @click="onDesktopSurfaceClick"
+             @mousedown="onDesktopIconsMouseDown"
+             @contextmenu.prevent="onDesktopWallContextMenu"
+             @dragover="onDesktopWallDragOver"
+             @dragleave="onDesktopWallDragLeave"
+             @drop="onDesktopWallDrop">
+            <div class="dsk-wallpaper-img" v-if="desktopBgSettings.url"
+                 :style="{ backgroundImage: 'url(' + desktopBgSettings.url + ')',
+                           opacity: desktopBgSettings.opacity,
+                           filter: desktopBgSettings.blur
+                               ? ('blur(' + desktopBgSettings.blur + 'px)') : 'none' }"></div>
+            <div class="dsk-wall-drop-hint" v-if="desktop.wallDropActive">
+                <i class="el-icon-download"></i>
+                <span>松开后选择复制或剪切到桌面</span>
+            </div>
+        </div>
+
+        <div class="dsk-marquee" v-if="desktop.iconMarquee.visible"
+             :style="{ left: desktop.iconMarquee.left + 'px', top: desktop.iconMarquee.top + 'px',
+                       width: desktop.iconMarquee.width + 'px', height: desktop.iconMarquee.height + 'px' }"></div>
+
+        <div class="dsk-icons">
+            <div v-for="icon in desktopIconItems" :key="icon.key" class="dsk-icon"
+                 :class="{ selected: isDesktopIconSelected(icon.key),
+                           dragging: desktop.iconDragKey === icon.key,
+                           'drop-target': desktop.iconDropKey === icon.key }"
+                 :data-icon-key="icon.key" :title="icon.label" draggable="true"
+                 @click.stop="selectDesktopIcon(icon, $event)"
+                 @dblclick.stop="openDesktopIcon(icon)"
+                 @contextmenu.prevent.stop="openDesktopIconMenu($event, icon)"
+                 @dragstart.stop="onDesktopIconDragStart($event, icon)"
+                 @dragend.stop="onDesktopIconDragEnd"
+                 @dragover.prevent.stop="onDesktopIconDragOver($event, icon)"
+                 @dragleave.stop="onDesktopIconDragLeave(icon)"
+                 @drop.prevent.stop="onDesktopIconDrop($event, icon)">
+                <span v-if="icon.type === 'app'" class="dsk-icon-app"
+                      :style="desktopAppIconStyle(icon)">
+                    <i :class="icon.icon"></i>
+                </span>
+                <span v-else class="dsk-icon-file-wrap">
+                    <svg v-if="icon.isFolderVisual" class="dsk-folder-svg dsk-icon-folder"
+                         viewBox="0 0 64 52" aria-hidden="true">
+                        <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
+                        <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
+                        <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
+                    </svg>
+                    <img v-else-if="icon.thumb" class="dsk-icon-thumb" :src="icon.thumb"
+                         :alt="icon.label" decoding="async" draggable="false"
+                         @error="onDeskSurfaceThumbError(icon)">
+                    <span v-else class="dsk-file-ico" :class="'fi-' + icon.kind">
+                        <span class="dsk-ext" :class="{ long: icon.ext.length > 3 }">{{ icon.ext }}</span>
+                    </span>
+                    <i v-if="icon.type === 'shortcut'" class="el-icon-link dsk-icon-shortcut-mark"></i>
+                </span>
+                <span class="dsk-icon-name">{{ icon.label }}</span>
+            </div>
+            <div class="dsk-icons-msg" v-if="desktop.surface.loading">
+                <i class="el-icon-loading"></i> 正在读取桌面…
+            </div>
+            <div class="dsk-icons-msg error" v-else-if="desktop.surface.error">
+                <i class="el-icon-warning-outline"></i> {{ desktop.surface.error }}
+            </div>
+        </div>
+
+        <div class="dsk-snap-preview" v-if="desktop.snapPreview.visible"
+             :class="'snap-' + desktop.snapPreview.kind"
+             :style="{ left: desktop.snapPreview.x + 'px', top: desktop.snapPreview.y + 'px',
+                       width: desktop.snapPreview.w + 'px', height: desktop.snapPreview.h + 'px' }"></div>
+
+        <div class="dsk-window-layer">
+            <div v-for="w in desktop.windows" :key="w.id" class="dsk-window"
+                 :class="{ active: w.id === desktop.activeWinId, maximized: w.max,
+                           dragging: w.dragging, resizing: w.resizing }"
+                 :style="desktopWindowStyle(w)" :data-win-id="w.id" v-show="!w.min"
+                 @mousedown.capture="activateDesktopWindow(w.id)"
+                 @dragenter.capture="activateDesktopWindow(w.id)"
+                 @dragover="onDesktopWindowDragOver($event, w)"
+                 @dragleave="onDesktopWindowDragLeave($event, w)"
+                 @drop="onDesktopWindowDrop($event, w)">
+                <div class="dsk-titlebar" @mousedown="startDesktopWindowDrag($event, w)"
+                     @dblclick="toggleDesktopWindowMax(w)">
+                    <span class="dsk-titlebar-icon">
+                        <img v-if="w.type === 'plugin' && w.pluginIconUrl" :src="w.pluginIconUrl"
+                             class="dsk-plugin-title-icon" alt="">
+                        <i v-else :class="desktopWindowIcon(w)"></i>
+                    </span>
+                    <span class="dsk-titlebar-text">
+                        <span class="dsk-titlebar-title">{{ desktopWindowTitle(w) }}</span>
+                        <span class="dsk-titlebar-sub" :title="desktopWindowSubtitle(w)">
+                            {{ desktopWindowSubtitle(w) }}
+                        </span>
+                    </span>
+                    <span class="spacer"></span>
+                    <span class="dsk-win-actions" @mousedown.stop @dblclick.stop>
+                        <button class="dsk-win-btn" title="最小化"
+                                @click.stop="minimizeDesktopWindow(w)"><i class="el-icon-minus"></i></button>
+                        <button class="dsk-win-btn" :title="w.max ? '向下还原' : '最大化'"
+                                @click.stop="toggleDesktopWindowMax(w)">
+                            <i :class="w.max ? 'el-icon-copy-document' : 'el-icon-full-screen'"></i>
+                        </button>
+                        <button class="dsk-win-btn close" title="关闭"
+                                @click.stop="closeDesktopWindow(w)"><i class="el-icon-close"></i></button>
+                    </span>
+                </div>
+
+                <template v-if="w.type === 'terminal'">
+                    <div class="dsk-terminal-body" v-if="w.termTab">
+                        <div class="dsk-term" :ref="'desk-term-' + w.id"></div>
+                        <term-cmd-bar :tab="w.termTab" context="window"></term-cmd-bar>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'transfer'">
+                    <div class="dsk-transfer-body">
+                        <div class="xfer-win-head">
+                            <i class="el-icon-s-promotion"></i>
+                            <span class="xfer-win-title">全部会话</span>
+                            <span class="xfer-pop-sub" v-if="transferActiveCount">进行中 {{ transferActiveCount }}</span>
+                            <span class="spacer"></span>
+                            <el-button size="mini" type="text"
+                                       @click="clearFinishedTransfers">清除已完成</el-button>
+                        </div>
+                        <xfer-list :items="transfers" @cancel="cancelTransfer" @retry="retryTransfer"
+                                   @summary="showLocalDownloadSummary" @remove="removeTransfer"></xfer-list>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'connect'">
+                    <div class="dsk-conn-body">
+                        <div class="conn-dlg-head">
+                            <el-radio-group v-model="connFilter" size="mini">
+                                <el-radio-button label="all">全部</el-radio-button>
+                                <el-radio-button label="fav">收藏</el-radio-button>
+                            </el-radio-group>
+                            <el-input v-model="connKeyword" size="mini" prefix-icon="el-icon-search" clearable
+                                      placeholder="搜索名称 / 主机 / 用户名" class="conn-dlg-search"></el-input>
+                            <span class="conn-dlg-actions" v-if="connFilter === 'all' && folders.length">
+                                <el-button size="mini" type="text" @click="expandAllFolders(true)">展开全部</el-button>
+                                <el-button size="mini" type="text" @click="expandAllFolders(false)">收起全部</el-button>
+                            </span>
+                        </div>
+                        <div class="conn-dlg-list dsk-conn-list">
+                            <template v-for="row in connRows">
+                                <div v-if="row._rowType === 'section'" :key="row.key" class="conn-sec">
+                                    <i :class="row.icon"></i> {{ row.label }}
+                                </div>
+                                <div v-else-if="row._rowType === 'sep'" :key="row.key" class="conn-sep"></div>
+                                <div v-else-if="row._rowType === 'folder'" :key="row.key" class="conn-row is-folder"
+                                     :class="{ 'drop-target': connDragOverId === row.id }"
+                                     :style="{ paddingLeft: (8 + row.depth * 18) + 'px' }" @click="toggleFolder(row.id)"
+                                     @dragover.prevent="onFolderDragOver(row)" @dragleave="onFolderDragLeave(row)"
+                                     @drop.prevent="onConnDrop(row)">
+                                    <i class="conn-row-arrow"
+                                       :class="connExpanded[row.id] ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
+                                    <i class="el-icon-folder conn-row-icon"></i>
+                                    <span class="conn-row-name">{{ row.name }}</span>
+                                    <span class="conn-row-folder-ops">
+                                        <i class="el-icon-edit" title="重命名文件夹" @click.stop="renameFolderQuick(row)"></i>
+                                        <i class="el-icon-delete" title="删除文件夹（内容上移到上一级）"
+                                           @click.stop="removeFolderQuick(row)"></i>
+                                    </span>
+                                    <span class="conn-row-count">{{ row._count }} 项</span>
+                                </div>
+                                <div v-else :key="row.key" class="conn-row" :draggable="!row.noDrag"
+                                     :title="'在新标签页打开「' + row.name + '」的 AI 桌面'"
+                                     :class="{ 'drop-before': connDropKey === row.key && connDropPos === 'before',
+                                               'drop-after': connDropKey === row.key && connDropPos === 'after' }"
+                                     :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }"
+                                     @click="desktopConnOpen(row)"
+                                     @dragover.prevent="onConnRowDragOver($event, row)" @dragleave="onConnRowDragLeave(row)"
+                                     @drop.prevent="onConnRowDrop($event, row)"
+                                     @dragstart="onConnDragStart($event, row)" @dragend="onConnDragEnd">
+                                    <i class="el-icon-monitor conn-row-icon"></i>
+                                    <span class="conn-row-name">{{ row.name }}</span>
+                                    <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
+                                    <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                                    <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
+                                    <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
+                                                :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">
+                                        <div class="conn-set">
+                                            <div class="conn-set-row">
+                                                <span><i class="el-icon-top"></i> 置顶显示</span>
+                                                <el-switch :value="row.pinned" size="mini"
+                                                           @change="setConnFlag(row.id, 'pinned', $event)"></el-switch>
+                                            </div>
+                                            <div class="conn-set-row">
+                                                <span><i class="el-icon-star-on"></i> 收藏</span>
+                                                <el-switch :value="row.favorite" size="mini"
+                                                           @change="setConnFlag(row.id, 'favorite', $event)"></el-switch>
+                                            </div>
+                                            <div class="conn-set-row conn-set-action" @click="editConnFromDialog(row.id)">
+                                                <span><i class="el-icon-edit"></i> 编辑连接</span>
+                                                <i class="el-icon-arrow-right"></i>
+                                            </div>
+                                            <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
+                                                <span><i class="el-icon-document-copy"></i> 复制连接</span>
+                                            </div>
+                                            <div class="conn-set-row conn-set-action conn-set-danger"
+                                                 @click="removeConnFromDialog(row.id)">
+                                                <span><i class="el-icon-delete"></i> 删除连接</span>
+                                            </div>
+                                            <div class="conn-set-hint">置顶后显示在列表顶部，收藏可用顶部「收藏」筛选</div>
+                                        </div>
+                                        <i slot="reference" class="el-icon-setting conn-set-btn" title="连接设置"
+                                           @click.stop></i>
+                                    </el-popover>
+                                </div>
+                            </template>
+                            <div v-if="!connRows.length" class="panel-tip">
+                                {{ connFilter === 'fav'
+                                    ? '暂无收藏的连接（点击连接右侧 ⚙ 可收藏）'
+                                    : (connKeyword ? '没有匹配的连接' : '暂无连接，点击下方「新建连接」直接创建') }}
+                            </div>
+                        </div>
+                        <div class="conn-dlg-tip">
+                            <i class="el-icon-info"></i> 单击连接会在新标签页打开该连接的 AI 桌面；拖动可排序或移入文件夹
+                        </div>
+                        <div class="dsk-conn-foot">
+                            <el-button size="mini" icon="el-icon-upload2"
+                                       @click="connImportVisible = true">连接导入</el-button>
+                            <el-button size="mini" icon="el-icon-download" @click="openConnExport">连接导出</el-button>
+                            <el-button size="mini" icon="el-icon-folder-add"
+                                       @click="newFolderQuick(null)">新建文件夹</el-button>
+                            <span class="spacer"></span>
+                            <el-button size="mini" type="primary" icon="el-icon-plus"
+                                       @click="openNewConnDialog">新建连接</el-button>
+                        </div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'dirs'">
+                    <div class="dsk-tool-body dsk-dirs-body">
+                        <div class="dirs" v-if="uiTab && uiTab.sessionId">
+                            <div class="dirs-toolbar">
+                                <el-input size="mini" v-model="newDirPath" class="dirs-input"
+                                          placeholder="目录路径，如 /home/user"
+                                          @keyup.enter.native="addCommonDir">
+                                    <el-button slot="append" icon="el-icon-plus" title="添加"
+                                               @click="addCommonDir"></el-button>
+                                </el-input>
+                                <el-button size="mini" icon="el-icon-location-outline"
+                                           title="把当前目录加入常用" :disabled="!uiCurrentDir"
+                                           @click="addCurrentDir"></el-button>
+                            </div>
+                            <div class="dirs-current" v-if="uiCurrentDir">
+                                当前目录：<span class="dirs-current-path">{{ uiCurrentDir }}</span>
+                            </div>
+                            <div class="dirs-list">
+                                <div class="dir-item" v-for="d in commonDirs" :key="d.id"
+                                     :title="'cd 到 ' + d.path" @click="cdIntoDir(d)">
+                                    <i class="el-icon-folder-opened dir-ico"></i>
+                                    <span class="dir-path">{{ d.path }}</span>
+                                    <i class="el-icon-close dir-del" title="从常用目录移除"
+                                       @click.stop="removeCommonDir(d)"></i>
+                                </div>
+                                <div v-if="!commonDirs.length" class="panel-tip">
+                                    还没有常用目录：浏览到目标目录后可点右侧定位按钮添加，或在上方输入路径
+                                </div>
+                            </div>
+                            <div class="dsk-tool-hint">
+                                <i class="el-icon-info"></i> 单击目录会在终端执行 cd，并让资源管理器跳转到该目录
+                            </div>
+                        </div>
+                        <div v-else class="panel-tip">连接建立后即可使用常用目录</div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'cmd'">
+                    <div class="dsk-tool-body dsk-cmds-body">
+                        <div class="cmds">
+                            <div class="dsk-cmd-target-note">
+                                <i class="el-icon-connection"></i>
+                                发送到当前桌面会话：{{ uiTab ? uiTab.title : '未连接' }}
+                            </div>
+                            <div class="cmd-list">
+                                <div class="cmd-item" v-for="c in snippets" :key="c.id"
+                                     :title="c.command" @click="runSnippet(c)">
+                                    <i class="el-icon-caret-right"></i>
+                                    <span class="cmd-name">{{ c.name }}</span>
+                                    <span class="cmd-text">{{ c.command }}</span>
+                                    <i class="el-icon-edit cmd-edit" title="编辑"
+                                       @click.stop="openCmdEdit(c)"></i>
+                                    <i class="el-icon-plus cmd-send" title="仅填入，不执行"
+                                       @click.stop="fillSnippet(c)"></i>
+                                </div>
+                                <div v-if="!snippets.length" class="panel-tip">
+                                    还没有快捷命令，可直接在下方输入框添加
+                                </div>
+                            </div>
+                            <div class="cmd-add">
+                                <el-input size="mini" v-model="newCmd.name" placeholder="名称"
+                                          class="cmd-add-name"></el-input>
+                                <el-input size="mini" v-model="newCmd.command" placeholder="命令，如 df -h"
+                                          class="cmd-add-cmd" @keyup.enter.native="addSnippet"></el-input>
+                                <el-button size="mini" type="primary" icon="el-icon-plus" title="添加"
+                                           @click="addSnippet"></el-button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'disk'">
+                    <div class="dsk-disk-body">
+                        <disk-analyzer :tab="w"
+                                       :session-id="desktopTab ? desktopTab.sessionId : ''"
+                                       :home-dir="desktopHomeDir" context="window"></disk-analyzer>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'ai'">
+                    <div class="dsk-ai-body">
+                        <ai-chat-panel v-if="desktopTab" ref="aiChatWinPanel"
+                                       :tab="desktopTab" context="window"></ai-chat-panel>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'taskmgr'">
+                    <div class="dsk-tm">
+                        <aside class="tm-side">
+                            <div class="tm-side-head">
+                                <span class="tm-side-logo"><i class="el-icon-cpu"></i></span>
+                                <span class="tm-side-title">任务管理器</span>
+                            </div>
+                            <button v-for="n in tmNavItems" :key="'tmnav' + n.id" type="button"
+                                    class="tm-nav-item" :class="{ active: taskmgr.tab === n.id }"
+                                    @click="switchTaskmgrTab(n.id)">
+                                <i :class="n.icon"></i>
+                                <span class="tm-nav-label">{{ n.label }}</span>
+                                <span class="tm-nav-count" v-if="n.id === 'processes'">{{ tmProcessCount }}</span>
+                            </button>
+                            <span class="spacer"></span>
+                            <div class="tm-side-conn" :title="tmHostTitle">
+                                <span class="tm-dot" :class="{ on: desktopTab && desktopTab.status === 'open' }"></span>
+                                <span class="tm-side-host">{{ tmHostTitle }}</span>
+                            </div>
+                            <div class="tm-side-note">DeepShell 桌面</div>
+                        </aside>
+
+                        <section class="tm-main">
+                            <!-- 进程 -->
+                            <template v-if="taskmgr.tab === 'processes'">
+                                <div class="tm-page tm-page-proc">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>进程</h2>
+                                            <div class="tm-page-sub">
+                                                {{ tmProcessCount }} 个进程 · CPU {{ tmCpuText }} · 内存 {{ tmMemText }}
+                                            </div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <div class="tm-run-wrap">
+                                            <button type="button" class="tm-btn"
+                                                    :class="{ active: taskmgr.runVisible }"
+                                                    @click.stop="toggleTaskmgrRun">
+                                                <i class="el-icon-plus"></i>运行新任务
+                                            </button>
+                                            <div class="tm-run-pop" v-if="taskmgr.runVisible" @click.stop @mousedown.stop>
+                                                <div class="tm-run-title">新建任务</div>
+                                                <el-input ref="tmRunInput" v-model="taskmgr.runText" size="mini"
+                                                          placeholder="如：资源管理器、终端、AI 终端"
+                                                          @keyup.enter.native="runTaskmgrCommand"></el-input>
+                                                <div class="tm-run-hint">
+                                                    支持：资源管理器 / 终端 / AI 终端 / 传输中心 / 磁盘 / 任务管理器 / 设置
+                                                </div>
+                                                <div class="tm-run-actions">
+                                                    <button type="button" class="tm-btn"
+                                                            @click="taskmgr.runVisible = false">取消</button>
+                                                    <button type="button" class="tm-btn primary"
+                                                            @click="runTaskmgrCommand">确定</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <el-input v-model="taskmgr.search" size="mini" clearable
+                                                  prefix-icon="el-icon-search" class="tm-search"
+                                                  placeholder="搜索进程"></el-input>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-proc-viewport">
+                                        <div class="tm-proc-head tm-proc-grid">
+                                            <span class="tm-name-cell">名称</span>
+                                            <span>状态</span>
+                                            <span class="tm-th-sort" @click="sortTaskmgrProcesses('cpu')">
+                                                CPU<i :class="tmProcSortIcon('cpu')"></i>
+                                            </span>
+                                            <span class="tm-th-sort" @click="sortTaskmgrProcesses('mem')">
+                                                内存<i :class="tmProcSortIcon('mem')"></i>
+                                            </span>
+                                            <span class="tm-num">磁盘</span>
+                                            <span class="tm-num">网络</span>
+                                        </div>
+                                        <div class="tm-proc-scroll">
+                                            <div class="tm-group-row" @click="taskmgr.collapsedApps = !taskmgr.collapsedApps">
+                                                <i :class="taskmgr.collapsedApps ? 'el-icon-arrow-right' : 'el-icon-arrow-down'"></i>
+                                                <i class="el-icon-files tm-group-icon"></i>
+                                                <span>应用</span>
+                                                <span class="tm-group-count">{{ tmApps.length }}</span>
+                                            </div>
+                                            <template v-if="!taskmgr.collapsedApps">
+                                                <div v-for="win in tmApps" :key="'tmapp' + win.id"
+                                                     class="tm-proc-row tm-proc-grid"
+                                                     :class="{ selected: taskmgr.selected === ('win:' + win.id) }"
+                                                     @click="selectTaskmgrRow('win:' + win.id)"
+                                                     @dblclick="activateTaskmgrWindow(win)"
+                                                     @contextmenu.prevent.stop="openTaskmgrContextMenu($event, 'app', 'win:' + win.id)">
+                                                    <span class="tm-name-cell">
+                                                        <span class="tm-appico" :style="{ background: tmWindowColor(win) }">
+                                                            <i :class="tmWindowIcon(win)"></i>
+                                                        </span>
+                                                        <span class="tm-pname" :title="desktopWindowTitle(win)">{{ desktopWindowTitle(win) }}</span>
+                                                    </span>
+                                                    <span class="tm-state" :class="{ odd: win.min }">
+                                                        {{ win.min ? '已挂起' : '正在运行' }}
+                                                    </span>
+                                                    <span class="tm-num">{{ tmFmtPct(win.tmCpu) }}</span>
+                                                    <span class="tm-num">{{ fmtMb(win.tmMem) }}</span>
+                                                    <span class="tm-num">{{ tmFmtDisk(win.tmDisk) }}</span>
+                                                    <span class="tm-num">{{ tmFmtNet(win.tmNet) }}</span>
+                                                </div>
+                                                <div class="tm-empty small" v-if="!tmApps.length">
+                                                    {{ taskmgr.search ? '没有匹配的应用' : '没有正在运行的应用' }}
+                                                </div>
+                                            </template>
+
+                                            <div class="tm-group-row" @click="taskmgr.collapsedBg = !taskmgr.collapsedBg">
+                                                <i :class="taskmgr.collapsedBg ? 'el-icon-arrow-right' : 'el-icon-arrow-down'"></i>
+                                                <i class="el-icon-s-cooperation tm-group-icon"></i>
+                                                <span>后台进程</span>
+                                                <span class="tm-group-count">{{ tmBackground.length }}</span>
+                                            </div>
+                                            <template v-if="!taskmgr.collapsedBg">
+                                                <div v-for="p in tmBackground" :key="'tmbg' + p.pid"
+                                                     class="tm-proc-row tm-proc-grid"
+                                                     :class="{ selected: taskmgr.selected === ('bg:' + p.pid) }"
+                                                     @click="selectTaskmgrRow('bg:' + p.pid)"
+                                                     @contextmenu.prevent.stop="openTaskmgrContextMenu($event, 'bg', 'bg:' + p.pid)">
+                                                    <span class="tm-name-cell">
+                                                        <span class="tm-appico" :style="{ background: p.color }">
+                                                            <i :class="p.icon"></i>
+                                                        </span>
+                                                        <span class="tm-pname" :title="p.name">{{ p.name }}</span>
+                                                    </span>
+                                                    <span class="tm-state" :class="{ odd: p.status === '已停止' }">{{ p.status }}</span>
+                                                    <span class="tm-num">{{ tmFmtPct(p.cpu) }}</span>
+                                                    <span class="tm-num">{{ fmtMb(p.mem) }}</span>
+                                                    <span class="tm-num">{{ tmFmtDisk(p.disk) }}</span>
+                                                    <span class="tm-num">{{ tmFmtNet(p.net) }}</span>
+                                                </div>
+                                                <div class="tm-empty small" v-if="!tmBackground.length">
+                                                    {{ taskmgr.search ? '没有匹配的后台进程' : '暂无后台进程' }}
+                                                </div>
+                                            </template>
+                                        </div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-proc-foot">
+                                        <span class="tm-foot-hint" v-if="tmSelectedLabel">
+                                            已选择：{{ tmSelectedLabel }}
+                                        </span>
+                                        <span class="tm-foot-hint dim" v-else>双击应用可切换窗口 · 应用占用为估算值</span>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn danger" :disabled="!tmCanEndSelected"
+                                                @click="endTaskmgrSelected">
+                                            <i class="el-icon-close"></i>结束任务
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 性能 -->
+                            <template v-else-if="taskmgr.tab === 'performance'">
+                                <div class="tm-page tm-page-perf">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>性能</h2>
+                                            <div class="tm-page-sub">服务器 {{ tmHostName }} · 每 3 秒采样</div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <span class="tm-live" :class="{ off: !tmStatsReady }">
+                                            <i></i>{{ tmStatsReady ? '实时' : '等待数据' }}
+                                        </span>
+                                    </div>
+                                    <div class="tm-perf-cards">
+                                        <button v-for="p in tmPerfItems" :key="'tmperf' + p.id" type="button"
+                                                class="tm-perf-card" :class="{ active: taskmgr.perfItem === p.id }"
+                                                @click="taskmgr.perfItem = p.id">
+                                            <span class="tm-perf-card-head">
+                                                <i :class="p.icon"></i>{{ p.label }}
+                                            </span>
+                                            <b>{{ tmPerfValue(p.id) }}</b>
+                                            <svg class="tm-spark" viewBox="0 0 100 26" preserveAspectRatio="none">
+                                                <polyline :points="tmSparkPoints(p.id)"
+                                                          :class="'tm-spark-line perf-' + p.id"></polyline>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div class="tm-perf-panel">
+                                        <div class="tm-perf-head">
+                                            <div class="tm-perf-name">
+                                                <h3>{{ tmPerfTitle }}</h3>
+                                                <span>{{ tmPerfSubtitle }}</span>
+                                            </div>
+                                            <span class="spacer"></span>
+                                            <div class="tm-perf-now" v-if="taskmgr.perfItem === 'network'">
+                                                <span class="net-down">↓ {{ fmtRate(tmRxRate) }}</span>
+                                                <span class="net-up">↑ {{ fmtRate(tmTxRate) }}</span>
+                                            </div>
+                                            <div class="tm-perf-now" v-else>
+                                                <b>{{ tmPerfBigValue }}</b><small>{{ tmPerfUnit }}</small>
+                                            </div>
+                                        </div>
+                                        <div class="tm-chart">
+                                            <div class="tm-chart-grid"></div>
+                                            <svg class="tm-chart-svg" viewBox="0 0 100 40" preserveAspectRatio="none">
+                                                <polygon :points="tmChartAreaPoints"
+                                                         :class="'tm-area perf-' + taskmgr.perfItem"></polygon>
+                                                <template v-if="taskmgr.perfItem === 'network'">
+                                                    <polyline :points="tmChartPoints('rx')" class="tm-line net-rx"></polyline>
+                                                    <polyline :points="tmChartPoints('tx')" class="tm-line net-tx"></polyline>
+                                                </template>
+                                                <polyline v-else :points="tmChartPoints(taskmgr.perfItem)"
+                                                          :class="'tm-line perf-' + taskmgr.perfItem"></polyline>
+                                            </svg>
+                                            <div class="tm-chart-y"><span>{{ tmChartMaxLabel }}</span><span>0</span></div>
+                                            <div class="tm-chart-empty" v-if="!tmChartHasData">
+                                                <i :class="tmStatsError ? 'el-icon-warning-outline' : 'el-icon-loading'"></i>
+                                                <span>{{ tmChartEmptyText }}</span>
+                                            </div>
+                                            <div class="tm-chart-foot">
+                                                <span>最近 2 分钟</span>
+                                                <span v-if="taskmgr.perfItem === 'network'" class="tm-legend">
+                                                    <i class="rx"></i>接收<i class="tx"></i>发送
+                                                </span>
+                                                <span v-else>{{ tmSampleCaption }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="tm-sysinfo-tip" v-if="taskmgr.sysInfoLoading">
+                                            <i class="el-icon-loading"></i>正在读取服务器详细信息…
+                                        </div>
+                                        <div class="tm-sysinfo-tip error" v-else-if="taskmgr.sysInfoError">
+                                            <i class="el-icon-warning-outline"></i>{{ taskmgr.sysInfoError }}
+                                            <button type="button" class="tm-link" @click="loadTaskmgrSysInfo(true)">重试</button>
+                                        </div>
+                                        <div class="tm-kv-grid" v-if="taskmgr.perfItem === 'cpu'">
+                                            <div class="tm-kv"><span>利用率</span><b>{{ tmPerfValue('cpu') }}</b></div>
+                                            <div class="tm-kv"><span>进程数</span><b>{{ tmProcessCount }}</b></div>
+                                            <div class="tm-kv"><span>窗口数</span><b>{{ desktop.windows.length }}</b></div>
+                                            <div class="tm-kv"><span>服务器运行时长</span><b>{{ tmServerUptime }}</b></div>
+                                            <div class="tm-kv"><span>型号</span><b>{{ tmCpuModel }}</b></div>
+                                            <div class="tm-kv"><span>核心数</span><b>{{ tmCpuCores }}</b></div>
+                                            <div class="tm-kv"><span>主频</span><b>{{ tmCpuSpeed }}</b></div>
+                                            <div class="tm-kv"><span>负载（1 分钟）</span><b>{{ tmLoad1 }}</b></div>
+                                        </div>
+                                        <div class="tm-kv-grid" v-else-if="taskmgr.perfItem === 'memory'">
+                                            <div class="tm-kv"><span>使用中</span><b>{{ fmtMb(tmStats ? tmStats.memUsedMb : null) }}</b></div>
+                                            <div class="tm-kv"><span>可用</span><b>{{ tmMemAvailable }}</b></div>
+                                            <div class="tm-kv"><span>总计</span><b>{{ fmtMb(tmStats ? tmStats.memTotalMb : null) }}</b></div>
+                                            <div class="tm-kv"><span>使用率</span><b>{{ tmPerfValue('memory') }}</b></div>
+                                            <div class="tm-kv"><span>交换分区已用</span><b>{{ tmSwapUsed }}</b></div>
+                                            <div class="tm-kv"><span>交换分区总计</span><b>{{ tmSwapTotal }}</b></div>
+                                            <div class="tm-kv"><span>交换使用率</span><b>{{ tmSwapPct }}</b></div>
+                                            <div class="tm-kv"><span>监控主机</span><b>{{ tmHostName }}</b></div>
+                                        </div>
+                                        <div class="tm-kv-grid" v-else-if="taskmgr.perfItem === 'disk'">
+                                            <div class="tm-kv"><span>挂载点</span><b>{{ tmDiskInfo ? tmDiskInfo.mount : '—' }}</b></div>
+                                            <div class="tm-kv"><span>文件系统</span><b>{{ tmDiskInfo ? tmDiskInfo.fs : '—' }}</b></div>
+                                            <div class="tm-kv"><span>总容量</span><b>{{ tmDiskTotal }}</b></div>
+                                            <div class="tm-kv"><span>已用</span><b>{{ tmDiskUsed }}</b></div>
+                                            <div class="tm-kv"><span>可用</span><b>{{ tmDiskFree }}</b></div>
+                                            <div class="tm-kv"><span>使用率</span><b>{{ tmPerfValue('disk') }}</b></div>
+                                        </div>
+                                        <div class="tm-kv-grid" v-else>
+                                            <div class="tm-kv"><span>接收速率</span><b>{{ fmtRate(tmRxRate) }}</b></div>
+                                            <div class="tm-kv"><span>发送速率</span><b>{{ fmtRate(tmTxRate) }}</b></div>
+                                            <div class="tm-kv"><span>累计接收</span><b>{{ tmNetRxTotal }}</b></div>
+                                            <div class="tm-kv"><span>累计发送</span><b>{{ tmNetTxTotal }}</b></div>
+                                            <div class="tm-kv"><span>网卡</span><b>{{ tmNetAdapter }}</b></div>
+                                            <div class="tm-kv"><span>连接主机</span><b>{{ tmHostName }}</b></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 应用历史记录 -->
+                            <template v-else-if="taskmgr.tab === 'history'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>应用历史记录</h2>
+                                            <div class="tm-page-sub">本次桌面会话 · CPU 时间与网络为桌面应用估算值</div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn" @click="clearTaskmgrHistory">
+                                            <i class="el-icon-delete"></i>清除历史记录
+                                        </button>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name">名称</th>
+                                                    <th class="num">CPU 时间</th>
+                                                    <th class="num">网络</th>
+                                                    <th class="num">内存峰值</th>
+                                                    <th class="num">打开次数</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="h in tmHistoryRows" :key="'tmh' + h.type">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-appico" :style="{ background: h.color }">
+                                                                <i :class="h.icon"></i>
+                                                            </span>
+                                                            <span class="tm-pname">{{ h.label }}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td class="num">{{ tmFmtCpuTime(h.cpuSec) }}</td>
+                                                    <td class="num">{{ fmtSize(h.netBytes) }}</td>
+                                                    <td class="num">{{ fmtMb(h.memPeak) }}</td>
+                                                    <td class="num">{{ h.opens }} 次</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="tm-empty" v-if="!tmHistoryRows.length">
+                                                <i class="el-icon-time"></i>
+                                                <p>还没有应用使用记录</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 启动应用 -->
+                            <template v-else-if="taskmgr.tab === 'startup'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>启动应用</h2>
+                                            <div class="tm-page-sub">启用后，下次进入 AI 可视化桌面时自动打开</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-startup-list">
+                                        <div v-for="a in tmStartupApps" :key="'tmst' + a.id" class="tm-startup-row">
+                                            <span class="tm-appico big" :style="{ background: a.color }">
+                                                <i :class="a.icon"></i>
+                                            </span>
+                                            <div class="tm-startup-main">
+                                                <b>{{ a.label }}</b>
+                                                <span>{{ a.desc }}</span>
+                                            </div>
+                                            <div class="tm-startup-impact">
+                                                启动影响
+                                                <em :class="'impact-' + a.impactLevel">{{ a.impact }}</em>
+                                            </div>
+                                            <button type="button" class="tm-toggle"
+                                                    :class="{ on: !!(taskmgr.startup[a.id]) }"
+                                                    :title="taskmgr.startup[a.id] ? '禁用启动' : '启用启动'"
+                                                    @click="toggleTaskmgrStartup(a.id)">
+                                                <span></span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note">
+                                        启动应用不会影响当前已经打开的窗口；关闭并重新进入桌面后生效。
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 用户 -->
+                            <template v-else-if="taskmgr.tab === 'users'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>用户</h2>
+                                            <div class="tm-page-sub">当前浏览器中打开的 SSH 登录会话</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name">用户</th>
+                                                    <th>状态</th>
+                                                    <th>主机</th>
+                                                    <th>会话</th>
+                                                    <th class="num">CPU</th>
+                                                    <th class="num">内存</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="u in tmUserRows" :key="'tmu' + u.key">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-user-avatar"><i class="el-icon-user-solid"></i></span>
+                                                            <span class="tm-pname">{{ u.user }}</span>
+                                                            <span class="tm-badge" v-if="u.current">当前桌面</span>
+                                                        </span>
+                                                    </td>
+                                                    <td><span class="tm-state-dot" :class="{ on: u.online }"></span>{{ u.status }}</td>
+                                                    <td>{{ u.host }}</td>
+                                                    <td class="tm-desc" :title="u.session">{{ u.session }}</td>
+                                                    <td class="num">{{ u.cpu == null ? '--' : Math.round(u.cpu) + '%' }}</td>
+                                                    <td class="num">{{ u.memPct == null ? '--' : Math.round(u.memPct) + '%' }}</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="tm-empty" v-if="!tmUserRows.length">
+                                                <i class="el-icon-user"></i><p>没有可显示的登录会话</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note">
+                                        CPU 与内存来自对应 SSH 服务器的整机监控，同一服务器上的多个会话会显示相同的数值。
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 详细信息 -->
+                            <template v-else-if="taskmgr.tab === 'details'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>详细信息</h2>
+                                            <div class="tm-page-sub">
+                                                服务器进程 · {{ tmHostName }} · {{ tmDetailRows.length }} 项
+                                            </div>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn" @click="loadTaskmgrDetails(true)">
+                                            <i class="el-icon-refresh" :class="{ 'tm-spin': taskmgr.detail.loading }"></i>刷新
+                                        </button>
+                                        <el-input v-model="taskmgr.detail.filter" size="mini" clearable
+                                                  prefix-icon="el-icon-search" class="tm-search"
+                                                  placeholder="搜索名称 / 用户 / PID"></el-input>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table tm-detail-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name" @click="sortTaskmgrDetails('comm')">
+                                                        名称<i :class="tmDetailSortIcon('comm')"></i>
+                                                    </th>
+                                                    <th @click="sortTaskmgrDetails('pid')">
+                                                        PID<i :class="tmDetailSortIcon('pid')"></i>
+                                                    </th>
+                                                    <th>状态</th>
+                                                    <th @click="sortTaskmgrDetails('user')">
+                                                        用户名<i :class="tmDetailSortIcon('user')"></i>
+                                                    </th>
+                                                    <th class="num" @click="sortTaskmgrDetails('cpu')">
+                                                        CPU<i :class="tmDetailSortIcon('cpu')"></i>
+                                                    </th>
+                                                    <th class="num" @click="sortTaskmgrDetails('mem')">
+                                                        内存<i :class="tmDetailSortIcon('mem')"></i>
+                                                    </th>
+                                                    <th>描述</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="row in tmDetailRows" :key="'tmdp' + row.pid"
+                                                    :class="{ selected: taskmgr.detail.selectedPid === row.pid }"
+                                                    @click="taskmgr.detail.selectedPid = row.pid"
+                                                    @dblclick="openTaskmgrProcessDetail(row)"
+                                                    @contextmenu.prevent.stop="openTaskmgrContextMenu($event, 'detail', 'pid:' + row.pid)">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-proc-ico" :class="{ zombie: row.state === 'Z' }">
+                                                                <i class="el-icon-cpu"></i>
+                                                            </span>
+                                                            <span class="tm-pname" :title="row.comm">{{ row.comm || '—' }}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td>{{ row.pid }}</td>
+                                                    <td>{{ statText(row.state) || '—' }}</td>
+                                                    <td>{{ row.user || '—' }}</td>
+                                                    <td class="num">{{ fmtProcCpu(row) }}</td>
+                                                    <td class="num">{{ fmtMb(row.rssMb) }}</td>
+                                                    <td class="tm-desc" :title="row.args">{{ row.args }}</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="tm-empty" v-if="!taskmgr.detail.rows.length && !taskmgr.detail.loading && !taskmgr.detail.error">
+                                                <i class="el-icon-s-data"></i>
+                                                <p>{{ taskmgr.detail.filter ? '没有匹配的进程' : '暂无服务器进程数据' }}</p>
+                                            </div>
+                                            <div class="tm-error" v-else-if="taskmgr.detail.error && !taskmgr.detail.rows.length">
+                                                <i class="el-icon-warning-outline"></i>
+                                                <p>{{ taskmgr.detail.error }}</p>
+                                                <button type="button" class="tm-btn" @click="loadTaskmgrDetails(true)">重试</button>
+                                            </div>
+                                            <div class="tm-loading" v-if="taskmgr.detail.loading && !taskmgr.detail.rows.length">
+                                                <i class="el-icon-loading"></i>正在读取服务器进程…
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-inline-error" v-if="taskmgr.detail.error && taskmgr.detail.rows.length">
+                                        <i class="el-icon-warning-outline"></i>
+                                        <span>{{ taskmgr.detail.error }}</span>
+                                        <button type="button" class="tm-link" @click="loadTaskmgrDetails(true)">重试</button>
+                                    </div>
+                                    <div class="tm-proc-foot">
+                                        <span class="tm-foot-hint dim">
+                                            数据来自服务器 ps / /proc；瞬时 CPU 由两次快照差分计算
+                                        </span>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn" :disabled="!tmDetailSelected"
+                                                @click="openTaskmgrProcessDetail(tmDetailSelected)">
+                                            <i class="el-icon-view"></i>命令行
+                                        </button>
+                                        <button type="button" class="tm-btn danger" :disabled="!tmDetailSelected"
+                                                @click="killTaskmgrProcess(false)">
+                                            <i class="el-icon-close"></i>结束任务
+                                        </button>
+                                        <button type="button" class="tm-btn danger" :disabled="!tmDetailSelected"
+                                                @click="killTaskmgrProcess(true)">
+                                            <i class="el-icon-warning-outline"></i>强制结束
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 服务 -->
+                            <template v-else-if="taskmgr.tab === 'services'">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>服务</h2>
+                                            <div class="tm-page-sub">DeepShell 桌面内置服务 · 只读视图</div>
+                                        </div>
+                                    </div>
+                                    <div class="tm-table-box">
+                                        <div class="tm-table-scroll">
+                                            <table class="tm-table">
+                                                <thead>
+                                                <tr>
+                                                    <th class="tm-th-name">名称</th>
+                                                    <th>PID</th>
+                                                    <th>描述</th>
+                                                    <th>状态</th>
+                                                    <th>启动类型</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <tr v-for="s in tmServiceRows" :key="'tmsvc' + s.pid">
+                                                    <td>
+                                                        <span class="tm-name-cell">
+                                                            <span class="tm-proc-ico"><i :class="s.icon"></i></span>
+                                                            <span class="tm-pname">{{ s.name }}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td>{{ s.pid }}</td>
+                                                    <td class="tm-desc">{{ s.desc }}</td>
+                                                    <td>
+                                                        <span class="tm-state-dot" :class="{ on: s.running }"></span>{{ s.status }}
+                                                    </td>
+                                                    <td>{{ s.startType }}</td>
+                                                </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note">
+                                        当前任务管理器没有服务管理权限，仅展示运行状态；会话断开后相关服务会显示为已停止。
+                                    </div>
+                                </div>
+                            </template>
+                        </section>
+
+                        <!-- 进程详情浮层 -->
+                        <div class="tm-overlay" v-if="taskmgr.detail.overlayVisible"
+                             @click.self="closeTaskmgrProcessDetail">
+                            <div class="tm-overlay-card">
+                                <div class="tm-overlay-head">
+                                    <b>进程详情</b>
+                                    <span class="tm-overlay-pid" v-if="taskmgr.detail.overlayRow">
+                                        PID {{ taskmgr.detail.overlayRow.pid }}
+                                    </span>
+                                    <span class="spacer"></span>
+                                    <button type="button" class="tm-icon-btn" @click="closeTaskmgrProcessDetail">
+                                        <i class="el-icon-close"></i>
+                                    </button>
+                                </div>
+                                <div class="tm-overlay-body" v-if="taskmgr.detail.overlayRow">
+                                    <div class="tm-kv-grid">
+                                        <div class="tm-kv"><span>名称</span><b>{{ taskmgr.detail.overlayRow.comm || '—' }}</b></div>
+                                        <div class="tm-kv"><span>PID</span><b>{{ taskmgr.detail.overlayRow.pid }}</b></div>
+                                        <div class="tm-kv"><span>父进程 PID</span><b>{{ taskmgr.detail.overlayRow.ppid || '—' }}</b></div>
+                                        <div class="tm-kv"><span>用户名</span><b>{{ taskmgr.detail.overlayRow.user || '—' }}</b></div>
+                                        <div class="tm-kv"><span>状态</span><b>{{ statText(taskmgr.detail.overlayRow.state) || '—' }}</b></div>
+                                        <div class="tm-kv"><span>CPU</span><b>{{ fmtProcCpu(taskmgr.detail.overlayRow) }}</b></div>
+                                        <div class="tm-kv"><span>内存</span><b>{{ fmtMb(taskmgr.detail.overlayRow.rssMb) }}</b></div>
+                                        <div class="tm-kv"><span>运行时长</span><b>{{ fmtUptime(taskmgr.detail.overlayRow.elapsedSecs) }}</b></div>
+                                    </div>
+                                    <div class="tm-cmd-head">
+                                        <span>命令行</span>
+                                        <i v-if="taskmgr.detail.overlayLoading" class="el-icon-loading"></i>
+                                        <span class="spacer"></span>
+                                        <button type="button" class="tm-btn small" @click="copyTaskmgrCmd">
+                                            <i class="el-icon-document-copy"></i>复制
+                                        </button>
+                                    </div>
+                                    <pre class="tm-cmd">{{ taskmgr.detail.overlayCmd || '（无命令行信息）' }}</pre>
+                                </div>
+                                <div class="tm-overlay-foot">
+                                    <button type="button" class="tm-btn" @click="closeTaskmgrProcessDetail">关闭</button>
+                                    <button type="button" class="tm-btn danger"
+                                            :disabled="!taskmgr.detail.overlayRow"
+                                            @click="killTaskmgrProcess(false, taskmgr.detail.overlayRow)">
+                                        结束任务
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'editor'">
+                    <desktop-text-editor :tab="desktopTab" :win="w"
+                                         :pending-path="w.editorPendingPath || ''"
+                                         :pending-seq="w.editorPendingSeq || 0"
+                                         @saved="onDesktopEditorSaved"></desktop-text-editor>
+                </template>
+                <template v-else-if="w.type === 'plugin'">
+                    <div class="dsk-plugin-body">
+                        <iframe class="dsk-plugin-frame" :src="w.pluginUrl"
+                                :title="w.pluginTitle || w.pluginName || '插件应用'"
+                                sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                                referrerpolicy="no-referrer"></iframe>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'trash'">
+                    <div class="dsk-trash">
+                        <div class="dsk-trash-bar">
+                            <el-button size="mini" icon="el-icon-refresh"
+                                       :loading="w.trashLoading" @click="loadDesktopTrash(w)">刷新</el-button>
+                            <el-button size="mini" icon="el-icon-delete" class="danger-text"
+                                       :disabled="!w.trashItems || !w.trashItems.length"
+                                       @click="desktopTrashEmpty(w)">清空回收站</el-button>
+                            <span class="spacer"></span>
+                            <span class="dsk-trash-count">{{ (w.trashItems || []).length }} 项</span>
+                            <span class="dsk-trash-path" :title="desktopTrashPath">{{ desktopTrashPath }}</span>
+                        </div>
+                        <div class="dsk-trash-error" v-if="w.trashError">{{ w.trashError }}</div>
+                        <div class="dsk-trash-list" v-loading="w.trashLoading">
+                            <div v-for="item in w.trashItems" :key="item.id" class="dsk-trash-row"
+                                 :title="item.originalPath"
+                                 @contextmenu.prevent.stop="openDesktopTrashMenu($event, item, w)">
+                                <i class="dsk-trash-icon"
+                                   :class="item.dir ? 'el-icon-folder' : 'el-icon-document'"></i>
+                                <div class="dsk-trash-main">
+                                    <div class="dsk-trash-name">{{ item.name }}</div>
+                                    <div class="dsk-trash-orig">{{ item.originalPath }}</div>
+                                </div>
+                                <span class="dsk-trash-size">{{ item.dir ? '文件夹' : fmtSize(item.size) }}</span>
+                                <span class="dsk-trash-time">{{ desktopTrashTime(item.deletedAt) }}</span>
+                                <span class="dsk-trash-actions">
+                                    <el-button size="mini" type="text"
+                                               @click.stop="restoreDesktopTrashItem(item, w)">还原</el-button>
+                                    <el-button size="mini" type="text" class="danger-text"
+                                               @click.stop="purgeDesktopTrashItem(item, w)">彻底删除</el-button>
+                                </span>
+                            </div>
+                            <div v-if="!w.trashLoading && !(w.trashItems || []).length" class="dsk-trash-empty">
+                                <i class="el-icon-delete"></i>
+                                <span>回收站为空</span>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'services'">
+                    <div class="dsk-svc">
+                        <div class="dsk-app-head">
+                            <button type="button" class="dsk-app-tab"
+                                    :class="{ active: servicesApp.tab === 'services' }"
+                                    @click="switchServicesTab('services')">
+                                <i class="el-icon-s-tools"></i> 服务
+                            </button>
+                            <button type="button" class="dsk-app-tab"
+                                    :class="{ active: servicesApp.tab === 'cron' }"
+                                    @click="switchServicesTab('cron')">
+                                <i class="el-icon-time"></i> 计划任务
+                            </button>
+                            <span class="spacer"></span>
+                            <span class="dsk-app-host">{{ desktopTab ? desktopTab.title : '' }}</span>
+                            <el-button size="mini" icon="el-icon-refresh"
+                                       :loading="servicesApp.tab === 'services' ? servicesApp.loading : servicesApp.cronLoading"
+                                       @click="refreshServicesTab">刷新</el-button>
+                        </div>
+                        <template v-if="servicesApp.tab === 'services'">
+                            <div class="dsk-svc-toolbar">
+                                <el-input size="mini" v-model="servicesApp.keyword" clearable
+                                          prefix-icon="el-icon-search" class="dsk-grow"
+                                          placeholder="过滤服务名称 / 描述"></el-input>
+                                <el-checkbox v-model="servicesApp.onlyRunning">只看运行中</el-checkbox>
+                                <span class="dsk-app-meta">{{ filteredServiceRows.length }} / {{ servicesApp.items.length }}</span>
+                            </div>
+                            <div class="dsk-app-error" v-if="servicesApp.error">{{ servicesApp.error }}</div>
+                            <div class="dsk-svc-list" v-loading="servicesApp.loading">
+                                <div v-for="s in filteredServiceRows" :key="s.unit" class="dsk-svc-row">
+                                    <span class="dsk-svc-dot" :class="'is-' + s.active" :title="s.active"></span>
+                                    <div class="dsk-svc-main">
+                                        <div class="dsk-svc-name">{{ s.unit }}</div>
+                                        <div class="dsk-svc-desc">{{ s.description || '—' }}</div>
+                                    </div>
+                                    <span class="dsk-svc-state" :class="'is-' + s.active">{{ serviceStateLabel(s) }}</span>
+                                    <span class="dsk-svc-enabled">{{ serviceEnabledLabel(s) }}</span>
+                                    <span class="dsk-svc-actions">
+                                        <el-button v-if="s.active !== 'active'" size="mini" type="text"
+                                                   icon="el-icon-video-play" title="启动"
+                                                   :loading="servicesApp.busy === s.unit + ':start'"
+                                                   @click="runServiceAction(s, 'start')"></el-button>
+                                        <el-button v-else size="mini" type="text"
+                                                   icon="el-icon-video-pause" title="停止"
+                                                   :loading="servicesApp.busy === s.unit + ':stop'"
+                                                   @click="runServiceAction(s, 'stop')"></el-button>
+                                        <el-button size="mini" type="text" icon="el-icon-refresh-right"
+                                                   title="重启"
+                                                   :loading="servicesApp.busy === s.unit + ':restart'"
+                                                   @click="runServiceAction(s, 'restart')"></el-button>
+                                        <el-button v-if="s.enabled === 'enabled' || s.enabled === 'enabled-runtime'"
+                                                   size="mini" type="text" title="取消开机自启"
+                                                   :loading="servicesApp.busy === s.unit + ':disable'"
+                                                   @click="runServiceAction(s, 'disable')">已自启</el-button>
+                                        <el-button v-else size="mini" type="text" title="设置开机自启"
+                                                   :loading="servicesApp.busy === s.unit + ':enable'"
+                                                   @click="runServiceAction(s, 'enable')">自启</el-button>
+                                    </span>
+                                </div>
+                                <div v-if="!servicesApp.loading && !filteredServiceRows.length" class="dsk-app-empty">
+                                    {{ servicesApp.items.length ? '没有匹配的服务' : '没有读取到服务信息（仅支持 systemd / SysV 系统）' }}
+                                </div>
+                            </div>
+                        </template>
+                        <template v-else>
+                            <div class="dsk-cron-wrap" v-loading="servicesApp.cronLoading">
+                                <div class="dsk-app-error" v-if="servicesApp.cronError">{{ servicesApp.cronError }}</div>
+                                <div class="dsk-cron-add">
+                                    <el-input size="mini" v-model="servicesApp.newCron"
+                                              placeholder="分 时 日 月 周 命令，例如 0 3 * * * /opt/backup.sh"
+                                              @keyup.enter.native="addDesktopCron"></el-input>
+                                    <el-button size="mini" type="primary"
+                                               :loading="servicesApp.addingCron"
+                                               @click="addDesktopCron">添加</el-button>
+                                </div>
+                                <div class="dsk-cron-section">
+                                    <div class="dsk-cron-title">
+                                        用户 crontab <span>{{ servicesApp.cron.user.length }} 条</span>
+                                    </div>
+                                    <div v-for="(line, i) in servicesApp.cron.user" :key="'cu' + i"
+                                         class="dsk-cron-row">
+                                        <code>{{ line }}</code>
+                                        <el-button size="mini" type="text" class="danger-text"
+                                                   @click="deleteDesktopCron(line)">删除</el-button>
+                                    </div>
+                                    <div v-if="!servicesApp.cron.user.length" class="dsk-app-empty">
+                                        当前用户没有计划任务
+                                    </div>
+                                </div>
+                                <div class="dsk-cron-section">
+                                    <div class="dsk-cron-title">
+                                        系统 crontab <span>{{ servicesApp.cron.system.length }} 条（只读）</span>
+                                    </div>
+                                    <div v-for="(item, i) in servicesApp.cron.system" :key="'cs' + i"
+                                         class="dsk-cron-row dsk-cron-system" :title="item.file">
+                                        <code>{{ item.line }}</code>
+                                        <span class="dsk-app-meta">{{ item.file }}</span>
+                                    </div>
+                                    <div v-if="!servicesApp.cron.system.length" class="dsk-app-empty">
+                                        没有系统 crontab 条目
+                                    </div>
+                                </div>
+                                <div class="dsk-cron-section">
+                                    <div class="dsk-cron-title">systemd 定时器</div>
+                                    <pre class="dsk-cron-timers">{{ servicesApp.cron.timers.length ? servicesApp.cron.timers.join('\n') : '没有定时器或系统不支持 systemd' }}</pre>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'nettool'">
+                    <div class="dsk-net">
+                        <div class="dsk-net-form">
+                            <el-radio-group v-model="netTool.tool" size="mini">
+                                <el-radio-button label="ping">Ping</el-radio-button>
+                                <el-radio-button label="traceroute">路由追踪</el-radio-button>
+                                <el-radio-button label="dns">DNS 查询</el-radio-button>
+                                <el-radio-button label="port">端口探测</el-radio-button>
+                            </el-radio-group>
+                            <el-input size="mini" v-model="netTool.target" class="dsk-net-target"
+                                      placeholder="主机名或 IP，例如 example.com"
+                                      @keyup.enter.native="runNetTool"></el-input>
+                            <el-input v-if="netTool.tool === 'port'" size="mini" v-model="netTool.port"
+                                      class="dsk-net-port" placeholder="端口"
+                                      @keyup.enter.native="runNetTool"></el-input>
+                            <el-button size="mini" type="primary" icon="el-icon-video-play"
+                                       :loading="netTool.running"
+                                       :disabled="!desktopTab || !desktopTab.sessionId"
+                                       @click="runNetTool">开始</el-button>
+                        </div>
+                        <div class="dsk-net-meta">
+                            <span v-if="desktopTab">在 {{ desktopTab.title }} 上执行</span>
+                            <span v-if="netTool.at">
+                                退出码 {{ netTool.exitCode == null ? '—' : netTool.exitCode }}
+                                · 耗时 {{ netTool.durationMs }} ms
+                            </span>
+                            <span v-if="netTool.timedOut" class="danger-text">执行超时</span>
+                        </div>
+                        <div class="dsk-app-error" v-if="netTool.error">{{ netTool.error }}</div>
+                        <pre class="dsk-net-output">{{ netTool.output || '选择工具并输入目标后点击「开始」' }}</pre>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'batchcmd'">
+                    <div class="dsk-batch">
+                        <aside class="dsk-batch-side">
+                            <div class="dsk-batch-side-head">
+                                目标服务器
+                                <span>{{ batchCmd.ids.length }} / {{ batchConnectionRows.length }}</span>
+                            </div>
+                            <el-input size="mini" v-model="batchCmd.keyword" clearable
+                                      prefix-icon="el-icon-search" placeholder="搜索连接"></el-input>
+                            <div class="dsk-batch-side-actions">
+                                <el-button size="mini" type="text" @click="selectAllBatchTargets">全选</el-button>
+                                <el-button size="mini" type="text" @click="clearBatchTargets">清空</el-button>
+                            </div>
+                            <div class="dsk-batch-list">
+                                <div v-for="c in batchConnectionRows" :key="'bc' + c.id"
+                                     class="dsk-batch-item"
+                                     :class="{ on: batchCmd.ids.indexOf(c.id) >= 0 }"
+                                     @click="toggleBatchTarget(c.id, batchCmd.ids.indexOf(c.id) < 0)">
+                                    <span class="dsk-batch-check"
+                                          :class="{ on: batchCmd.ids.indexOf(c.id) >= 0 }">
+                                        <i v-if="batchCmd.ids.indexOf(c.id) >= 0" class="el-icon-check"></i>
+                                    </span>
+                                    <span class="dsk-batch-item-main">
+                                        <span class="dsk-batch-item-name">{{ c.name }}</span>
+                                        <span class="dsk-batch-item-host">{{ c.username ? c.username + '@' : '' }}{{ c.host }}:{{ c.port }}</span>
+                                    </span>
+                                </div>
+                                <div v-if="!batchConnectionRows.length" class="dsk-app-empty">
+                                    还没有保存的连接，请先在「连接管理」中新建
+                                </div>
+                            </div>
+                        </aside>
+                        <section class="dsk-batch-main">
+                            <div class="dsk-batch-compose">
+                                <el-input type="textarea" :rows="4" resize="none"
+                                          v-model="batchCmd.command"
+                                          placeholder="输入要在所有选中服务器上执行的同一条命令…"></el-input>
+                                <div class="dsk-batch-tools">
+                                    <span class="dsk-app-meta">快捷命令</span>
+                                    <button v-for="s in snippets.slice(0, 6)" :key="'bq' + s.id"
+                                            type="button" class="dsk-batch-chip"
+                                            :title="s.command" @click="batchUseSnippet(s)">{{ s.name }}</button>
+                                    <span class="spacer"></span>
+                                    <span class="dsk-app-meta">超时 60 秒</span>
+                                    <el-button size="mini" type="primary"
+                                               :loading="batchCmd.running"
+                                               :disabled="!batchCmd.ids.length || !batchCmd.command.trim()"
+                                               @click="runBatchCommand">
+                                        发送到 {{ batchCmd.ids.length }} 台服务器
+                                    </el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-app-error" v-if="batchCmd.error">{{ batchCmd.error }}</div>
+                            <div class="dsk-batch-results">
+                                <div v-if="!batchCmd.items.length && !batchCmd.running" class="dsk-app-empty">
+                                    执行结果会显示在这里
+                                </div>
+                                <div v-for="r in batchCmd.items" :key="'br' + r.connectionId"
+                                     class="dsk-batch-result">
+                                    <div class="dsk-batch-result-head">
+                                        <span class="dsk-batch-status" :class="{ ok: r.ok }">
+                                            {{ r.ok ? '成功' : (r.timedOut ? '超时' : '失败') }}
+                                        </span>
+                                        <b>{{ r.name }}</b>
+                                        <span class="dsk-app-meta">{{ r.host }}</span>
+                                        <span class="spacer"></span>
+                                        <span class="dsk-app-meta">
+                                            退出码 {{ r.exitCode == null ? '—' : r.exitCode }}
+                                            · {{ r.durationMs }} ms
+                                        </span>
+                                    </div>
+                                    <div class="dsk-batch-result-error" v-if="r.error">{{ r.error }}</div>
+                                    <pre class="dsk-batch-output">{{ r.output || '(无输出)' }}</pre>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </template>
+                <template v-else>
+                <div class="dsk-toolbar">
+            <el-button-group class="dsk-nav">
+                <el-button size="mini" icon="el-icon-back" title="后退"
+                           :disabled="!w.history.length" @click="desktopGoBack"></el-button>
+                <el-button size="mini" icon="el-icon-right" title="前进"
+                           :disabled="!w.future.length" @click="desktopGoForward"></el-button>
+                <el-button size="mini" icon="el-icon-top" title="上一级"
+                           :disabled="w.path === '/'" @click="desktopUp"></el-button>
+                <el-button size="mini" :icon="w.loading ? 'el-icon-loading' : 'el-icon-refresh'"
+                           title="刷新" @click="desktopRefresh(w)"></el-button>
+            </el-button-group>
+            <div class="dsk-address">
+                <button class="dsk-fav-btn" :class="{ on: isDeskFavorite(w) }"
+                        :disabled="!w.path || w.pathEditing || !desktopTab"
+                        :title="isDeskFavorite(w) ? '从常用目录移除' : '收藏到常用目录'"
+                        @click.stop="toggleDeskFavorite(w)">
+                    <i :class="isDeskFavorite(w) ? 'el-icon-star-on' : 'el-icon-star-off'"></i>
+                </button>
+                <template v-if="!w.pathEditing">
+                    <div class="dsk-crumbs">
+                        <span v-for="(c, i) in deskCrumbs(w)" :key="c.path" class="dsk-crumb-line">
+                            <i v-if="i" class="el-icon-arrow-right dsk-crumb-sep"></i>
+                            <span class="dsk-crumb" :title="c.path"
+                                  @click="desktopGo(c.path)">{{ c.name }}</span>
+                        </span>
+                    </div>
+                    <i class="el-icon-edit dsk-edit-path" title="编辑路径"
+                       @click="startDesktopPathEdit"></i>
+                </template>
+                <el-input v-else :id="'dsk-path-input-' + w.id" size="mini" v-model="w.pathInput"
+                          class="dsk-path-input" @keyup.enter.native="commitDesktopPathEdit(w)"
+                          @keyup.esc.native="w.pathEditing = false"
+                          @blur="commitDesktopPathEdit(w)"></el-input>
+            </div>
+            <el-input size="mini" v-model="w.keyword" clearable prefix-icon="el-icon-search"
+                      class="dsk-search" placeholder="筛选当前目录"
+                      @input="desktopClearSelection"></el-input>
+            <el-dropdown size="mini" trigger="click" @command="desktopSortCommand">
+                <el-button size="mini" icon="el-icon-sort" class="dsk-sort-btn">
+                    {{ deskSortLabel(w) }}<i class="el-icon-arrow-down el-icon--right"></i>
+                </el-button>
+                <el-dropdown-menu slot="dropdown">
+                    <el-dropdown-item command="name">名称{{ w.sortBy === 'name' ? (w.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
+                    <el-dropdown-item command="size">大小{{ w.sortBy === 'size' ? (w.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
+                    <el-dropdown-item command="mtime">修改时间{{ w.sortBy === 'mtime' ? (w.sortDir === 'asc' ? ' ↑' : ' ↓') : '' }}</el-dropdown-item>
+                </el-dropdown-menu>
+            </el-dropdown>
+            <div class="dsk-views">
+                <span v-for="v in desktopViews" :key="v.id" class="dsk-view-btn"
+                      :class="{ active: w.viewMode === v.id }" :title="v.label"
+                      @click="setDesktopView(v.id)"><i :class="v.icon"></i></span>
+            </div>
+            <span class="dsk-toolbar-sep"></span>
+            <el-button size="mini" icon="el-icon-folder-add" title="新建文件夹"
+                       @click="desktopNewFolder(w)"></el-button>
+            <el-button size="mini" icon="el-icon-document-add" title="新建文件"
+                       @click="desktopNewFile(w)"></el-button>
+            <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"
+                       @click="pickDesktopUpload"></el-button>
+            <el-button size="mini" icon="el-icon-sort" :disabled="!desktopSelectionHasFile(w)"
+                       title="跨服务器传输选中文件（不下载到本机）"
+                       @click="openCrossTransferDialog(w)"></el-button>
+        </div>
+
+        <div class="dsk-body">
+            <aside class="dsk-side">
+                <div class="dsk-side-sec"><i class="el-icon-cpu"></i>工作目录</div>
+                <div class="dsk-side-item" :class="{ active: desktopAiDir && w.path === desktopAiDir,
+                                                     disabled: !desktopAiDir }"
+                     :title="desktopAiDir || 'AI 尚未切换过目录'"
+                     @click="desktopAiDir && desktopGo(desktopAiDir)">
+                    <i class="el-icon-location-information"></i>
+                    <span class="dsk-side-name">当前目录</span>
+                </div>
+                <div class="dsk-side-sec"><i class="el-icon-star-off"></i>快速访问</div>
+                <div class="dsk-side-item" :class="{ active: w.path === desktopHomeDir }"
+                     @click="desktopGoHome">
+                    <i class="el-icon-user"></i><span class="dsk-side-name">主目录</span>
+                </div>
+                <div class="dsk-side-item" :class="{ active: w.path === '/' }" @click="desktopGo('/')">
+                    <i class="el-icon-office-building"></i><span class="dsk-side-name">根目录</span>
+                    <span class="dsk-side-path">/</span>
+                </div>
+                <div class="dsk-side-item" v-for="q in desktopQuickDirs" :key="q.path"
+                     :class="{ active: w.path === q.path }" :title="q.path"
+                     @click="desktopGo(q.path)">
+                    <i class="el-icon-folder"></i><span class="dsk-side-name">{{ q.label }}</span>
+                    <span class="dsk-side-path">{{ q.path }}</span>
+                </div>
+                <template v-if="desktopCommonDirs.length">
+                    <div class="dsk-side-sec"><i class="el-icon-star-on"></i>常用目录</div>
+                    <div class="dsk-side-item" v-for="d in desktopCommonDirs" :key="'cd' + d.id"
+                         :class="{ active: w.path === d.path }" :title="d.path"
+                         @click="desktopGo(d.path)">
+                        <i class="el-icon-folder-opened"></i>
+                        <span class="dsk-side-name">{{ d.path }}</span>
+                    </div>
+                </template>
+                <div class="dsk-side-sec"><i class="el-icon-view"></i>视图</div>
+                <div class="dsk-side-item" v-for="v in desktopViews" :key="'sv' + v.id"
+                     :class="{ active: w.viewMode === v.id }" @click="setDesktopView(v.id)">
+                    <i :class="v.icon"></i><span class="dsk-side-name">{{ v.label }}</span>
+                </div>
+            </aside>
+
+            <main class="dsk-main">
+                <div class="dsk-files" :class="{ 'view-list': !isDeskGrid(w) }" :id="'dsk-files-' + w.id"
+                     @click="onDesktopFilesClick"
+                     @mousedown="onDesktopFilesMouseDown"
+                     @contextmenu.prevent="desktopBlankContextMenu($event)"
+                     @dragover="onDesktopSurfaceDragOver($event, w)" @drop="onDesktopSurfaceDrop($event, w)"
+                     @dragleave="onDesktopSurfaceDragLeave($event, w)">
+                    <div class="dsk-marquee" v-if="w.marquee.visible"
+                         :style="{ left: w.marquee.left + 'px', top: w.marquee.top + 'px',
+                                   width: w.marquee.width + 'px', height: w.marquee.height + 'px' }"></div>
+                    <div class="dsk-error" v-if="w.error">
+                        <i class="el-icon-warning-outline"></i> {{ w.error }}
+                    </div>
+                    <div class="dsk-loading" v-if="w.loading">
+                        <i class="el-icon-loading"></i> 正在读取目录…
+                    </div>
+                    <div class="dsk-empty" v-if="!w.loading && !w.error && !w.entries.length">
+                        <i class="el-icon-folder-opened"></i>
+                        <p>当前目录为空</p>
+                        <el-button size="mini" icon="el-icon-folder-add" @click="desktopNewFolder(w)">
+                            新建文件夹
+                        </el-button>
+                    </div>
+                    <div class="dsk-empty" v-else-if="!w.loading && !deskShownEntries(w).length && w.keyword">
+                        <i class="el-icon-search"></i>
+                        <p>没有匹配「{{ w.keyword }}」的项目</p>
+                    </div>
+
+                    <div v-if="isDeskGrid(w) && deskShownEntries(w).length" class="dsk-grid"
+                         :class="w.viewMode">
+                        <div v-for="row in deskShownEntries(w)" :key="'g' + row.name" class="dsk-item"
+                             :data-name="row.name"
+                             :class="{ selected: isDeskSelected(w, row),
+                                       dragging: isDeskDragging(w, row),
+                                       cut: isDeskCut(w, row),
+                                       'drop-target': w.dropTarget === row.name && row.dir }"
+                             :title="row.name" draggable="true"
+                             @click.stop="desktopSelect(row, $event)"
+                             @dblclick.stop="desktopOpenEntry(row)"
+                             @contextmenu.prevent.stop="desktopEntryContextMenu($event, row)"
+                             @dragstart.stop="onDesktopDragStart($event, row)"
+                             @dragend.stop="onDesktopDragEnd"
+                             @dragover.stop.prevent="onDesktopDragOver($event, row, w)"
+                             @dragleave.stop="onDesktopDragLeave(row, w)"
+                             @drop.stop.prevent="onDesktopDrop($event, row, w)">
+                            <span class="dsk-ico" :class="{ folder: row.dir }">
+                                <svg v-if="row.dir" class="dsk-folder-svg" viewBox="0 0 64 52" aria-hidden="true">
+                                    <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
+                                    <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
+                                    <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
+                                </svg>
+                                <span v-else-if="deskShowThumb(w, row)" class="dsk-thumb">
+                                    <img v-if="deskThumbSrc(w, row)" :src="deskThumbSrc(w, row)" :alt="row.name"
+                                         decoding="async" draggable="false"
+                                         @error="onDeskThumbError(w, row)">
+                                </span>
+                                <span v-else class="dsk-file-ico" :class="'fi-' + desktopFileKind(row)">
+                                    <span class="dsk-ext" :class="{ long: desktopExtLabel(row).length > 3 }">{{ desktopExtLabel(row) }}</span>
+                                </span>
+                                <i v-if="row.link" class="el-icon-link dsk-link" title="符号链接"></i>
+                            </span>
+                            <span class="dsk-name">{{ row.name }}</span>
+                            <span class="dsk-meta" v-if="w.viewMode === 'large'">
+                                {{ row.dir ? '文件夹' : fmtSize(row.size) }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div v-else-if="!isDeskGrid(w) && deskShownEntries(w).length" class="dsk-list">
+                        <div class="dsk-list-head">
+                            <span class="dsk-lh" @click="desktopSortBy('name')">名称 <i :class="deskSortIcon(w, 'name')"></i></span>
+                            <span class="dsk-lh" @click="desktopSortBy('size')">大小 <i :class="deskSortIcon(w, 'size')"></i></span>
+                            <span class="dsk-lh" @click="desktopSortBy('mtime')">修改时间 <i :class="deskSortIcon(w, 'mtime')"></i></span>
+                            <span class="dsk-lh">权限</span>
+                        </div>
+                        <div class="dsk-list-body">
+                            <div v-for="row in deskShownEntries(w)" :key="'l' + row.name" class="dsk-row"
+                                 :data-name="row.name"
+                                 :class="{ selected: isDeskSelected(w, row),
+                                           dragging: isDeskDragging(w, row),
+                                           cut: isDeskCut(w, row),
+                                           'drop-target': w.dropTarget === row.name && row.dir }"
+                                 draggable="true"
+                                 @click.stop="desktopSelect(row, $event)"
+                                 @dblclick.stop="desktopOpenEntry(row)"
+                                 @contextmenu.prevent.stop="desktopEntryContextMenu($event, row)"
+                                 @dragstart.stop="onDesktopDragStart($event, row)"
+                                 @dragend.stop="onDesktopDragEnd"
+                                 @dragover.stop.prevent="onDesktopDragOver($event, row, w)"
+                                 @dragleave.stop="onDesktopDragLeave(row, w)"
+                                 @drop.stop.prevent="onDesktopDrop($event, row, w)">
+                                <span class="dsk-row-name">
+                                    <span class="dsk-ico small" :class="{ folder: row.dir }">
+                                        <svg v-if="row.dir" class="dsk-folder-svg" viewBox="0 0 64 52" aria-hidden="true">
+                                            <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
+                                            <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
+                                        </svg>
+                                        <span v-else class="dsk-file-ico" :class="'fi-' + desktopFileKind(row)">
+                                            <span class="dsk-ext" :class="{ long: desktopExtLabel(row).length > 3 }">{{ desktopExtLabel(row) }}</span>
+                                        </span>
+                                    </span>
+                                    <span class="dsk-row-title" :title="row.name">{{ row.name }}</span>
+                                    <i v-if="row.link" class="el-icon-link dsk-link"></i>
+                                </span>
+                                <span class="dsk-cell dim">{{ row.dir ? '' : fmtSize(row.size) }}</span>
+                                <span class="dsk-cell dim">{{ fmtTime(row.mtime) }}</span>
+                                <span class="dsk-cell dsk-perm">{{ row.perms || '' }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dsk-drop-hint" v-if="w.fileDragOver">
+                        <i class="el-icon-upload"></i>
+                        <div>松开鼠标上传到 {{ w.path }}</div>
+                        <div class="dsk-drop-hint-tip">拖到文件夹图标上可上传到该文件夹</div>
+                    </div>
+                    <div class="dsk-drop-hint win-drop" v-if="w.winDragOver">
+                        <i class="el-icon-copy-document"></i>
+                        <div>松开后选择复制或剪切到</div>
+                        <div class="dsk-drop-hint-tip">{{ w.path }}</div>
+                    </div>
+                </div>
+
+                <div class="dsk-status">
+                    <span v-if="w.loading"><i class="el-icon-loading"></i> 正在读取…</span>
+                    <span v-else>{{ deskShownEntries(w).length }} 项<template v-if="w.keyword">（共 {{ w.entries.length }} 项）</template></span>
+                    <span v-if="w.selected.length" class="dsk-status-sel">已选择 {{ w.selected.length }} 项</span>
+                    <span class="spacer"></span>
+                    <span class="dsk-status-path" :title="w.path">{{ w.path }}</span>
+                </div>
+            </main>
+        </div>
+                </template>
+                <template v-if="!w.max">
+                    <span v-for="dir in desktopResizeDirs" :key="dir" class="dsk-resize"
+                          :class="'r-' + dir"
+                          @mousedown.stop.prevent="startDesktopWindowResize($event, w, dir)"></span>
+                </template>
+            </div>
+        </div>
+
+        <input ref="desktopUpload" type="file" multiple class="dsk-upload-input"
+               @change="onDesktopUploadPick">
+
+        <!-- Windows 风格任务栏 -->
+        <div class="dsk-taskbar" @mousedown.capture="closeDesktopTaskMenu"
+             @contextmenu.prevent="onDesktopTaskbarContextMenu">
+            <button class="dsk-start-btn" :class="{ active: desktop.startOpen }"
+                    title="开始" @click.stop="toggleDesktopStart">
+                <span class="dsk-win-logo"><i></i><i></i><i></i><i></i></span>
+            </button>
+            <button class="dsk-task-search" :class="{ active: desktop.startOpen }"
+                    title="搜索应用、连接、文件或操作 (Ctrl+Shift+K)" @click.stop="openDesktopStart">
+                <i class="el-icon-search"></i>
+                <span>{{ desktop.startSearch || '搜索应用、连接、文件或操作' }}</span>
+            </button>
+            <div class="dsk-task-apps" @wheel.prevent="onDesktopTaskAppsWheel">
+                <button class="dsk-task-app dsk-ai-app"
+                        :class="{ active: desktopAiWin && desktop.activeWinId === desktopAiWin.id && !desktopAiWin.min,
+                                  'is-min': desktopAiWin && desktopAiWin.min }"
+                        title="打开 AI 终端窗口" @click.stop="toggleDesktopAiApp">
+                    <i :class="desktopAppIconByAction('ai', 'el-icon-chat-dot-round')"></i>
+                    <span class="dsk-task-label">AI 终端</span>
+                    <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
+                       title="AI 正在执行任务"></i>
+                </button>
+                <button class="dsk-task-app dsk-terminal-app"
+                        title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow()">
+                    <i :class="desktopAppIconByAction('terminal', 'el-icon-monitor')"></i>
+                    <span class="dsk-task-label">新建终端</span>
+                </button>
+                <span class="dsk-taskbar-sep"></span>
+                <button v-for="w in desktopTaskWindows" :key="'tw' + w.id"
+                        class="dsk-task-app dsk-task-win"
+                        :class="{ active: w.id === desktop.activeWinId && !w.min, 'is-min': w.min }"
+                        :title="desktopWindowSubtitle(w)"
+                        @click.stop="toggleDesktopTaskbarWindow(w)"
+                        @contextmenu.prevent.stop="onDesktopTaskContextMenu($event, w)">
+                    <img v-if="w.type === 'plugin' && w.pluginIconUrl" :src="w.pluginIconUrl"
+                         class="dsk-task-plugin-icon" alt="">
+                    <i v-else :class="desktopWindowIcon(w)"></i>
+                    <span class="dsk-task-label">{{ desktopWindowTitle(w) }}</span>
+                    <i v-if="w.type === 'transfer' && transferActiveCount" class="dsk-task-busy"
+                       title="有正在进行的传输"></i>
+                </button>
+            </div>
+            <span class="spacer"></span>
+            <div class="dsk-tray" v-if="desktopTab">
+                <div class="dsk-tray-stat"
+                     :title="desktopTab.stats ? statTooltip(desktopTab) : '点击查看系统信息'"
+                     @click.stop="openDesktopSysInfo">
+                    <i class="el-icon-cpu"></i>
+                    <span :class="levelClass(desktopTab.stats ? desktopTab.stats.cpu : null)">
+                        {{ desktopTab.stats && desktopTab.stats.cpu != null ? Math.round(desktopTab.stats.cpu) + '%' : '--' }}
+                    </span>
+                    <i class="el-icon-coin"></i>
+                    <span :class="levelClass(desktopTab.stats ? desktopTab.stats.memPct : null)">
+                        {{ desktopTab.stats && desktopTab.stats.memPct != null ? Math.round(desktopTab.stats.memPct) + '%' : '--' }}
+                    </span>
+                    <i class="el-icon-sort"></i>
+                    <span :class="levelClass(desktopTab.stats ? desktopTab.stats.swapPct : null)">
+                        {{ desktopTab.stats && desktopTab.stats.swapTotalMb
+                            ? (desktopTab.stats.swapPct != null ? Math.round(desktopTab.stats.swapPct) + '%' : '--')
+                            : '—' }}
+                    </span>
+                    <span class="dsk-tray-net" v-if="desktopTab.stats && !desktopTab.stats.error">
+                        ↓ {{ fmtRate(desktopTab.stats.rxRate) }} ↑ {{ fmtRate(desktopTab.stats.txRate) }}
+                    </span>
+                </div>
+                <div class="dsk-tray-conn" :class="{ 'is-down': desktopConnDown }"
+                     :title="connAddress(desktopTab) + ' · 点击或右键管理连接'"
+                     @click.stop="openDesktopTrayMenu($event)"
+                     @contextmenu.prevent.stop="openDesktopTrayMenu($event)">
+                    <span class="dsk-tray-conn-line">
+                        <span class="dot" :class="'dot-' + desktopTab.status"></span>{{ statusText(desktopTab) }}
+                        <span v-if="desktopConnDown" class="dsk-tray-conn-fix"
+                              title="重新连接当前 SSH 会话"
+                              @click.stop="desktopReconnectSession">重新连接</span>
+                    </span>
+                    <span class="dsk-tray-conn-name" :title="desktopTab.title">{{ desktopTab.title }}</span>
+                </div>
+            </div>
+            <div class="dsk-tray-bell" :class="{ active: desktop.notifOpen }" title="通知"
+                 @click.stop="toggleDesktopNotifications">
+                <i class="el-icon-bell"></i>
+                <span v-if="desktop.notifUnread" class="dsk-bell-dot">{{ desktop.notifUnread > 9 ? '9+' : desktop.notifUnread }}</span>
+            </div>
+            <div class="dsk-tray-clock" :class="{ active: desktop.calendarOpen }"
+                 :title="desktopClockFull + ' · ' + desktopClockTimezone"
+                 @click.stop="toggleDesktopCalendar">
+                <span class="dsk-clock-time">{{ desktopClockTime }}</span>
+                <span class="dsk-clock-date" v-if="desktop.clockShowDate">{{ desktopClockDate }}</span>
+            </div>
+            <button class="dsk-show-desktop" title="显示桌面 / 还原所有窗口" @click.stop="toggleShowDesktop">
+                <i class="el-icon-s-fold"></i>
+            </button>
+        </div>
+
+        <!-- 任务栏日历 -->
+        <div class="dsk-calendar" v-if="desktop.calendarOpen" @click.stop @contextmenu.prevent>
+            <div class="dsk-cal-head">
+                <div class="dsk-cal-heading">{{ desktopCalendarHeading }}</div>
+                <div class="dsk-cal-sub">{{ desktopClockTimezone }} · {{ desktopClockOffset }}</div>
+            </div>
+            <div class="dsk-cal-nav">
+                <button class="dsk-cal-nav-btn" title="上个月" @click="desktopCalendarPrev">
+                    <i class="el-icon-arrow-left"></i>
+                </button>
+                <span class="dsk-cal-title">{{ desktopCalendarTitle }}</span>
+                <button class="dsk-cal-nav-btn" title="下个月" @click="desktopCalendarNext">
+                    <i class="el-icon-arrow-right"></i>
+                </button>
+            </div>
+            <div class="dsk-cal-week">
+                <span v-for="(w, wi) in desktopCalendarWeekdays" :key="'cw' + wi">{{ w }}</span>
+            </div>
+            <div class="dsk-cal-grid">
+                <button v-for="c in desktopCalendarCells" :key="'cd' + c.key"
+                        class="dsk-cal-day"
+                        :class="{ dim: !c.inMonth, today: c.isToday, selected: c.isSelected }"
+                        :title="c.key"
+                        @click="desktopCalendarSelect(c)">
+                    {{ c.day }}
+                </button>
+            </div>
+            <div class="dsk-cal-foot">
+                <span class="dsk-cal-hint">本地时间</span>
+                <button class="dsk-cal-today" @click="desktopCalendarToday">今天</button>
+            </div>
+        </div>
+
+        <!-- 通知中心 -->
+        <div class="dsk-notif" v-if="desktop.notifOpen" @click.stop @contextmenu.prevent>
+            <div class="dsk-notif-head">
+                <span><i class="el-icon-bell"></i> 通知</span>
+                <span class="spacer"></span>
+                <button class="dsk-notif-clear" v-if="desktop.notifications.length"
+                        @click="clearDesktopNotifications">全部清除</button>
+                <button class="dsk-notif-x" title="关闭" @click="desktop.notifOpen = false">
+                    <i class="el-icon-close"></i>
+                </button>
+            </div>
+            <div class="dsk-notif-list">
+                <div v-for="n in desktop.notifications" :key="n.id"
+                     class="dsk-notif-item" :class="'level-' + n.level"
+                     @click="desktopNotifClick(n)">
+                    <i class="dsk-notif-icon" :class="desktopNotifIcon(n.level)"></i>
+                    <div class="dsk-notif-main">
+                        <div class="dsk-notif-title">{{ n.title }}</div>
+                        <div class="dsk-notif-text" v-if="n.text">{{ n.text }}</div>
+                        <div class="dsk-notif-time">{{ desktopNotifTime(n.time) }}</div>
+                    </div>
+                </div>
+                <div v-if="!desktop.notifications.length" class="dsk-notif-empty">
+                    <i class="el-icon-bell"></i>
+                    <span>暂无通知</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 开始菜单 -->
+        <div class="dsk-start" v-if="desktop.startOpen" @click.stop @contextmenu.prevent>
+            <div class="dsk-start-head">
+                <div class="dsk-start-avatar"><i class="el-icon-monitor"></i></div>
+                <div class="dsk-start-user">
+                    <div class="dsk-start-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
+                    <div class="dsk-start-host" :title="desk.path || desktopHomeDir">
+                        {{ desktopTab ? desktopTab.host : '' }} · {{ desk.path || desktopHomeDir || '/' }}
+                    </div>
+                </div>
+                <button class="dsk-start-x" title="关闭" @click="desktop.startOpen = false">
+                    <i class="el-icon-close"></i>
+                </button>
+            </div>
+            <div class="dsk-start-searchbox" @click="desktop.powerOpen = false">
+                <el-input ref="desktopStartSearch" v-model="desktop.startSearch" size="small"
+                          prefix-icon="el-icon-search" clearable
+                          placeholder="搜索应用、当前目录或服务器文件"
+                          @keyup.enter.native="desktopStartEnter"
+                          @keydown.esc.native.stop="desktop.startOpen = false"></el-input>
+            </div>
+            <div class="dsk-start-body" ref="desktopStartBody" @click="desktop.powerOpen = false">
+                <template v-if="!desktopStartQuery">
+                    <div class="dsk-start-sec">固定应用</div>
+                    <div class="dsk-start-apps">
+                        <button v-for="a in desktopStartApps" :key="a.id" class="dsk-start-app"
+                                @click="desktopLaunchApp(a.id)">
+                            <span class="dsk-start-appico" :style="desktopAppIconStyle(a)">
+                                <i :class="a.icon"></i>
+                            </span>
+                            <span class="dsk-start-applabel">{{ a.label }}</span>
+                        </button>
+                    </div>
+                    <div class="dsk-start-sec dsk-start-sec-plugins">
+                        <span>已安装应用</span>
+                        <span class="spacer"></span>
+                        <button class="dsk-start-sec-link" @click="openPluginManager">安装 / 管理</button>
+                    </div>
+                    <div class="dsk-start-apps" v-if="desktopStartPluginApps.length">
+                        <button v-for="a in desktopStartPluginApps" :key="a.id" class="dsk-start-app"
+                                :title="a.desc || a.label" @click="desktopLaunchApp(a.id)">
+                            <span class="dsk-start-appico" :class="{ 'has-img': !!a.iconUrl }"
+                                  :style="desktopAppIconStyle(a)">
+                                <img v-if="a.iconUrl" :src="a.iconUrl" alt="">
+                                <i v-else class="el-icon-s-grid"></i>
+                            </span>
+                            <span class="dsk-start-applabel">{{ a.label }}</span>
+                        </button>
+                    </div>
+                    <div class="dsk-start-plugin-empty" v-else>
+                        导入 ZIP 插件，把自定义应用装进桌面
+                        <button @click="openPluginManager">安装插件</button>
+                    </div>
+                    <div class="dsk-start-sec">常用位置</div>
+                    <div class="dsk-start-places">
+                        <button v-for="p in desktopStartPlaces" :key="p.path" class="dsk-start-place"
+                                :title="p.path" @click="desktopStartGo(p.path)">
+                            <i :class="p.icon"></i>
+                            <span class="dsk-start-placename">{{ p.label }}</span>
+                            <span class="dsk-start-placepath">{{ p.path }}</span>
+                        </button>
+                    </div>
+                    <div class="dsk-start-tip">
+                        <i class="el-icon-info"></i> 输入关键字搜索应用、连接、文件与快捷操作，回车打开第一项；Ctrl+Shift+K 可随时呼出
+                    </div>
+                </template>
+                <template v-else>
+                    <template v-if="desktopStartAppMatches.length">
+                        <div class="dsk-start-sec">应用</div>
+                        <div class="dsk-start-results">
+                            <button v-for="a in desktopStartAppMatches" :key="'sa' + a.id"
+                                    class="dsk-start-result" @click="desktopLaunchApp(a.id)">
+                                <span class="dsk-start-appico small" :style="desktopAppIconStyle(a)">
+                                    <img v-if="a.iconUrl" :src="a.iconUrl" alt="">
+                                    <i v-else :class="a.icon"></i>
+                                </span>
+                                <span class="dsk-start-result-main">
+                                    <span class="dsk-start-result-name">{{ a.label }}</span>
+                                    <span class="dsk-start-result-sub">{{ a.plugin ? '插件应用' : '应用' }}</span>
+                                </span>
+                                <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <template v-if="desktopStartConnMatches.length">
+                        <div class="dsk-start-sec">连接</div>
+                        <div class="dsk-start-results">
+                            <button v-for="c in desktopStartConnMatches" :key="'sc' + c.id"
+                                    class="dsk-start-result" :title="c.name + ' · ' + c.host"
+                                    @click="desktopStartOpenConnection(c)">
+                                <i class="el-icon-connection dsk-start-resico" style="color:#2f8fce"></i>
+                                <span class="dsk-start-result-main">
+                                    <span class="dsk-start-result-name">{{ c.name }}</span>
+                                    <span class="dsk-start-result-sub">{{ c.username ? c.username + '@' : '' }}{{ c.host }}:{{ c.port }}</span>
+                                </span>
+                                <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <template v-if="desktopStartActionMatches.length">
+                        <div class="dsk-start-sec">快捷操作</div>
+                        <div class="dsk-start-results">
+                            <button v-for="a in desktopStartActionMatches" :key="'sq' + a.id"
+                                    class="dsk-start-result" @click="desktopStartRunAction(a.id)">
+                                <i class="dsk-start-resico" :class="a.icon"></i>
+                                <span class="dsk-start-result-main">
+                                    <span class="dsk-start-result-name">{{ a.label }}</span>
+                                    <span class="dsk-start-result-sub">{{ a.desc }}</span>
+                                </span>
+                                <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <template v-if="desktopStartEntryMatches.length">
+                        <div class="dsk-start-sec">当前目录</div>
+                        <div class="dsk-start-results">
+                            <button v-for="r in desktopStartEntryMatches" :key="'se' + r.name"
+                                    class="dsk-start-result" @click="desktopOpenLocalSearchResult(r)">
+                                <i class="dsk-start-resico"
+                                   :class="r.dir ? 'el-icon-folder' : 'el-icon-document'"
+                                   :style="{ color: r.dir ? '#e6a23c' : '#5b8def' }"></i>
+                                <span class="dsk-start-result-main">
+                                    <span class="dsk-start-result-name">{{ r.name }}</span>
+                                    <span class="dsk-start-result-sub">{{ r.dir ? '文件夹' : fmtSize(r.size) }}</span>
+                                </span>
+                                <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <div class="dsk-start-sec">服务器搜索</div>
+                    <button class="dsk-start-searchgo" :disabled="desktop.startSearching"
+                            @click="desktopSearchServer">
+                        <i :class="desktop.startSearching ? 'el-icon-loading' : 'el-icon-search'"></i>
+                        <span v-if="desktop.startSearching">正在搜索 {{ desktop.startRootPath || desk.path || '/' }} …</span>
+                        <span v-else>在「{{ desktop.startRootPath || desk.path || desktopHomeDir || '/' }}」子目录中搜索 “{{ desktopStartQuery }}”</span>
+                    </button>
+                    <div class="dsk-start-hint">最多搜索 6 层子目录，最多返回 100 项；结果可能受权限限制</div>
+                    <div class="dsk-start-error" v-if="desktop.startError">{{ desktop.startError }}</div>
+                    <div class="dsk-start-empty"
+                         v-else-if="desktop.startSearched && !desktop.startResults.length && !desktop.startSearching">
+                        没有找到匹配的文件或文件夹
+                    </div>
+                    <div class="dsk-start-results dsk-start-server-results" v-if="desktop.startResults.length">
+                        <button v-for="r in desktop.startResults" :key="'sr' + r.path"
+                                class="dsk-start-result" :title="r.path"
+                                @click="desktopOpenSearchResult(r)">
+                            <i class="dsk-start-resico"
+                               :class="r.dir ? 'el-icon-folder' : 'el-icon-document'"
+                               :style="{ color: r.dir ? '#e6a23c' : '#5b8def' }"></i>
+                            <span class="dsk-start-result-main">
+                                <span class="dsk-start-result-name">{{ r.name }}</span>
+                                <span class="dsk-start-result-sub">{{ r.path }}</span>
+                            </span>
+                            <i class="el-icon-arrow-right dsk-start-result-go"></i>
+                        </button>
+                    </div>
+                </template>
+            </div>
+            <div class="dsk-start-footer">
+                <button class="dsk-start-foot-btn" @click="openDesktopSysInfo">
+                    <i class="el-icon-cpu"></i>系统信息
+                </button>
+                <span class="spacer"></span>
+                <button class="dsk-start-foot-btn" title="在新标签页打开工作台，当前桌面保持不变"
+                        @click="openTerminalInNewTab">
+                    <i class="el-icon-top-right"></i>新标签页工作台
+                </button>
+                <button class="dsk-start-foot-btn primary" @click="closeAiDesktop()">
+                    <i class="el-icon-back"></i>返回工作台
+                </button>
+                <div class="dsk-start-power" @click.stop>
+                    <button class="dsk-start-foot-btn dsk-power-btn"
+                            :class="{ active: desktop.powerOpen }" title="电源"
+                            @click="desktop.powerOpen = !desktop.powerOpen">
+                        <i class="el-icon-switch-button"></i>
+                    </button>
+                    <div class="dsk-power-menu" v-if="desktop.powerOpen">
+                        <button class="dsk-power-item danger" @click="desktopPowerShutdown">
+                            <i class="el-icon-switch-button"></i>关机
+                        </button>
+                        <button class="dsk-power-item danger" @click="desktopPowerReboot">
+                            <i class="el-icon-refresh-right"></i>重启
+                        </button>
+                        <div class="dsk-power-sep"></div>
+                        <button class="dsk-power-item" @click="desktopPowerDisconnect">
+                            <i class="el-icon-connection"></i>断开连接
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置（控制面板） -->
+        <div class="dsk-settings-mask" v-if="desktop.settingsVisible" @click.self="closeDesktopSettings">
+            <div class="dsk-settings" @click.stop>
+                <div class="dsk-settings-head">
+                    <div class="dsk-settings-badge"><i class="el-icon-setting"></i></div>
+                    <div class="dsk-settings-headtext">
+                        <div class="dsk-settings-title">设置</div>
+                        <div class="dsk-settings-sub">控制面板 · {{ desktopTab ? desktopTab.title : '未连接' }}</div>
+                    </div>
+                    <span class="spacer"></span>
+                    <button class="dsk-settings-x" title="关闭 (Esc)" @click="closeDesktopSettings">
+                        <i class="el-icon-close"></i>
+                    </button>
+                </div>
+                <div class="dsk-settings-body">
+                    <aside class="dsk-settings-nav">
+                        <button v-for="s in desktopSettingsSections" :key="s.id"
+                                class="dsk-settings-nav-item"
+                                :class="{ active: desktop.settingsSection === s.id }"
+                                @click="desktop.settingsSection = s.id">
+                            <i :class="s.icon"></i><span>{{ s.label }}</span>
+                        </button>
+                        <div class="dsk-settings-nav-sec">当前会话</div>
+                        <div class="dsk-settings-session">
+                            <div class="dsk-settings-session-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
+                            <div class="dsk-settings-session-host">{{ desktopTab ? desktopTab.host : '' }}</div>
+                            <div class="dsk-settings-session-status">
+                                <span class="dot" :class="'dot-' + (desktopTab ? desktopTab.status : 'closed')"></span>
+                                {{ desktopTab ? statusText(desktopTab) : '未连接' }}
+                            </div>
+                        </div>
+                    </aside>
+                    <section class="dsk-settings-main">
+                        <template v-if="desktop.settingsSection === 'appearance'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-monitor"></i>
+                                <div><b>外观与桌面</b><span>主题、窗口、任务栏、桌面图标与终端外观</span></div>
+                            </div>
+
+                            <div class="dsk-set-card dsk-appearance-card">
+                                <div class="dsk-set-row dsk-set-row-col">
+                                    <div class="dsk-theme-head">
+                                        <div class="dsk-set-info">
+                                            <b>桌面主题</b>
+                                            <span>选择主题会同时应用窗口、任务栏、壁纸和强调色，之后仍可单独微调</span>
+                                        </div>
+                                        <span class="dsk-theme-badge" v-if="desktopAppearanceCustomized">已微调</span>
+                                        <span class="dsk-theme-badge preset" v-else>{{ desktopAppearanceTheme.label }}预设</span>
+                                    </div>
+                                    <div class="dsk-appearance-preview">
+                                        <div class="dsk-ap-icons">
+                                            <span class="dsk-ap-icon"><i class="el-icon-folder-opened"></i><em>文件夹</em></span>
+                                            <span class="dsk-ap-icon"><i class="el-icon-document"></i><em>文档.txt</em></span>
+                                        </div>
+                                        <div class="dsk-ap-window">
+                                            <div class="dsk-ap-title">
+                                                <span class="dsk-ap-title-dot"></span>
+                                                <span class="dsk-ap-title-line"></span>
+                                                <span class="dsk-ap-title-btns"><i></i><i></i><i></i></span>
+                                            </div>
+                                            <div class="dsk-ap-content">
+                                                <span class="dsk-ap-side"></span>
+                                                <span class="dsk-ap-rows"><i></i><i></i><i></i><i></i></span>
+                                            </div>
+                                        </div>
+                                        <div class="dsk-ap-taskbar">
+                                            <span class="dsk-ap-logo"></span>
+                                            <span class="dsk-ap-search"></span>
+                                            <span class="dsk-ap-apps"><i></i><i></i><i></i></span>
+                                            <span class="dsk-ap-tray"></span>
+                                        </div>
+                                        <div class="dsk-ap-caption">
+                                            <b>{{ desktopAppearanceTheme.label }}</b>
+                                            <span>{{ desktopAppearanceCustomized ? '自定义配色' : desktopAppearanceTheme.desc }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="dsk-theme-grid">
+                                        <button v-for="t in desktopThemes" :key="'theme' + t.id"
+                                                class="dsk-theme-card"
+                                                :class="{ active: desktopAppearance.theme === t.id }"
+                                                :title="t.desc"
+                                                @click="applyDesktopTheme(t.id)">
+                                            <span class="dsk-theme-swatch" :style="{ background: t.wallpaper }">
+                                                <span class="dsk-theme-swatch-win"
+                                                      :style="{ background: t.windowColor }"></span>
+                                                <span class="dsk-theme-swatch-task"
+                                                      :style="{ background: t.taskbarColor }"></span>
+                                                <i v-if="desktopAppearance.theme === t.id" class="el-icon-check"></i>
+                                            </span>
+                                            <span class="dsk-theme-name">{{ t.label }}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口颜色</b>
+                                        <span>资源管理器、工具窗口和弹出面板的底色；字色会随明暗自动适配</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker v-model="desktopAppearance.windowColor"
+                                                         size="small"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">{{ desktopAppearance.windowColor }}</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口透明度</b>
+                                        <span>0% 为完全不透明，数值越高越能透出桌面背景</span>
+                                    </div>
+                                    <div class="dsk-set-slider">
+                                        <el-slider v-model="desktopAppearance.windowTransparency"
+                                                   :min="0" :max="70" :step="1"
+                                                   :show-tooltip="false"></el-slider>
+                                        <span class="dsk-set-num">{{ desktopAppearance.windowTransparency }}%</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口内容色调</b>
+                                        <span>根据窗口颜色亮度自动使用深色或浅色文字与控件</span>
+                                    </div>
+                                    <span class="dsk-set-value">
+                                        {{ desktopAppearanceScheme === 'dark' ? '深色内容' : '浅色内容' }}
+                                    </span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>任务栏颜色</b>
+                                        <span>任务栏与托盘区域的底色；开始菜单和弹出面板跟随窗口颜色</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker v-model="desktopAppearance.taskbarColor"
+                                                         size="small"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">{{ desktopAppearance.taskbarColor }}</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>任务栏透明度</b>
+                                        <span>0% 为完全不透明，任务栏会以毛玻璃效果叠加在桌面上</span>
+                                    </div>
+                                    <div class="dsk-set-slider">
+                                        <el-slider v-model="desktopAppearance.taskbarTransparency"
+                                                   :min="0" :max="70" :step="1"
+                                                   :show-tooltip="false"></el-slider>
+                                        <span class="dsk-set-num">{{ desktopAppearance.taskbarTransparency }}%</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>桌面图标大小</b>
+                                        <span>只调整桌面根图标的尺寸与网格，不影响窗口内的文件视图</span>
+                                    </div>
+                                    <div class="dsk-set-sizes">
+                                        <button v-for="s in desktopIconSizes" :key="'size' + s.id"
+                                                :class="{ active: desktopAppearance.iconSize === s.id }"
+                                                @click="setDesktopIconSize(s.id)">
+                                            <span class="dsk-size-dot"
+                                                  :style="{ width: s.dot + 'px', height: s.dot + 'px' }"></span>
+                                            {{ s.label }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>恢复默认外观</b>
+                                        <span>深色主题、默认窗口与任务栏颜色、中等桌面图标</span>
+                                    </div>
+                                    <el-button size="mini" @click="resetDesktopAppearance">恢复外观默认</el-button>
+                                </div>
+                            </div>
+
+                            <div class="dsk-set-subheading">
+                                <i class="el-icon-files"></i> 文件视图与桌面行为
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>打开连接后</b>
+                                        <span>仅本次启动后的首个连接自动进入；之后新开的连接保持终端标签，可手动打开桌面</span>
+                                    </div>
+                                    <el-radio-group v-model="openAfterConnect" size="mini">
+                                        <el-radio-button label="desktop">AI 可视化桌面</el-radio-button>
+                                        <el-radio-button label="workbench">工作台</el-radio-button>
+                                    </el-radio-group>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>默认视图</b>
+                                        <span>更改后立即应用，下次进入桌面时保持</span>
+                                    </div>
+                                    <div class="dsk-set-views">
+                                        <button v-for="v in desktopViews" :key="'set' + v.id"
+                                                :class="{ active: desk.viewMode === v.id }"
+                                                @click="setDesktopView(v.id)">
+                                            <i :class="v.icon"></i><span>{{ v.label }}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>图片缩略图</b>
+                                        <span>在大图标 / 中图标视图中直接显示图片内容</span>
+                                    </div>
+                                    <el-switch v-model="desktop.thumbnailsEnabled" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>显示隐藏文件</b>
+                                        <span>显示名称以“.”开头的文件和文件夹</span>
+                                    </div>
+                                    <el-switch v-model="desktop.showHidden" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>终端字体</b>
+                                        <span>{{ fontSettings.family }} · {{ fontSettings.size }}px</span>
+                                    </div>
+                                    <el-button size="mini" @click="fontVisible = true">字体设置</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>终端背景图片</b>
+                                        <span>{{ bgSettings.url ? '已设置背景' : '未设置背景' }} · 不透明度
+                                            {{ Math.round(bgSettings.opacity * 100) }}%</span>
+                                    </div>
+                                    <el-button size="mini" @click="openBgSettings('terminal')">背景设置</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>AI 桌面背景图片</b>
+                                        <span>{{ desktopBgSettings.url ? '已设置背景' : '未设置背景' }} · 不透明度
+                                            {{ Math.round(desktopBgSettings.opacity * 100) }}%</span>
+                                    </div>
+                                    <el-button size="mini" @click="openBgSettings('desktop')">背景设置</el-button>
+                                </div>
+                                <div class="dsk-set-row dsk-app-setting-row" v-for="a in desktopAppIcons"
+                                     :key="'setic' + a.key">
+                                    <span class="dsk-app-mini" :style="desktopAppIconStyle(a)">
+                                        <i :class="a.icon"></i>
+                                    </span>
+                                    <div class="dsk-set-info">
+                                        <b>{{ a.label }}</b>
+                                        <span>{{ a.desc }} · {{ isDesktopAppHidden(a.key) ? '已隐藏' : '在桌面显示' }}</span>
+                                    </div>
+                                    <div class="dsk-set-app-actions">
+                                        <el-button size="mini" icon="el-icon-brush"
+                                                   @click="openDesktopAppProperties(a)">图标样式</el-button>
+                                        <el-switch :value="!isDesktopAppHidden(a.key)" size="mini"
+                                                   @change="setDesktopAppHidden(a.key, !$event)"></el-switch>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>应用图标样式</b>
+                                        <span>把系统应用的图标、背景颜色和形状恢复为默认</span>
+                                    </div>
+                                    <el-button size="mini" @click="resetAllDesktopAppIconStyles">
+                                        全部恢复默认
+                                    </el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>恢复默认</b>
+                                        <span>大图标视图、开启缩略图与隐藏文件、按名称排序</span>
+                                    </div>
+                                    <el-button size="mini" type="danger" plain @click="resetDesktopSettings">
+                                        恢复默认
+                                    </el-button>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'time'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-time"></i>
+                                <div><b>时间与时钟</b><span>任务栏时钟的显示格式与时区</span></div>
+                            </div>
+                            <div class="dsk-time-preview">
+                                <div class="dsk-time-big">{{ desktopClockTime }}</div>
+                                <div class="dsk-time-meta">
+                                    {{ desktopClockDate }} · {{ desktopClockTimezone }}（{{ desktopClockOffset }}）
+                                </div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>24 小时制</b><span>关闭后使用上午 / 下午 12 小时格式</span>
+                                    </div>
+                                    <el-switch v-model="desktop.clock24h" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>显示秒</b><span>在任务栏时钟中显示秒数</span>
+                                    </div>
+                                    <el-switch v-model="desktop.clockSeconds" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>显示日期</b><span>在时间下方显示年月日</span>
+                                    </div>
+                                    <el-switch v-model="desktop.clockShowDate" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>时区</b><span>跟随运行浏览器的本机时区</span></div>
+                                    <span class="dsk-set-value">{{ desktopClockTimezone }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>时区偏移</b><span>相对于 UTC 的偏移量</span></div>
+                                    <span class="dsk-set-value">{{ desktopClockOffset }}</span>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                这些设置只改变任务栏时钟的显示方式，不会修改远端服务器时间。
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'shortcuts'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-set-up"></i>
+                                <div><b>快捷键</b><span>终端与命令输入栏的交互方式</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>双击 Ctrl</b><span>显示 / 隐藏命令输入栏</span>
+                                    </div>
+                                    <el-switch v-model="hotkeySettings.doubleCtrl" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>Tab 补全</b><span>命令输入栏智能补全路径 / 历史 / 快捷命令</span>
+                                    </div>
+                                    <el-switch v-model="hotkeySettings.tabComplete" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>Esc 关闭输入栏</b><span>按下 Esc 时关闭终端底部命令栏</span>
+                                    </div>
+                                    <el-switch v-model="hotkeySettings.escClose" size="mini"></el-switch>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜
+                                新标签图片预览 ← → 切换、R 旋转；音频预览 空格播放 / 暂停、← → 快退 / 快进、↑ ↓ 音量；视频预览 空格播放 / 暂停、← → 快进 / 快退；Esc 关闭标签页
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'power'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-switch-button"></i>
+                                <div><b>电源与休眠</b><span>桌面空闲策略与当前 SSH 会话电源</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>空闲自动返回工作台</b>
+                                        <span>无操作达到设定时间后，桌面会自动关闭并回到工作台</span>
+                                    </div>
+                                    <el-select v-model="desktop.idleMinutes" size="mini" class="dsk-set-select">
+                                        <el-option :value="0" label="关闭"></el-option>
+                                        <el-option :value="5" label="5 分钟"></el-option>
+                                        <el-option :value="15" label="15 分钟"></el-option>
+                                        <el-option :value="30" label="30 分钟"></el-option>
+                                        <el-option :value="60" label="60 分钟"></el-option>
+                                    </el-select>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>关闭桌面</b><span>立即收起桌面，返回终端工作台</span>
+                                    </div>
+                                    <el-button size="mini" icon="el-icon-s-fold" @click="closeAiDesktop()">
+                                        立即返回
+                                    </el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>重新连接</b><span>保持桌面并重新建立当前 SSH 会话，恢复后自动刷新</span>
+                                    </div>
+                                    <el-button size="mini" icon="el-icon-refresh-right"
+                                               @click="desktopReconnectSession">重新连接</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>断开连接</b><span>关闭桌面并断开当前 SSH 会话，正在执行的命令会中断</span>
+                                    </div>
+                                    <el-button size="mini" type="danger" plain icon="el-icon-switch-button"
+                                               @click="desktopDisconnectSession">断开连接</el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                设置面板、开始菜单或弹窗打开期间，空闲计时会暂停；图片 / 音频 / 视频预览在新标签页打开时也不会触发自动返回。远端服务器关机 / 重启在开始菜单底部的电源按钮中执行，需要当前用户为 root 或已配置免密 sudo。
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'ai'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-magic-stick"></i>
+                                <div><b>AI 助手</b><span>命令翻译与 AI 运维终端使用的模型配置</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>模型厂商</b><span>用于 AI 终端和命令生成</span></div>
+                                    <span class="dsk-set-value">
+                                        {{ aiCurrentPreset ? aiCurrentPreset.name : (aiSetForm.provider || '未选择') }}
+                                    </span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>模型</b><span>接口返回的模型 ID</span></div>
+                                    <span class="dsk-set-value">{{ aiSetForm.model || '未选择' }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>API Key</b><span>保存在本机数据目录，不随连接同步</span></div>
+                                    <span class="dsk-set-value" :class="{ ok: aiSetForm.hasKey, warn: !aiSetForm.hasKey }">
+                                        {{ aiSetForm.hasKey ? '已配置' : '未配置' }}
+                                    </span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>单轮步数上限</b><span>AI 终端一次任务最多连续执行的步数</span></div>
+                                    <span class="dsk-set-value">{{ aiMaxSteps }} 步</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>AI 设置</b><span>更换厂商、接口地址、模型、步数上限或 API Key</span></div>
+                                    <el-button size="mini" type="primary" @click="onMenuCommand('ai')">
+                                        打开 AI 设置
+                                    </el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                开始菜单搜索会在当前目录 6 层子目录中查找，最多返回 100 项；AI 终端执行命令时会在同一目录自动刷新桌面。
+                            </div>
+                        </template>
+
+                        <template v-else-if="desktop.settingsSection === 'network'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-connection"></i>
+                                <div><b>网络与连接</b><span>当前 SSH 会话与局域网访问</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>局域网访问</b>
+                                        <span>当前：{{ lanSettings.effectiveLan ? '已开放' : '仅本机' }} ·
+                                            {{ lanSettings.tlsEnabled ? 'HTTPS' : 'HTTP' }} ·
+                                            端口 {{ lanSettings.port || 17777 }}</span>
+                                    </div>
+                                    <el-switch v-model="lanSettings.lanEnabled" size="mini"
+                                               @change="saveLan"></el-switch>
+                                </div>
+                                <div class="dsk-set-row" v-if="lanSettings.restartRequired">
+                                    <div class="dsk-set-info">
+                                        <b>需要重启</b><span>局域网访问设置与运行状态不一致，重启应用后生效</span>
+                                    </div>
+                                    <span class="dsk-set-value warn">待重启</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>当前连接</b>
+                                        <span>{{ desktopTab ? desktopTab.title + ' · ' + desktopTab.host : '未连接' }}</span>
+                                    </div>
+                                    <el-button size="mini" @click="openDesktopConnectionWindow">连接管理</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>局域网设置</b><span>查看访问地址、复制地址与安全提示</span></div>
+                                    <el-button size="mini" @click="onMenuCommand('lan')">打开局域网设置</el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                开放局域网需先启用登录认证并修改默认密码；生效后默认自动使用 HTTPS，重启应用后生效。
+                            </div>
+                        </template>
+
+                        <template v-else>
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-cpu"></i>
+                                <div><b>系统信息</b><span>运行环境与本工具数据位置</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>版本</b><span>DeepShell</span></div>
+                                    <span class="dsk-set-value">{{ appInfo.version }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>Java 运行环境</b><span>当前应用使用的 JRE</span></div>
+                                    <span class="dsk-set-value">{{ appInfo.java }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>操作系统</b><span>运行本工具的机器</span></div>
+                                    <span class="dsk-set-value">{{ appInfo.os }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>数据目录</b><span>数据库、密钥、AI 配置与日志所在位置</span></div>
+                                    <span class="dsk-set-value dsk-set-mono">{{ appInfo.dataDir }}</span>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>系统信息</b><span>查看远端服务器 CPU、内存、磁盘与网络</span></div>
+                                    <el-button size="mini" @click="openDesktopSysInfo">查看服务器信息</el-button>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info"><b>关于</b><span>版本信息与运行环境</span></div>
+                                    <el-button size="mini" @click="onMenuCommand('about')">关于 DeepShell</el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                连接、密码、快捷命令等数据仅保存在本机数据目录；拷贝数据目录即可迁移。
+                            </div>
+                        </template>
+                    </section>
+                </div>
+            </div>
+        </div>
+
+        <!-- 桌面系统应用属性与图标样式 -->
+        <div class="dsk-appprops-mask" v-if="desktopAppProps.visible"
+             @click.self="closeDesktopAppProperties">
+            <div class="dsk-appprops" v-if="desktopAppPropsApp" @click.stop>
+                <div class="dsk-appprops-head">
+                    <span class="dsk-appprops-ico" :style="desktopAppIconStyle(desktopAppProps)">
+                        <i :class="desktopAppProps.icon"></i>
+                    </span>
+                    <div class="dsk-appprops-headtext">
+                        <div class="dsk-appprops-title">{{ desktopAppPropsApp.label }} · 属性</div>
+                        <div class="dsk-appprops-sub">{{ desktopAppPropsApp.desc }}</div>
+                    </div>
+                    <span class="dsk-appprops-badge">系统应用</span>
+                    <button class="dsk-appprops-x" title="关闭 (Esc)"
+                            @click="closeDesktopAppProperties"><i class="el-icon-close"></i></button>
+                </div>
+                <div class="dsk-appprops-body">
+                    <div class="dsk-appprops-info">
+                        <div class="dsk-appprops-sec">
+                            <i class="el-icon-info"></i>应用信息
+                        </div>
+                        <div class="dsk-appprops-grid">
+                            <div class="dsk-appprops-row">
+                                <span>来源</span><b>DeepShell 系统</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>应用类型</span><b>系统内置应用</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>版本信息</span><b>DeepShell {{ desktopAppVersion }} 内置组件</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>版本号</span><b>{{ desktopAppVersion }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>发布时间</span><b>{{ desktopAppReleaseTime }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>应用类别</span><b>{{ desktopAppPropsApp.category || '系统工具' }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>组件标识</span><b class="dsk-mono">{{ desktopAppPropsApp.key }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>当前图标</span><b class="dsk-mono">{{ desktopAppProps.icon }}</b>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dsk-appprops-editor">
+                        <div class="dsk-appprops-sec dsk-appprops-sec-editor">
+                            <span><i class="el-icon-brush"></i>自定义图标样式</span>
+                            <em>保存后同步到桌面图标与开始菜单</em>
+                        </div>
+                        <div class="dsk-appprops-editor-body">
+                            <div class="dsk-appprops-preview">
+                                <span class="dsk-appprops-preview-icon"
+                                      :style="desktopAppIconStyle(desktopAppProps)">
+                                    <i :class="desktopAppProps.icon"></i>
+                                </span>
+                                <div class="dsk-appprops-preview-name">{{ desktopAppPropsApp.label }}</div>
+                                <div class="dsk-appprops-preview-meta">
+                                    {{ desktopAppProps.color }} · {{ desktopShapeLabel(desktopAppProps.shape) }}
+                                </div>
+                            </div>
+                            <div class="dsk-appprops-editor-main">
+                                <div class="dsk-icon-editor-label">
+                                    <span>选择图标</span>
+                                    <em>{{ desktopAppPropsIcons.length }} 个可用图标</em>
+                                </div>
+                                <el-input v-model="desktopAppProps.iconSearch" size="mini" clearable
+                                          prefix-icon="el-icon-search" class="dsk-icon-search"
+                                          placeholder="搜索图标，如 folder / monitor / star"></el-input>
+                                <div class="dsk-icon-choice-grid" ref="appIconGrid">
+                                    <button v-for="ic in desktopAppPropsIcons" :key="'appic' + ic"
+                                            type="button" class="dsk-icon-choice"
+                                            :class="{ active: desktopAppProps.icon === ic }"
+                                            :title="ic" @click="desktopAppProps.icon = ic">
+                                        <i :class="ic"></i>
+                                    </button>
+                                    <div v-if="!desktopAppPropsIcons.length" class="dsk-icon-empty">
+                                        没有匹配的图标
+                                    </div>
+                                </div>
+                                <div class="dsk-icon-editor-label">背景颜色</div>
+                                <div class="dsk-color-swatches">
+                                    <button v-for="c in desktopAppIconColors" :key="'appc' + c"
+                                            type="button" class="dsk-color-swatch"
+                                            :class="{ active: String(desktopAppProps.color).toLowerCase() === c }"
+                                            :style="{ background: c }" :title="c"
+                                            @click="desktopAppProps.color = c"></button>
+                                    <el-color-picker v-model="desktopAppProps.color"
+                                                     size="mini"></el-color-picker>
+                                    <span class="dsk-color-hex">{{ desktopAppProps.color }}</span>
+                                </div>
+                                <div class="dsk-icon-editor-label">图标形状</div>
+                                <div class="dsk-shape-choices">
+                                    <button v-for="s in desktopAppShapes" :key="'apps' + s.id"
+                                            type="button" class="dsk-shape-choice"
+                                            :class="{ active: desktopAppProps.shape === s.id }"
+                                            @click="desktopAppProps.shape = s.id">
+                                        <span class="dsk-shape-sample"
+                                              :style="{ borderRadius: desktopShapeRadius(s.id) || '6px' }"></span>
+                                        {{ s.label }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dsk-appprops-foot">
+                    <el-button size="mini" @click="resetDesktopAppIconForm">恢复默认样式</el-button>
+                    <span class="spacer"></span>
+                    <el-button size="mini" @click="closeDesktopAppProperties">取消</el-button>
+                    <el-button size="mini" type="primary" icon="el-icon-check"
+                               @click="saveDesktopAppIconStyle">保存图标样式</el-button>
+                </div>
+            </div>
+        </div>
+
+        <div class="dsk-menu" ref="deskMenu" v-if="desktop.menu.visible"
+             :style="{ left: desktop.menu.x + 'px', top: desktop.menu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <template v-if="desktop.menu.target">
+                <div class="dsk-menu-title">{{ desktopMenuTitle }}</div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('open')">
+                    <i class="el-icon-folder-opened"></i>打开
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
+                     @click="desktopMenuAction('openNewWindow')">
+                    <i class="el-icon-folder-add"></i>在新窗口打开
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && !isLnkFile(desktop.menu.target)"
+                     @click="desktopMenuAction('shortcut')">
+                    <i class="el-icon-monitor"></i>发送到桌面快捷方式
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
+                     @click="desktopMenuAction('terminal')">
+                    <i class="el-icon-position"></i>在终端中打开
+                </div>
+                <div class="dsk-menu-item"
+                     v-if="!desktopMenuMulti && desktopPreviewable(desktop.menu.target)"
+                     @click="desktopMenuAction('preview')">
+                    <i :class="desktopPreviewIcon(desktop.menu.target)"></i>
+                    {{ desktopPreviewLabel(desktop.menu.target) }}
+                </div>
+                <div class="dsk-menu-item"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !desktopPreviewable(desktop.menu.target) && !desktopArchiveFormat(desktop.menu.target.name)"
+                     @click="desktopMenuAction('edit')">
+                    <i class="el-icon-edit-outline"></i>在线编辑
+                </div>
+                <div class="dsk-menu-item"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopVideo(desktop.menu.target) && !isDesktopAudio(desktop.menu.target) && !desktopArchiveFormat(desktop.menu.target.name)"
+                     @click="desktopMenuAction('vscode')">
+                    <i class="el-icon-edit"></i>用 VSCode 编辑
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && !desktop.menu.target.dir"
+                     @click="desktopMenuAction('download')">
+                    <i class="el-icon-download"></i>下载
+                </div>
+                <div class="dsk-menu-item" v-if="desktopMenuHasFile"
+                     @click="desktopMenuAction('crossTransfer')">
+                    <i class="el-icon-sort"></i>跨服务器传输
+                </div>
+                <div class="dsk-menu-item has-sub" v-else-if="desktopMenuMulti"
+                     @click.stop="openDesktopDownloadSub($event)">
+                    <i class="el-icon-download"></i>下载
+                    <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('cut')">
+                    <i class="el-icon-scissors"></i>{{ desktopMenuMulti ? '剪切选中项' : '剪切' }}
+                    <span class="dsk-menu-key">Ctrl+X</span>
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('copy')">
+                    <i class="el-icon-copy-document"></i>{{ desktopMenuMulti ? '复制选中项' : '复制' }}
+                    <span class="dsk-menu-key">Ctrl+C</span>
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir && canPasteDesktop"
+                     @click="desktopMenuAction('pasteInto')">
+                    <i class="el-icon-document-copy"></i>粘贴到此文件夹
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('copyPath')">
+                    <i class="el-icon-document-copy"></i>{{ desktopMenuMulti ? '复制选中路径' : '复制路径' }}
+                </div>
+                <div class="dsk-menu-item has-sub" @click.stop="openDesktopCompressSub($event)">
+                    <i class="el-icon-box"></i>压缩
+                    <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
+                </div>
+                <div class="dsk-menu-item has-sub" v-if="desktopMenuCanExtract"
+                     @click.stop="openDesktopExtractSub($event)">
+                    <i class="el-icon-folder-opened"></i>解压
+                    <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('rename')">
+                    <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
+                </div>
+                <div class="dsk-menu-item danger" @click="desktopMenuAction('delete')">
+                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('移入回收站 ' + desktopMenuSelectionCount + ' 项') : '移入回收站' }}
+                    <span class="dsk-menu-key">Del</span>
+                </div>
+                <div class="dsk-menu-item danger" @click="desktopMenuAction('deletePermanent')">
+                    <i class="el-icon-delete-solid"></i>彻底删除
+                    <span class="dsk-menu-key">Shift+Del</span>
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('props')">
+                    <i class="el-icon-info"></i>属性
+                </div>
+            </template>
+            <template v-else>
+                <div class="dsk-menu-title">当前目录</div>
+                <div class="dsk-menu-item" :class="{ disabled: !canPasteDesktop }"
+                     @click="canPasteDesktop && desktopMenuAction('paste')">
+                    <i class="el-icon-document-copy"></i>粘贴<span class="dsk-menu-key">Ctrl+V</span>
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('newFolder')">
+                    <i class="el-icon-folder-add"></i>新建文件夹
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('newFile')">
+                    <i class="el-icon-document-add"></i>新建文件
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('upload')">
+                    <i class="el-icon-upload2"></i>上传文件
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('terminalHere')">
+                    <i class="el-icon-position"></i>在终端中打开当前目录
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('copyCurrentPath')">
+                    <i class="el-icon-document-copy"></i>复制当前路径
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-title">排序方式</div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('sortName')">
+                    <i class="el-icon-sort"></i>按名称排序
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('sortSize')">
+                    <i class="el-icon-sort"></i>按大小排序
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('sortMtime')">
+                    <i class="el-icon-sort"></i>按修改时间排序
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('refresh')">
+                    <i class="el-icon-refresh"></i>刷新<span class="dsk-menu-key">F5</span>
+                </div>
+            </template>
+        </div>
+
+        <!-- 右键「压缩」子菜单 -->
+        <div class="dsk-menu dsk-menu-sub" ref="deskCompressSub" v-if="desktop.compressSub.visible"
+             :style="{ left: desktop.compressSub.x + 'px', top: desktop.compressSub.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">压缩为</div>
+            <div class="dsk-menu-item" v-for="f in archiveFormats" :key="'arcfmt' + f.id"
+                 @click="desktopMenuAction('compress:' + f.id)">
+                <i class="el-icon-document"></i>
+                <span class="dsk-menu-sub-name">{{ f.label }}</span>
+                <span class="dsk-menu-key">{{ f.ext }}</span>
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopMenuAction('compressDialog')">
+                <i class="el-icon-setting"></i>压缩设置…
+            </div>
+        </div>
+
+        <!-- 右键「解压」子菜单 -->
+        <div class="dsk-menu dsk-menu-sub" ref="deskExtractSub" v-if="desktop.extractSub.visible"
+             :style="{ left: desktop.extractSub.x + 'px', top: desktop.extractSub.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">解压「{{ desktopMenuExtractName }}」</div>
+            <div class="dsk-menu-item" @click="desktopMenuAction('extractHere')">
+                <i class="el-icon-folder-opened"></i>解压到当前目录
+            </div>
+            <div class="dsk-menu-item" @click="desktopMenuAction('extractToFolder')">
+                <i class="el-icon-folder"></i>
+                <span class="dsk-menu-sub-name">解压到「{{ desktopMenuExtractFolder }}」</span>
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-title">同名文件将自动跳过</div>
+        </div>
+
+        <!-- 右键「下载」子菜单（多选） -->
+        <div class="dsk-menu dsk-menu-sub" ref="deskDownloadSub" v-if="desktop.downloadSub.visible"
+             :style="{ left: desktop.downloadSub.x + 'px', top: desktop.downloadSub.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">下载 {{ desktopMenuSelectionCount }} 项</div>
+            <div class="dsk-menu-item" @click="desktopMenuAction('downloadBundle')">
+                <i class="el-icon-box"></i>
+                <span class="dsk-menu-sub-name">打包下载</span>
+                <span class="dsk-menu-key">.zip</span>
+            </div>
+            <div class="dsk-menu-item" v-if="desktopMenuHasFile" @click="desktopMenuAction('downloadEach')">
+                <i class="el-icon-download"></i>
+                <span class="dsk-menu-sub-name">逐个下载</span>
+                <span class="dsk-menu-key">仅文件</span>
+            </div>
+            <div class="dsk-menu-item" v-if="localDownloadReady" @click="desktopMenuAction('downloadLocal')">
+                <i class="el-icon-folder-opened"></i>
+                <span class="dsk-menu-sub-name">下载到本机…</span>
+            </div>
+        </div>
+
+        <!-- 桌面空白右键菜单 -->
+        <div class="dsk-menu dsk-wall-menu" ref="deskWallMenu" v-if="desktop.wallMenu.visible"
+             :style="{ left: desktop.wallMenu.x + 'px', top: desktop.wallMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">桌面</div>
+            <div class="dsk-menu-item" :class="{ disabled: !canPasteDesktop }"
+                 @click="canPasteDesktop && desktopWallMenuAction('paste')">
+                <i class="el-icon-document-copy"></i>粘贴<span class="dsk-menu-key">Ctrl+V</span>
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('refresh')">
+                <i class="el-icon-refresh"></i>刷新
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('newFolder')">
+                <i class="el-icon-folder-add"></i>新建文件夹
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('newFile')">
+                <i class="el-icon-document-add"></i>新建文本文件
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('upload')">
+                <i class="el-icon-upload2"></i>上传文件
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('openTerminal')">
+                <i class="el-icon-monitor"></i>在此打开终端
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('newWindow')">
+                <i class="el-icon-folder-opened"></i>新建资源管理器窗口
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('personalize')">
+                <i class="el-icon-setting"></i>个性化
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('return')">
+                <i class="el-icon-top-right"></i>在新标签页打开工作台
+            </div>
+        </div>
+
+        <!-- 桌面应用图标右键菜单 -->
+        <div class="dsk-menu dsk-icon-menu" v-if="desktop.iconMenu.visible"
+             :style="{ left: desktop.iconMenu.x + 'px', top: desktop.iconMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">{{ desktopIconMenuTitle }}</div>
+            <div class="dsk-menu-item" @click="desktopIconMenuAction('open')">
+                <i class="el-icon-folder-opened"></i>打开
+            </div>
+            <div v-if="desktop.iconMenu.key === 'app:trash'" class="dsk-menu-item danger"
+                 @click="desktopIconMenuAction('emptyTrash')">
+                <i class="el-icon-delete"></i>清空回收站
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopIconMenuAction('props')">
+                <i class="el-icon-info"></i>属性
+            </div>
+            <div class="dsk-menu-item" @click="desktopIconMenuAction('hide')">
+                <i class="el-icon-remove-outline"></i>隐藏
+            </div>
+        </div>
+
+        <!-- 回收站项目右键菜单 -->
+        <div class="dsk-menu dsk-trash-menu" v-if="desktop.trashMenu.visible"
+             :style="{ left: desktop.trashMenu.x + 'px', top: desktop.trashMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title" :title="desktop.trashMenu.item && desktop.trashMenu.item.name">
+                {{ desktop.trashMenu.item ? desktop.trashMenu.item.name : '回收站项目' }}
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('restore')">
+                <i class="el-icon-refresh-left"></i>还原
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('openParent')">
+                <i class="el-icon-folder-opened"></i>打开原目录
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('copyPath')">
+                <i class="el-icon-document-copy"></i>复制原路径
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('props')">
+                <i class="el-icon-info"></i>属性
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item danger" @click="desktopTrashMenuAction('purge')">
+                <i class="el-icon-delete"></i>彻底删除
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrashMenuAction('refresh')">
+                <i class="el-icon-refresh"></i>刷新回收站
+            </div>
+            <div class="dsk-menu-item danger" @click="desktopTrashMenuAction('empty')">
+                <i class="el-icon-delete-solid"></i>清空回收站
+            </div>
+        </div>
+
+        <!-- 任务栏资源管理器窗口右键菜单 -->
+        <div class="dsk-menu dsk-task-menu" ref="deskTaskMenu" v-if="desktop.taskMenu.visible"
+             :style="{ left: desktop.taskMenu.x + 'px', top: desktop.taskMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title dsk-task-menu-head" v-if="desktopTaskMenuWin">
+                {{ desktopWindowTitle(desktopTaskMenuWin) }}
+                <span class="dsk-task-menu-host">{{ desktopTab ? desktopTab.host : '' }}</span>
+            </div>
+            <template v-if="desktopTaskMenuWin && desktopTaskMenuWin.type === 'explorer'">
+                <div class="dsk-menu-title">常用目录</div>
+                <div v-if="!desktopCommonDirs.length" class="dsk-menu-empty">
+                    暂无常用目录，可用地址栏左侧星标收藏
+                </div>
+                <div v-for="d in desktopCommonDirs" :key="'tm' + d.id" class="dsk-menu-item"
+                     :title="d.path" @click="desktopTaskOpenCommon(d.path)">
+                    <i class="el-icon-star-on"></i>
+                    <span class="dsk-task-menu-path">{{ d.path }}</span>
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="desktopTaskNewWindow">
+                    <i class="el-icon-folder-add"></i>新建资源管理器窗口
+                </div>
+            </template>
+            <template v-else-if="desktopTaskMenuWin && desktopTaskMenuWin.type === 'terminal'">
+                <div class="dsk-menu-item" @click="desktopTaskNewTerminalWindow">
+                    <i class="el-icon-monitor"></i>新建终端窗口
+                </div>
+            </template>
+            <div class="dsk-menu-item" v-if="desktopTaskMenuWin && desktopTaskMenuWin.type !== 'explorer'"
+                 @click="desktopTaskSwitchWindow">
+                <i class="el-icon-full-screen"></i>切换至窗口
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item danger" @click="desktopTaskCloseWindow">
+                <i class="el-icon-close"></i>关闭
+            </div>
+        </div>
+
+        <!-- 任务栏空白处右键菜单 -->
+        <div class="dsk-menu dsk-taskbar-menu" ref="deskTaskbarMenu" v-if="desktop.taskbarMenu.visible"
+             :style="{ left: desktop.taskbarMenu.x + 'px', top: desktop.taskbarMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-item" v-if="desktopTab" @click="desktopTaskbarMenuAction('reconnect')">
+                <i class="el-icon-refresh-right"></i>重新连接{{ desktopConnDown ? '（已断开）' : '' }}
+            </div>
+            <div class="dsk-menu-sep" v-if="desktopTab"></div>
+            <div class="dsk-menu-item" @click="desktopTaskbarMenuAction('taskmgr')">
+                <i class="el-icon-cpu"></i>打开任务管理器
+            </div>
+            <div class="dsk-menu-item" @click="desktopTaskbarMenuAction('showDesktop')">
+                <i class="el-icon-s-fold"></i>显示桌面
+            </div>
+        </div>
+
+        <!-- 任务栏连接状态菜单 -->
+        <div class="dsk-menu dsk-taskbar-menu" ref="deskTrayMenu" v-if="desktop.trayMenu.visible && desktopTab"
+             :style="{ left: desktop.trayMenu.x + 'px', top: desktop.trayMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">
+                {{ desktopTab.title }} · {{ statusText(desktopTab) }}
+            </div>
+            <div class="dsk-menu-item"
+                 :class="{ disabled: desktopTab.status === 'connecting' || desktopTab.status === 'reconnecting' }"
+                 @click="desktopTrayMenuAction('reconnect')">
+                <i class="el-icon-refresh-right"></i>
+                {{ desktopTab.status === 'reconnecting' ? '正在重新连接…' : '重新连接' }}
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrayMenuAction('disconnect')">
+                <i class="el-icon-switch-button"></i>断开连接
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopTrayMenuAction('sysinfo')">
+                <i class="el-icon-cpu"></i>系统信息
+            </div>
+            <div class="dsk-menu-item" @click="desktopTrayMenuAction('settings')">
+                <i class="el-icon-setting"></i>网络与连接设置
+            </div>
+        </div>
+
+        <!-- 任务管理器进程右键菜单 -->
+        <div class="dsk-menu dsk-tm-ctx" ref="tmCtxMenu" v-if="taskmgr.ctxMenu.visible"
+             :style="{ left: taskmgr.ctxMenu.x + 'px', top: taskmgr.ctxMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">{{ taskmgr.ctxMenu.title }}</div>
+            <template v-if="taskmgr.ctxMenu.kind === 'detail'">
+                <div class="dsk-menu-item" @click="tmCtxAction('viewDetail')">
+                    <i class="el-icon-view"></i>查看命令行
+                </div>
+                <div class="dsk-menu-item" @click="tmCtxAction('copyCmd')">
+                    <i class="el-icon-document-copy"></i>复制命令行
+                </div>
+                <div class="dsk-menu-sep"></div>
+                <div class="dsk-menu-item" @click="tmCtxAction('end')">
+                    <i class="el-icon-close"></i>结束任务
+                </div>
+                <div class="dsk-menu-item danger" @click="tmCtxAction('kill')">
+                    <i class="el-icon-warning-outline"></i>强制结束
+                </div>
+            </template>
+            <template v-else-if="taskmgr.ctxMenu.kind === 'app'">
+                <div class="dsk-menu-item" @click="tmCtxAction('switch')">
+                    <i class="el-icon-full-screen"></i>切换至
+                </div>
+                <div class="dsk-menu-item danger" @click="tmCtxAction('endApp')">
+                    <i class="el-icon-close"></i>结束任务
+                </div>
+            </template>
+            <template v-else>
+                <div class="dsk-menu-item disabled">
+                    <i class="el-icon-lock"></i>结束任务（系统保护）
+                </div>
+            </template>
+        </div>
+    </div>
+</body>
+</html>
