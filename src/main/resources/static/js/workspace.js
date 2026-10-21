@@ -9418,10 +9418,24 @@ new Vue({
             }
         },
         onDesktopIconDragOver: function (ev, item) {
-            if (!item || !this.desktop.iconDragKey || this.desktop.iconDragKey === item.key) {
+            if (!item) {
                 return;
             }
-            this.desktop.iconDropKey = item.key;
+            var fromKey = this.desktop.iconDragKey;
+            if (fromKey) {
+                if (fromKey === item.key) {
+                    return;
+                }
+                this.desktop.iconDropKey = item.key;
+                return;
+            }
+            var drag = this._deskFileDrag;
+            if (drag && drag.names && drag.names.length && item.key === 'app:trash') {
+                this.desktop.iconDropKey = item.key;
+                if (ev && ev.dataTransfer) {
+                    ev.dataTransfer.dropEffect = 'move';
+                }
+            }
         },
         onDesktopIconDragLeave: function (item) {
             if (item && this.desktop.iconDropKey === item.key) {
@@ -9432,7 +9446,47 @@ new Vue({
             var fromKey = this.desktop.iconDragKey;
             this.desktop.iconDragKey = '';
             this.desktop.iconDropKey = '';
-            if (!fromKey || !item || fromKey === item.key) {
+            if (!item) {
+                return;
+            }
+            if (item.key === 'app:trash') {
+                if (fromKey && fromKey.indexOf('file:') === 0) {
+                    var rows = this.desktopSurfaceSelectedRows();
+                    if (!rows.length) {
+                        var dragged = this.desktopIconItemMap[fromKey];
+                        if (dragged && dragged.entry) {
+                            rows = [dragged.entry];
+                        }
+                    }
+                    if (rows.length) {
+                        this.desktopDeleteRows(rows, this.desktopSurfaceContextWin(), false);
+                    }
+                    return;
+                }
+                var drag = this._deskFileDrag;
+                if (drag && drag.names && drag.names.length) {
+                    var win = drag.win || this.desk;
+                    var entries = (win && win.entries) || [];
+                    var movedRows = drag.names.map(function (name) {
+                        var hit = null;
+                        entries.some(function (r) {
+                            if (r.name === name) {
+                                hit = r;
+                                return true;
+                            }
+                            return false;
+                        });
+                        return hit || { name: name, dir: false, size: 0 };
+                    });
+                    if (win && win.dragNames) {
+                        win.dragNames = [];
+                    }
+                    this._deskFileDrag = null;
+                    this.desktopDeleteRows(movedRows, win, false);
+                    return;
+                }
+            }
+            if (!fromKey || fromKey === item.key) {
                 return;
             }
             var order = this.desktop.iconOrder.slice();
