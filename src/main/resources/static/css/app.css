@@ -1758,10 +1758,40 @@ body.resizing .term-host {
     color: #4b5563;
     font-family: inherit;
     font-size: 12px;
-    line-height: 24px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
     cursor: pointer;
     outline: none;
     transition: background .12s, border-color .12s, color .12s;
+}
+
+.edit-opt:disabled,
+.edit-icon-btn:disabled,
+.edit-tool-btn:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+}
+
+/* 搜索/替换输入框前缀图标垂直居中 */
+.edit-find-input .el-input__prefix,
+.edit-replace-input .el-input__prefix {
+    top: 0;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+}
+
+.edit-find-input .el-input__prefix .el-input__icon,
+.edit-replace-input .el-input__prefix .el-input__icon {
+    height: 100%;
+    margin-top: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
 }
 
 .edit-opt {
@@ -1882,6 +1912,18 @@ body.resizing .term-host {
     border-bottom: 1px solid rgba(61, 126, 255, .38);
 }
 
+/* 搜索高亮优先于“选中词高亮”overlay，避免搜索时被淡蓝色覆盖 */
+.CodeMirror .cm-search-hit {
+    background: rgba(255, 196, 0, .30);
+    border-bottom-color: transparent;
+}
+
+.CodeMirror .cm-search-hit.cm-search-hit-current {
+    background: rgba(255, 145, 0, .55);
+    outline: 1px solid rgba(230, 110, 0, .65);
+    border-bottom-color: transparent;
+}
+
 .edit-statusbar {
     display: flex;
     align-items: center;
@@ -1900,6 +1942,71 @@ body.resizing .term-host {
 
 .edit-kbd-hint {
     color: #9aa7bd;
+}
+
+/* AI 桌面里的编辑器窗口 */
+.dsk-code-editor {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+}
+
+.dsk-code-editor .edit-toolbar {
+    flex: 0 0 auto;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    padding: 6px 10px;
+    overflow-x: auto;
+}
+
+.dsk-code-editor .edit-find-row,
+.dsk-code-editor .edit-replace-row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+}
+
+.dsk-code-editor .edit-cm-host {
+    flex: 1;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+}
+
+.dsk-code-editor .edit-cm-host .CodeMirror {
+    height: 100%;
+    min-height: 0;
+}
+
+.dsk-code-editor .edit-statusbar {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border-top: 1px solid #eef1f6;
+}
+
+.dsk-editor-save {
+    min-width: 62px;
+}
+
+.dsk-editor-error {
+    max-width: 42%;
+    overflow: hidden;
+    color: var(--err);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-editor-missing {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: #fff;
+    color: #8a96a6;
+    font-size: 12px;
 }
 
 @media (max-width: 900px) {

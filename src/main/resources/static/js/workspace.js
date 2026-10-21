@@ -176,6 +176,10 @@ function createDesktopWindow(id) {
         pluginVersion: '',
         pluginIconUrl: '',
         pluginUrl: '',
+        /* 桌面代码编辑器窗口 */
+        editorPath: '',
+        editorTitle: '',
+        editorDirty: false,
         path: '',
         pathInput: '',
         pathEditing: false,
@@ -1422,6 +1426,654 @@ Vue.component('term-cmd-bar', {
     }
 });
 
+/* AI 桌面内的代码编辑器：每个文件一个独立窗口实例 */
+Vue.component('desktop-code-editor', {
+    props: {
+        tab: { type: Object, default: null },
+        path: { type: String, default: '' },
+        win: { type: Object, default: null }
+    },
+    template: '#desktop-code-editor-tpl',
+    data: function () {
+        return {
+            loading: true,
+            saving: false,
+            error: '',
+            find: {
+                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
+                replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
+            },
+            cursor: { line: 1, col: 1 },
+            lineCount: 1,
+            wrap: false,
+            dirty: false,
+            modeLabel: '纯文本'
+        };
+    },
+    mounted: function () {
+        this.loadFile();
+        var self = this;
+        if (typeof ResizeObserver !== 'undefined') {
+            this._resizeObserver = new ResizeObserver(function () {
+                clearTimeout(self._resizeTimer);
+                self._resizeTimer = setTimeout(function () {
+                    if (self._cm) {
+                        self._cm.refresh();
+                    }
+                }, 80);
+            });
+            this._resizeObserver.observe(this.$el);
+        }
+    },
+    beforeDestroy: function () {
+        this._destroyed = true;
+        this._reqSeq = (this._reqSeq || 0) + 1;
+        if (this._findTimer) {
+            clearTimeout(this._findTimer);
+            this._findTimer = null;
+        }
+        if (this._resizeTimer) {
+            clearTimeout(this._resizeTimer);
+            this._resizeTimer = null;
+        }
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+        this.clearMarks();
+        this._cm = null;
+    },
+    methods: {
+        sessionId: function () {
+            return this.tab && this.tab.sessionId;
+        },
+        fileName: function (p) {
+            var s = String(p || '');
+            var idx = s.lastIndexOf('/');
+            return idx >= 0 ? (s.substring(idx + 1) || '/') : s;
+        },
+        setDirty: function (v) {
+            this.dirty = !!v;
+            if (this.win) {
+                this.win.editorDirty = !!v;
+            }
+        },
+        loadFile: function () {
+            var self = this;
+            var sid = this.sessionId();
+            if (!sid || !this.path) {
+                this.loading = false;
+                this.error = '会话未就绪，无法读取文件';
+                return;
+            }
+            this._reqSeq = (this._reqSeq || 0) + 1;
+            var seq = this._reqSeq;
+            this.loading = true;
+            this.error = '';
+            this.find = {
+                text: '', replace: '', caseSensitive: false, wholeWord: false, regex: false,
+                replaceOpen: false, total: 0, current: 0, countText: '', invalid: false
+            };
+            this.setDirty(false);
+            if (this.win) {
+                this.win.editorTitle = this.fileName(this.path) || '代码编辑器';
+            }
+            this.resetEditorDom();
+            http.get('/api/sftp/read', { params: { sessionId: sid, path: this.path } })
+                .then(function (content) {
+                    if (self._destroyed || seq !== self._reqSeq) {
+                        return;
+                    }
+                    self.loading = false;
+                    self._original = content || '';
+                    self._lineSep = self._original.indexOf('\r\n') >= 0 ? '\r\n' : '\n';
+                    self._editorSelectAfterChange = false;
+                    self.$nextTick(function () {
+                        if (!self._destroyed && seq === self._reqSeq) {
+                            self.initEditor();
+                        }
+                    });
+                })
+                .catch(function (err) {
+                    if (self._destroyed || seq !== self._reqSeq) {
+                        return;
+                    }
+                    self.loading = false;
+                    self.error = (err && err.message) ? err.message : '读取文件失败';
+                });
+        },
+        resetEditorDom: function () {
+            this.clearMarks();
+            if (this.$refs.editorHost) {
+                this.$refs.editorHost.innerHTML = '';
+            }
+            this._cm = null;
+            this._findMatches = [];
+        },
+        initEditor: function () {
+            var self = this;
+            if (this._cm) {
+                this._cm.refresh();
+                return;
+            }
+            var host = this.$refs.editorHost;
+            if (!host || typeof CodeMirror === 'undefined') {
+                this.error = '编辑器组件加载失败';
+                return;
+            }
+            var content = this._original || '';
+            var info = this.modeForPath(this.path, content);
+            this.modeLabel = info.label;
+            host.innerHTML = '';
+            var cm = CodeMirror(host, {
+                value: content,
+                mode: info.mode,
+                lineNumbers: true,
+                lineWrapping: this.wrap,
+                styleActiveLine: true,
+                matchBrackets: true,
+                autoCloseBrackets: true,
+                indentUnit: 4,
+                tabSize: 4,
+                indentWithTabs: false,
+                highlightSelectionMatches: { minChars: 2, style: 'keyword-hit' },
+                extraKeys: {
+                    'Ctrl-F': function () { self.openFind(false); },
+                    'Cmd-F': function () { self.openFind(false); },
+                    'Ctrl-H': function () { self.openFind(true); },
+                    'Ctrl-S': function () { self.save(); },
+                    'Cmd-S': function () { self.save(); },
+                    'F3': function () { self.findNext(); },
+                    'Shift-F3': function () { self.findPrev(); },
+                    'Alt-C': function () { self.toggleOption('caseSensitive'); },
+                    'Alt-W': function () { self.toggleOption('wholeWord'); },
+                    'Alt-R': function () { self.toggleOption('regex'); },
+                    'Ctrl-/': 'toggleComment',
+                    'Cmd-/': 'toggleComment'
+                }
+            });
+            this._cm = cm;
+            this.lineCount = cm.lineCount();
+            this.updateCursor(cm);
+            cm.on('change', function () { self.onChange(cm); });
+            cm.on('cursorActivity', function () { self.updateCursor(cm); });
+            this.$nextTick(function () {
+                if (!self._destroyed && self._cm === cm) {
+                    cm.refresh();
+                    cm.focus();
+                }
+            });
+        },
+        updateCursor: function (cm) {
+            cm = cm || this._cm;
+            if (!cm) {
+                return;
+            }
+            var c = cm.getCursor();
+            this.cursor = { line: c.line + 1, col: c.ch + 1 };
+        },
+        onChange: function (cm) {
+            this.lineCount = cm.lineCount();
+            this.setDirty(cm.getValue(this._lineSep || '\n') !== this._original);
+            this.updateCursor(cm);
+            if (this.find.text) {
+                var select = !!this._editorSelectAfterChange;
+                this._editorSelectAfterChange = false;
+                this.scheduleSearch(select);
+            }
+        },
+        modeForPath: function (path, content) {
+            var p = String(path || '');
+            var base = p.substring(p.lastIndexOf('/') + 1).toLowerCase();
+            var dot = base.lastIndexOf('.');
+            var ext = dot > 0 ? base.substring(dot + 1) : '';
+            if (base === 'dockerfile' || base.indexOf('dockerfile.') === 0) {
+                return { mode: 'dockerfile', label: 'Dockerfile' };
+            }
+            if (base === '.bashrc' || base === '.zshrc' || base === '.bash_profile'
+                || base === '.profile' || base === '.bash_logout' || base === '.kshrc') {
+                return { mode: 'shell', label: 'Shell' };
+            }
+            if (base === '.env') {
+                return { mode: 'properties', label: 'ENV' };
+            }
+            if (base === 'nginx.conf' || /^nginx.*\.conf$/.test(base)
+                || (/\.conf$/.test(base) && p.indexOf('/nginx/') >= 0)) {
+                return { mode: 'nginx', label: 'Nginx' };
+            }
+            var map = {
+                sh: ['shell', 'Shell'], bash: ['shell', 'Shell'], zsh: ['shell', 'Shell'],
+                ksh: ['shell', 'Shell'], profile: ['shell', 'Shell'],
+                py: ['python', 'Python'], pyw: ['python', 'Python'],
+                js: ['javascript', 'JavaScript'], mjs: ['javascript', 'JavaScript'],
+                cjs: ['javascript', 'JavaScript'], jsx: ['javascript', 'JavaScript'],
+                ts: ['text/typescript', 'TypeScript'], tsx: ['text/typescript', 'TypeScript'],
+                json: ['application/json', 'JSON'],
+                html: ['htmlmixed', 'HTML'], htm: ['htmlmixed', 'HTML'],
+                xhtml: ['htmlmixed', 'HTML'], vue: ['htmlmixed', 'HTML'],
+                xml: ['xml', 'XML'], svg: ['xml', 'XML'], plist: ['xml', 'XML'],
+                css: ['css', 'CSS'], scss: ['text/x-scss', 'SCSS'], less: ['text/x-less', 'LESS'],
+                sql: ['sql', 'SQL'],
+                yml: ['yaml', 'YAML'], yaml: ['yaml', 'YAML'],
+                properties: ['properties', 'Properties'], ini: ['text/x-ini', 'INI'],
+                cfg: ['properties', '配置'], env: ['properties', 'ENV'],
+                toml: ['properties', 'TOML'], service: ['properties', 'Unit'],
+                md: ['markdown', 'Markdown'], markdown: ['markdown', 'Markdown'],
+                java: ['text/x-java', 'Java'],
+                c: ['text/x-csrc', 'C'], h: ['text/x-csrc', 'C'],
+                cpp: ['text/x-c++src', 'C++'], cc: ['text/x-c++src', 'C++'],
+                hpp: ['text/x-c++src', 'C++'], cs: ['text/x-csharp', 'C#']
+            };
+            var hit = map[ext];
+            if (hit) {
+                return { mode: hit[0], label: hit[1] };
+            }
+            if (!ext) {
+                var first = String(content || '').split('\n')[0];
+                if (/^#!.*\bpython/.test(first)) {
+                    return { mode: 'python', label: 'Python' };
+                }
+                if (/^#!.*\b(?:ba|z|k)?sh\b/.test(first)) {
+                    return { mode: 'shell', label: 'Shell' };
+                }
+            }
+            return { mode: null, label: '纯文本' };
+        },
+        focusFind: function () {
+            var ref = this.$refs.editFindInput;
+            var el = ref && ref.$el ? ref.$el.querySelector('input') : null;
+            if (el) {
+                el.focus();
+                el.select();
+            }
+        },
+        openFind: function (withReplace) {
+            if (!this._cm) {
+                return;
+            }
+            var sel = this._cm.getSelection();
+            if (sel && sel.indexOf('\n') < 0 && sel.length <= 200) {
+                this.find.text = sel;
+            }
+            if (withReplace) {
+                this.find.replaceOpen = true;
+            }
+            this.applySearch(true);
+            var self = this;
+            this.$nextTick(function () {
+                self.focusFind();
+            });
+        },
+        onFindKey: function (e) {
+            var key = e.key || '';
+            if (key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    this.findPrev();
+                } else {
+                    this.findNext();
+                }
+                return;
+            }
+            if (key === 'Escape') {
+                e.preventDefault();
+                if (this._cm) {
+                    this._cm.focus();
+                }
+                return;
+            }
+            if (e.altKey) {
+                var k = key.toLowerCase();
+                if (k === 'c') {
+                    e.preventDefault();
+                    this.toggleOption('caseSensitive');
+                } else if (k === 'w') {
+                    e.preventDefault();
+                    this.toggleOption('wholeWord');
+                } else if (k === 'r') {
+                    e.preventDefault();
+                    this.toggleOption('regex');
+                }
+            }
+        },
+        onReplaceKey: function (e) {
+            var key = e.key || '';
+            if (key === 'Enter') {
+                e.preventDefault();
+                if (e.ctrlKey || e.metaKey) {
+                    this.replaceAll();
+                } else {
+                    this.replaceOne();
+                }
+                return;
+            }
+            if (key === 'Escape') {
+                e.preventDefault();
+                if (this._cm) {
+                    this._cm.focus();
+                }
+            }
+        },
+        onEditorKey: function (e) {
+            var mod = e.ctrlKey || e.metaKey;
+            if (!mod) {
+                return;
+            }
+            var key = (e.key || '').toLowerCase();
+            if (key !== 's' && key !== 'f' && key !== 'h') {
+                return;
+            }
+            if (this._cm && this._cm.hasFocus()) {
+                return;
+            }
+            e.preventDefault();
+            if (key === 's') {
+                this.save();
+            } else if (key === 'f') {
+                this.openFind(false);
+            } else {
+                this.openFind(true);
+            }
+        },
+        toggleReplace: function () {
+            this.find.replaceOpen = !this.find.replaceOpen;
+            if (this.find.replaceOpen) {
+                var self = this;
+                this.$nextTick(function () {
+                    self.focusFind();
+                });
+            }
+        },
+        toggleWrap: function () {
+            this.wrap = !this.wrap;
+            if (this._cm) {
+                this._cm.setOption('lineWrapping', this.wrap);
+                this._cm.refresh();
+            }
+        },
+        toggleOption: function (key) {
+            this.find[key] = !this.find[key];
+            this.applySearch(true);
+            this.focusFind();
+        },
+        scheduleSearch: function (select) {
+            var self = this;
+            if (this._findTimer) {
+                clearTimeout(this._findTimer);
+            }
+            this._findTimer = setTimeout(function () {
+                self.applySearch(true, select !== false);
+            }, 120);
+        },
+        buildRegex: function () {
+            var f = this.find;
+            if (!f.text) {
+                return null;
+            }
+            var source = f.text;
+            if (!f.regex) {
+                source = source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+            if (f.wholeWord) {
+                var w = '[A-Za-z0-9_\\u3400-\\u9fff]';
+                source = '(?<!' + w + ')(?:' + source + ')(?!' + w + ')';
+            }
+            try {
+                return new RegExp(source, 'gm' + (f.caseSensitive ? '' : 'i'));
+            } catch (e) {
+                return null;
+            }
+        },
+        applySearch: function (resetCurrent, selectCurrent) {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            if (selectCurrent === undefined) {
+                selectCurrent = true;
+            }
+            this.clearMarks();
+            this._findMatches = [];
+            var f = this.find;
+            f.invalid = false;
+            if (!f.text) {
+                f.total = 0;
+                f.current = 0;
+                f.countText = '';
+                return;
+            }
+            var re = this.buildRegex();
+            if (!re) {
+                f.total = 0;
+                f.current = 0;
+                f.countText = '正则无效';
+                f.invalid = true;
+                return;
+            }
+            var text = cm.getValue();
+            var stored = [];
+            var total = 0;
+            var m;
+            re.lastIndex = 0;
+            while ((m = re.exec(text)) !== null) {
+                if (m[0].length === 0) {
+                    re.lastIndex++;
+                    continue;
+                }
+                total++;
+                if (stored.length < 1500) {
+                    stored.push({
+                        index: m.index,
+                        length: m[0].length,
+                        whole: m[0],
+                        groups: Array.prototype.slice.call(m, 1)
+                    });
+                }
+                if (total >= 100000) {
+                    break;
+                }
+            }
+            this._findMatches = stored;
+            f.total = total;
+            if (!total) {
+                f.current = 0;
+                f.countText = '无匹配';
+                return;
+            }
+            if (resetCurrent) {
+                var cursorIndex = cm.indexFromPos(cm.getCursor());
+                f.current = 0;
+                for (var i = 0; i < stored.length; i++) {
+                    if (stored[i].index >= cursorIndex) {
+                        f.current = i;
+                        break;
+                    }
+                }
+            } else if (f.current >= stored.length) {
+                f.current = 0;
+            }
+            f.countText = (f.current + 1) + ' / ' + total + (total >= 100000 ? '+' : '');
+            this.highlightMatches(selectCurrent);
+        },
+        highlightMatches: function (selectCurrent) {
+            var cm = this._cm;
+            if (!cm) {
+                return;
+            }
+            this.clearMarks();
+            var stored = this._findMatches || [];
+            var f = this.find;
+            for (var i = 0; i < stored.length; i++) {
+                var m = stored[i];
+                var cls = 'cm-search-hit' + (i === f.current ? ' cm-search-hit-current' : '');
+                try {
+                    this._cmMarks.push(cm.markText(
+                        cm.posFromIndex(m.index), cm.posFromIndex(m.index + m.length),
+                        { className: cls }
+                    ));
+                } catch (e) {
+                    // ignore
+                }
+            }
+            var cur = stored[f.current];
+            if (cur && selectCurrent !== false) {
+                cm.setSelection(cm.posFromIndex(cur.index), cm.posFromIndex(cur.index + cur.length));
+            }
+        },
+        clearMarks: function () {
+            var marks = this._cmMarks || [];
+            for (var i = 0; i < marks.length; i++) {
+                try {
+                    marks[i].clear();
+                } catch (e) {
+                    // ignore
+                }
+            }
+            this._cmMarks = [];
+        },
+        findNext: function () {
+            var f = this.find;
+            if (!f.text) {
+                return;
+            }
+            if (!this._findMatches || !this._findMatches.length) {
+                this.applySearch(true);
+                return;
+            }
+            f.current = (f.current + 1) % this._findMatches.length;
+            f.countText = (f.current + 1) + ' / ' + f.total + (f.total >= 100000 ? '+' : '');
+            this.highlightMatches();
+        },
+        findPrev: function () {
+            var f = this.find;
+            if (!f.text) {
+                return;
+            }
+            if (!this._findMatches || !this._findMatches.length) {
+                this.applySearch(true);
+                return;
+            }
+            f.current = (f.current - 1 + this._findMatches.length) % this._findMatches.length;
+            f.countText = (f.current + 1) + ' / ' + f.total + (f.total >= 100000 ? '+' : '');
+            this.highlightMatches();
+        },
+        expandReplacement: function (template, whole, groups) {
+            if (!this.find.regex) {
+                return template;
+            }
+            return String(template).replace(/\$(\$|&|\d{1,2})/g, function (all, token) {
+                if (token === '$') {
+                    return '$';
+                }
+                if (token === '&') {
+                    return whole;
+                }
+                var n = parseInt(token, 10);
+                if (n >= 1 && n <= groups.length) {
+                    return groups[n - 1] == null ? '' : groups[n - 1];
+                }
+                if (token.length === 2) {
+                    var first = parseInt(token.charAt(0), 10);
+                    if (first >= 1 && first <= groups.length) {
+                        return (groups[first - 1] == null ? '' : groups[first - 1]) + token.charAt(1);
+                    }
+                }
+                return all;
+            });
+        },
+        replaceOne: function () {
+            var cm = this._cm;
+            var f = this.find;
+            if (!cm || !f.text) {
+                return;
+            }
+            if (!this._findMatches || !this._findMatches.length) {
+                this.applySearch(true);
+                return;
+            }
+            var m = this._findMatches[f.current];
+            if (!m) {
+                this.applySearch(true);
+                return;
+            }
+            var replacement = this.expandReplacement(f.replace, m.whole, m.groups);
+            this._editorSelectAfterChange = true;
+            cm.replaceRange(replacement, cm.posFromIndex(m.index), cm.posFromIndex(m.index + m.length));
+            cm.focus();
+        },
+        replaceAll: function () {
+            var cm = this._cm;
+            var f = this.find;
+            if (!cm || !f.text) {
+                return;
+            }
+            var re = this.buildRegex();
+            if (!re) {
+                ELEMENT.Message.warning('正则表达式无效，请检查后重试');
+                return;
+            }
+            var self = this;
+            var text = cm.getValue();
+            var count = 0;
+            var firstOffset = -1;
+            var result = text.replace(re, function (whole) {
+                if (!whole.length) {
+                    return whole;
+                }
+                var args = Array.prototype.slice.call(arguments);
+                var groups = args.slice(1, args.length - 2);
+                var offset = args[args.length - 2];
+                count++;
+                if (firstOffset < 0) {
+                    firstOffset = offset;
+                }
+                return self.expandReplacement(f.replace, whole, groups);
+            });
+            if (!count) {
+                ELEMENT.Message.info('没有可替换的匹配项');
+                return;
+            }
+            var lastLine = cm.lineCount() - 1;
+            cm.operation(function () {
+                cm.replaceRange(result, { line: 0, ch: 0 },
+                    { line: lastLine, ch: cm.getLine(lastLine).length });
+            });
+            ELEMENT.Message.success('已全部替换 ' + count + ' 处');
+            if (firstOffset >= 0) {
+                cm.setCursor(cm.posFromIndex(Math.min(firstOffset, result.length)));
+            }
+            cm.focus();
+        },
+        save: function () {
+            var sid = this.sessionId();
+            var f = this.find;
+            if (!sid) {
+                ELEMENT.Message.warning('会话未就绪，无法保存');
+                return;
+            }
+            if (!this._cm || this.saving) {
+                return;
+            }
+            var self = this;
+            var content = this._cm.getValue(this._lineSep || '\n');
+            this.saving = true;
+            this.error = '';
+            http.post('/api/sftp/write', { sessionId: sid, path: this.path, content: content })
+                .then(function () {
+                    self.saving = false;
+                    self._original = content;
+                    self.setDirty(false);
+                    ELEMENT.Message.success('已保存到远程');
+                    self.$emit('saved', { path: self.path });
+                })
+                .catch(function (err) {
+                    self.saving = false;
+                    self.error = (err && err.message) ? err.message : '保存失败';
+                });
+        }
+    }
+});
+
 new Vue({
     el: '#app',
     data: {
@@ -2115,7 +2767,8 @@ new Vue({
             return this.desktop.windows.filter(function (w) {
                 return w.type === 'explorer' || w.type === 'terminal' || w.type === 'taskmgr'
                     || w.type === 'transfer' || w.type === 'disk' || w.type === 'connect'
-                    || w.type === 'dirs' || w.type === 'cmd' || w.type === 'plugin';
+                    || w.type === 'dirs' || w.type === 'cmd' || w.type === 'plugin'
+                    || w.type === 'editor';
             });
         },
         /* ---------- 任务管理器 ---------- */
@@ -4554,6 +5207,25 @@ new Vue({
             }
         },
         closeAiDesktop: function (skipSftpRefresh) {
+            if (!skipSftpRefresh && !this._forceCloseDesktop) {
+                var dirtyEditors = this.desktop.windows.filter(function (w) {
+                    return w.type === 'editor' && w.editorDirty;
+                });
+                if (dirtyEditors.length) {
+                    var topSelf = this;
+                    this.$confirm('有 ' + dirtyEditors.length
+                        + ' 个编辑器窗口未保存，返回工作台将丢弃修改，确定？', '未保存的修改', {
+                        type: 'warning',
+                        confirmButtonText: '放弃并返回',
+                        cancelButtonText: '继续编辑'
+                    }).then(function () {
+                        topSelf._forceCloseDesktop = true;
+                        topSelf.closeAiDesktop();
+                    }).catch(function () { /* 继续编辑 */ });
+                    return;
+                }
+            }
+            this._forceCloseDesktop = false;
             this.saveDesktopWinLayouts();
             this.stopDesktopWindowGestures();
             this.stopDesktopDragScroll();
@@ -4652,7 +5324,15 @@ new Vue({
             if (type === 'plugin') {
                 return 'el-icon-s-grid';
             }
+            if (type === 'editor') {
+                return 'el-icon-edit-outline';
+            }
             return 'el-icon-folder-opened';
+        },
+        desktopBaseName: function (path) {
+            var p = String(path || '');
+            var idx = p.lastIndexOf('/');
+            return idx >= 0 ? (p.substring(idx + 1) || '/') : p;
         },
         desktopWindowTitle: function (w) {
             if (w && w.type === 'ai') {
@@ -4681,6 +5361,10 @@ new Vue({
             }
             if (w && w.type === 'plugin') {
                 return w.pluginTitle || w.pluginName || '插件应用';
+            }
+            if (w && w.type === 'editor') {
+                var editorName = w.editorTitle || this.desktopBaseName(w.editorPath) || '代码编辑器';
+                return w.editorDirty ? editorName + ' •' : editorName;
             }
             var p = (w && w.path) || '';
             if (!p || p === '/') {
@@ -4733,6 +5417,9 @@ new Vue({
             if (w && w.type === 'plugin') {
                 var ver = w.pluginVersion ? ' · v' + w.pluginVersion : '';
                 return '桌面插件' + ver + ' · 沙箱运行';
+            }
+            if (w && w.type === 'editor') {
+                return '代码编辑器 · ' + (w.editorPath || '');
             }
             var path = (w && w.path) || '';
             return host ? (path ? host + ' · ' + path : host) : path;
@@ -5299,6 +5986,19 @@ new Vue({
         },
         closeDesktopWindow: function (w) {
             if (!w) {
+                return;
+            }
+            if (w.type === 'editor' && w.editorDirty) {
+                var self = this;
+                var title = this.desktopWindowTitle(w).replace(/ •$/, '');
+                this.$confirm('「' + title + '」有未保存的修改，确定关闭？', '未保存的修改', {
+                    type: 'warning',
+                    confirmButtonText: '放弃修改',
+                    cancelButtonText: '继续编辑'
+                }).then(function () {
+                    w.editorDirty = false;
+                    self.closeDesktopWindow(w);
+                }).catch(function () { /* 继续编辑 */ });
                 return;
             }
             if (w.type === 'terminal') {
@@ -7277,7 +7977,7 @@ new Vue({
                         sortDir: 'asc'
                     });
                 } else if (this.desktopTab && this.desktopTab.sessionId) {
-                    this.openRemoteEdit(this.desktopTab, item.path);
+                    this.openDesktopEditorWindow(this.desktopTab, item.path);
                 }
             }
         },
@@ -7330,7 +8030,7 @@ new Vue({
                         sortDir: 'asc'
                     });
                 } else {
-                    self.openRemoteEdit(t, target);
+                    self.openDesktopEditorWindow(t, target);
                 }
             }).catch(function (e) {
                 ELEMENT.Message.warning('无法打开快捷方式：'
@@ -9369,9 +10069,79 @@ new Vue({
                 }).then(function () {
                     ELEMENT.Message.success('已创建 ' + name);
                     self.desktopRefresh(d);
-                    self.openRemoteEdit(t, path);
+                    self.openDesktopEditorWindow(t, path);
                 });
             }).catch(function () { /* 取消或失败（已提示） */ });
+        },
+        /* 桌面中的文件编辑：打开独立的编辑器窗口（终端工作台仍使用弹窗） */
+        openDesktopEditorWindow: function (tab, path) {
+            tab = tab || this.desktopTab;
+            if (!tab || !tab.sessionId || !path) {
+                return null;
+            }
+            if (!this.desktop.visible) {
+                this.openRemoteEdit(tab, path);
+                return null;
+            }
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                var existed = this.desktop.windows[i];
+                if (existed.type === 'editor' && existed.editorPath === path) {
+                    this.restoreDesktopWindow(existed);
+                    return existed;
+                }
+            }
+            var w = this.addDesktopWindow('editor');
+            w.editorPath = path;
+            w.editorTitle = this.desktopBaseName(path) || '代码编辑器';
+            w.editorDirty = false;
+            var area = this.desktopWindowWorkArea();
+            var width = Math.min(area.width - 20, Math.max(720, Math.round(area.width * 0.76)));
+            var height = Math.min(area.height - 20, Math.max(440, Math.round(area.height * 0.82)));
+            width = Math.max(Math.min(520, area.width), width);
+            height = Math.max(Math.min(320, area.height), height);
+            this.applyDesktopWindowGeometry(w, {
+                x: Math.round((area.width - width) / 2),
+                y: Math.round((area.height - height) / 2),
+                w: width,
+                h: height
+            });
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        onDesktopEditorSaved: function (payload) {
+            var path = payload && payload.path;
+            if (!path) {
+                return;
+            }
+            var dir = path.substring(0, path.lastIndexOf('/')) || '/';
+            var t = this.desktopTab;
+            if (t && t.sftpPath) {
+                var p = String(t.sftpPath).replace(/\/+$/, '') || '/';
+                if (p === dir) {
+                    this.loadDir(t.sftpPath, t);
+                }
+            }
+            if (this.desktop.visible) {
+                var self = this;
+                this.desktop.windows.forEach(function (w) {
+                    if (w.type !== 'explorer') {
+                        return;
+                    }
+                    var p = String(w.path || '').replace(/\/+$/, '') || '/';
+                    if (p === dir) {
+                        self.desktopRefresh(w);
+                    }
+                });
+                var surfaceDir = String(this.desktop.surface.dir || '').replace(/\/+$/, '') || '/';
+                if (surfaceDir === dir) {
+                    this.refreshDesktopSurface();
+                }
+            }
         },
         desktopOpenEdit: function (row, win) {
             var t = this.desktopTab;
@@ -9379,7 +10149,7 @@ new Vue({
             if (!t || !t.sessionId || !row) {
                 return;
             }
-            this.openRemoteEdit(t, this.desktopEntryPath(row, d));
+            this.openDesktopEditorWindow(t, this.desktopEntryPath(row, d));
         },
         desktopOpenTerminal: function (row, win) {
             var d = win || this.desk;
