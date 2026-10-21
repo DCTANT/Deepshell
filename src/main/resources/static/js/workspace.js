@@ -1237,7 +1237,18 @@ Vue.component('term-cmd-bar', {
             this._histDraft = undefined;
         },
         searchVisible: function (v) {
-            if (!v && this.tab.searchAddon && this.tab.searchAddon.clearDecorations) {
+            var self = this;
+            if (v) {
+                this.$nextTick(function () {
+                    if (self.$refs.searchInput) {
+                        self.$refs.searchInput.focus();
+                    }
+                });
+                return;
+            }
+            clearTimeout(this._searchTimer);
+            this.searchText = '';
+            if (this.tab.searchAddon && this.tab.searchAddon.clearDecorations) {
                 try { this.tab.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
             }
         }
@@ -1246,6 +1257,7 @@ Vue.component('term-cmd-bar', {
         this.tab._cmdBar = this;
     },
     beforeDestroy: function () {
+        clearTimeout(this._searchTimer);
         if (this.tab && this.tab._cmdBar === this) {
             this.tab._cmdBar = null;
         }
@@ -1322,7 +1334,21 @@ Vue.component('term-cmd-bar', {
         findPrev: function () {
             this.$root.findPrev(this.tab, this.searchText);
         },
+        onSearchInput: function () {
+            var self = this;
+            clearTimeout(this._searchTimer);
+            this._searchTimer = setTimeout(function () {
+                if (!self.searchText) {
+                    if (self.tab.searchAddon && self.tab.searchAddon.clearDecorations) {
+                        self.tab.searchAddon.clearDecorations();
+                    }
+                    return;
+                }
+                self.$root.findNext(self.tab, self.searchText, true);
+            }, 180);
+        },
         onSearchKey: function (e) {
+            clearTimeout(this._searchTimer);
             if (e.key === 'Enter') {
                 if (e.shiftKey) {
                     this.findPrev();
@@ -1581,8 +1607,6 @@ Vue.component('desktop-text-editor', {
                 indentWithTabs: false,
                 highlightSelectionMatches: { minChars: 2, style: 'keyword-hit' },
                 extraKeys: {
-                    'Ctrl-N': function () { self.newDoc(); },
-                    'Cmd-N': function () { self.newDoc(); },
                     'Ctrl-O': function () { self.openPicker('open'); },
                     'Cmd-O': function () { self.openPicker('open'); },
                     'Ctrl-S': function () { self.save(); },
@@ -2420,7 +2444,7 @@ Vue.component('desktop-text-editor', {
         },
         showShortcuts: function () {
             this.$alert('<div style="line-height:1.9;font-size:13px;color:#4b5563">'
-                + '<b>文件</b><br>Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为<br>'
+                + '<b>文件</b><br>Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为<br>'
                 + '<b>编辑</b><br>Ctrl+Z 撤销 · Ctrl+Y 重做 · Ctrl+X / C / V 剪切 / 复制 / 粘贴<br>'
                 + 'Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+G 转到行<br>'
                 + '<b>选择</b><br>Ctrl+A 全选<br>'
@@ -2524,7 +2548,7 @@ Vue.component('desktop-text-editor', {
                 return;
             }
             var key = (e.key || '').toLowerCase();
-            if (['n', 'o', 's', 'f', 'h', 'g'].indexOf(key) < 0) {
+            if (['o', 's', 'f', 'h', 'g'].indexOf(key) < 0) {
                 return;
             }
             if (this._cm && this._cm.hasFocus()) {
@@ -2535,8 +2559,6 @@ Vue.component('desktop-text-editor', {
                 this.saveAs();
             } else if (key === 's') {
                 this.save();
-            } else if (key === 'n') {
-                this.newDoc();
             } else if (key === 'o') {
                 this.openPicker('open');
             } else if (key === 'f') {
@@ -12942,6 +12964,7 @@ new Vue({
                 cursorBlink: true,
                 scrollback: 5000,
                 allowTransparency: true,
+                allowProposedApi: true,
                 theme: this.buildTermTheme()
             });
             var fit = new FitAddon.FitAddon();
@@ -16440,16 +16463,16 @@ new Vue({
                 document.exitFullscreen().catch(function () { /* ignore */ });
             }
         },
-        findNext: function (tab, text) {
+        findNext: function (tab, text, incremental) {
             var t = tab || this.activeTab;
             if (t && t.searchAddon && text) {
-                t.searchAddon.findNext(text, { decorations: SEARCH_DECOR });
+                t.searchAddon.findNext(text, { decorations: SEARCH_DECOR, incremental: !!incremental });
             }
         },
-        findPrev: function (tab, text) {
+        findPrev: function (tab, text, incremental) {
             var t = tab || this.activeTab;
             if (t && t.searchAddon && text) {
-                t.searchAddon.findPrevious(text, { decorations: SEARCH_DECOR });
+                t.searchAddon.findPrevious(text, { decorations: SEARCH_DECOR, incremental: !!incremental });
             }
         },
 

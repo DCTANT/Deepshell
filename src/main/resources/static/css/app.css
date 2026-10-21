@@ -2025,68 +2025,6 @@ body.resizing .term-host {
     font-size: 11px;
 }
 
-.te-toolbar {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 6px 10px;
-    background: #f7f9fc;
-    border-bottom: 1px solid var(--border);
-}
-
-.te-btn {
-    height: 28px;
-    padding: 0 9px;
-    border: 1px solid #d9dee7;
-    border-radius: 6px;
-    background: #fff;
-    color: #4b5563;
-    font-family: inherit;
-    font-size: 12px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background .12s, border-color .12s, color .12s;
-}
-
-.te-btn:hover {
-    border-color: #a9c3ff;
-    color: var(--accent);
-}
-
-.te-btn.active {
-    background: #e8f0ff;
-    border-color: #9dbcff;
-    color: var(--accent);
-}
-
-.te-btn:disabled {
-    opacity: .6;
-    cursor: not-allowed;
-}
-
-.te-sep {
-    width: 1px;
-    height: 20px;
-    margin: 0 4px;
-    background: #e3e9f2;
-}
-
-.te-active-path {
-    max-width: 38%;
-    overflow: hidden;
-    color: #8a96a6;
-    font-family: Consolas, "Courier New", monospace;
-    font-size: 11.5px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .te-tabs {
     flex: 0 0 auto;
     display: flex;

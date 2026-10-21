@@ -4088,7 +4088,6 @@
         <span class="cmd-tools">
             <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
                :class="{ 'cmd-tool-active': tab.aiVisible }" @click="toggleAi"></i>
-            <i class="el-icon-connection cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
             <el-popover v-if="context === 'window'" placement="top-end" width="320" trigger="click"
                         v-model="snippetsVisible" popper-class="cmd-pop">
                 <div class="cmd-hist">
@@ -4167,8 +4166,8 @@
             <el-popover placement="top-end" width="300" trigger="click" v-model="searchVisible"
                         popper-class="cmd-pop">
                 <div class="cmd-search">
-                    <el-input size="mini" v-model="searchText" placeholder="搜索终端输出"
-                              @keyup.native="onSearchKey"></el-input>
+                    <el-input ref="searchInput" size="mini" v-model="searchText" placeholder="搜索终端输出"
+                              @input.native="onSearchInput" @keyup.native="onSearchKey"></el-input>
                     <div class="cmd-search-btns">
                         <el-button size="mini" icon="el-icon-top" @click="findPrev">上一个</el-button>
                         <el-button size="mini" icon="el-icon-bottom" @click="findNext">下一个</el-button>
@@ -4181,6 +4180,7 @@
                @click="$root.editCurrentConnection()"></i>
             <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏"
                @click="$root.toggleFullscreen()"></i>
+            <i class="el-icon-guide cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
         </span>
     </div>
 </div>
@@ -4192,7 +4192,7 @@
         <span class="em-menu">文件</span>
         <el-dropdown-menu slot="dropdown" popper-class="em-drop">
             <el-dropdown-item command="file.new">
-                <span class="em-item"><span class="em-check"></span><span class="em-label">新建</span><span class="em-sc">Ctrl+N</span></span>
+                <span class="em-item"><span class="em-check"></span><span class="em-label">新建</span></span>
             </el-dropdown-item>
             <el-dropdown-item command="file.open">
                 <span class="em-item"><span class="em-check"></span><span class="em-label">打开远程文件</span><span class="em-sc">Ctrl+O</span></span>
@@ -4298,32 +4298,6 @@
 <script type="text/x-template" id="desktop-text-editor-tpl">
 <div class="dsk-text-editor" @keydown="onEditorKey">
     <editor-menu-bar :state="menuState" @command="onMenuCommand"></editor-menu-bar>
-    <div class="te-toolbar">
-        <button type="button" class="te-btn" title="新建 (Ctrl+N)" @click="newDoc">
-            <i class="el-icon-document-add"></i><span>新建</span>
-        </button>
-        <button type="button" class="te-btn" title="打开远程文件 (Ctrl+O)" @click="openPicker('open')">
-            <i class="el-icon-folder-opened"></i><span>打开</span>
-        </button>
-        <button type="button" class="te-btn" title="保存 (Ctrl+S)" :disabled="saving" @click="save">
-            <i :class="saving ? 'el-icon-loading' : 'el-icon-check'"></i><span>保存</span>
-        </button>
-        <button type="button" class="te-btn" title="另存为 (Ctrl+Shift+S)" @click="saveAs">
-            <i class="el-icon-folder-add"></i><span>另存为</span>
-        </button>
-        <span class="te-sep"></span>
-        <button type="button" class="te-btn" title="查找 (Ctrl+F)" @click="openFind(false)">
-            <i class="el-icon-search"></i><span>查找</span>
-        </button>
-        <button type="button" class="te-btn" title="替换 (Ctrl+H)" @click="openFind(true)">
-            <i class="el-icon-refresh"></i><span>替换</span>
-        </button>
-        <button type="button" class="te-btn" :class="{ active: wrap }" title="自动换行" @click="toggleWrap">
-            <i class="el-icon-sort"></i><span>自动换行</span>
-        </button>
-        <span class="spacer"></span>
-        <span class="te-active-path" :title="activeDoc && activeDoc.path || ''">{{ activeDoc ? (activeDoc.path || '未命名') : '' }}</span>
-    </div>
 
     <div class="te-tabs">
         <div v-for="d in docs" :key="d.id" class="te-tab" :class="{ active: d.id === activeId }"
@@ -4333,7 +4307,7 @@
             <span v-if="d.dirty" class="te-tab-dirty">•</span>
             <i class="el-icon-close te-tab-close" title="关闭" @click.stop="closeDoc(d)"></i>
         </div>
-        <button type="button" class="te-tab-add" title="新建标签 (Ctrl+N)" @click="newDoc">
+        <button type="button" class="te-tab-add" title="新建标签" @click="newDoc">
             <i class="el-icon-plus"></i>
         </button>
     </div>
@@ -4360,7 +4334,7 @@
                         title="替换（Ctrl+H）" @click="toggleReplace">替换</button>
             </div>
             <span class="spacer"></span>
-            <span class="edit-kbd-hint">Ctrl+N 新建 · Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为</span>
+            <span class="edit-kbd-hint">Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为</span>
         </div>
         <div class="edit-replace-row" v-show="find.replaceOpen">
             <el-input ref="editReplaceInput" size="mini" v-model="find.replace"
