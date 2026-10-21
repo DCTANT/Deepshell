@@ -6,6 +6,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.File;
+import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -19,9 +23,44 @@ public class AppInfoController {
         m.put("name", "DeepShell");
         String v = AppInfoController.class.getPackage().getImplementationVersion();
         m.put("version", v == null ? "1.2.0" : v);
+        m.put("buildTime", resolveBuildTime());
         m.put("java", System.getProperty("java.version"));
         m.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));
         m.put("dataDir", DataDir.root().toString());
         return R.ok(m);
+    }
+
+    /** 当前运行包（jar 或 classes 目录）的构建/打包时间，用于系统应用属性展示。 */
+    private String resolveBuildTime() {
+        try {
+            URL loc = AppInfoController.class.getProtectionDomain().getCodeSource().getLocation();
+            File file = null;
+            if (loc != null) {
+                String spec = loc.toString();
+                if (spec.startsWith("jar:")) {
+                    int bang = spec.indexOf("!/");
+                    String inner = bang > 0 ? spec.substring(4, bang) : spec.substring(4);
+                    file = new File(java.net.URI.create(inner));
+                } else if ("file".equals(loc.getProtocol())) {
+                    file = new File(loc.toURI());
+                }
+            }
+            if (file == null || !file.exists()) {
+                String cp = System.getProperty("java.class.path", "");
+                for (String entry : cp.split(File.pathSeparator)) {
+                    File candidate = new File(entry);
+                    if (candidate.isFile() && candidate.getName().endsWith(".jar")) {
+                        file = candidate;
+                        break;
+                    }
+                }
+            }
+            if (file != null && file.exists()) {
+                return new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date(file.lastModified()));
+            }
+        } catch (Exception ignored) {
+            // 无法获取运行包位置时由前端使用兜底发布时间
+        }
+        return "";
     }
 }

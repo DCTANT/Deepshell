@@ -11664,3 +11664,526 @@ body.resizing .term-host {
 .ai-desktop.dsk-scheme-light {
     color-scheme: light;
 }
+
+/* ---------- 系统应用属性与图标样式 ---------- */
+.ai-desktop .dsk-app-setting-row .dsk-app-mini {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 16px;
+    box-shadow: 0 2px 7px rgba(4, 10, 22, .22);
+}
+
+.ai-desktop .dsk-set-app-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ai-desktop .dsk-set-app-actions .el-button {
+    margin-left: 0;
+}
+
+.ai-desktop .dsk-appprops-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 4750;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(6, 10, 18, .52);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.ai-desktop .dsk-appprops {
+    width: 720px;
+    max-width: 94vw;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--dsk-panel-line);
+    border-radius: 12px;
+    background: var(--dsk-panel-bg);
+    color: var(--dsk-panel-fg);
+    box-shadow: var(--dsk-panel-shadow);
+    backdrop-filter: blur(26px) saturate(1.2);
+    -webkit-backdrop-filter: blur(26px) saturate(1.2);
+}
+
+.ai-desktop .dsk-appprops-head {
+    flex: 0 0 auto;
+    min-height: 66px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 10px 16px;
+    background: linear-gradient(120deg, var(--dsk-panel-head-1), var(--dsk-panel-head-2));
+    color: #f2f7ff;
+}
+
+.ai-desktop .dsk-appprops-ico {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 22px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .28);
+}
+
+.ai-desktop .dsk-appprops-headtext {
+    flex: 1;
+    min-width: 0;
+}
+
+.ai-desktop .dsk-appprops-title {
+    overflow: hidden;
+    font-size: 15px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-sub {
+    margin-top: 3px;
+    overflow: hidden;
+    color: rgba(226, 238, 255, .72);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-badge {
+    flex: 0 0 auto;
+    padding: 2px 9px;
+    border: 1px solid rgba(255, 255, 255, .22);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .10);
+    color: #eef5ff;
+    font-size: 10.5px;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-x {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: rgba(232, 242, 255, .72);
+    cursor: pointer;
+}
+
+.ai-desktop .dsk-appprops-x:hover {
+    background: rgba(255, 255, 255, .14);
+    color: #fff;
+}
+
+.ai-desktop .dsk-appprops-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 16px 16px;
+}
+
+.ai-desktop .dsk-appprops-info,
+.ai-desktop .dsk-appprops-editor {
+    overflow: hidden;
+    border: 1px solid var(--dsk-panel-line);
+    border-radius: 9px;
+    background: var(--dsk-card-bg);
+}
+
+.ai-desktop .dsk-appprops-editor {
+    margin-top: 12px;
+}
+
+.ai-desktop .dsk-appprops-sec {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 13px;
+    border-bottom: 1px solid var(--dsk-panel-line);
+    background: var(--dsk-panel-subtle);
+    color: var(--dsk-panel-fg);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.ai-desktop .dsk-appprops-sec > i {
+    color: var(--dsk-accent);
+}
+
+.ai-desktop .dsk-appprops-sec-editor {
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.ai-desktop .dsk-appprops-sec-editor > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ai-desktop .dsk-appprops-sec-editor em {
+    overflow: hidden;
+    color: var(--dsk-panel-fg-dim);
+    font-size: 10.5px;
+    font-style: normal;
+    font-weight: 400;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 24px;
+    padding: 4px 13px 9px;
+}
+
+.ai-desktop .dsk-appprops-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--dsk-panel-line);
+    font-size: 12px;
+}
+
+.ai-desktop .dsk-appprops-row > span {
+    flex: 0 0 auto;
+    color: var(--dsk-panel-fg-dim);
+}
+
+.ai-desktop .dsk-appprops-row > b {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--dsk-panel-fg);
+    font-weight: 500;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-row > b.dsk-mono {
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11px;
+}
+
+.ai-desktop .dsk-appprops-editor-body {
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    padding: 14px;
+}
+
+.ai-desktop .dsk-appprops-preview {
+    width: 138px;
+    flex: 0 0 138px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px 10px;
+    border: 1px solid var(--dsk-panel-line);
+    border-radius: 8px;
+    background: var(--dsk-panel-subtle);
+}
+
+.ai-desktop .dsk-appprops-preview-icon {
+    width: 64px;
+    height: 64px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    color: #fff;
+    font-size: 31px;
+    box-shadow: 0 6px 16px rgba(4, 10, 22, .26);
+}
+
+.ai-desktop .dsk-appprops-preview-name {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--dsk-panel-fg);
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-preview-meta {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--dsk-panel-fg-dim);
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-desktop .dsk-appprops-editor-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.ai-desktop .dsk-icon-editor-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 6px;
+    color: var(--dsk-panel-fg);
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.ai-desktop .dsk-icon-editor-label + .dsk-icon-choice-grid,
+.ai-desktop .dsk-icon-editor-label + .dsk-color-swatches {
+    margin-bottom: 12px;
+}
+
+.ai-desktop .dsk-icon-editor-label em {
+    color: var(--dsk-panel-fg-dim);
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 400;
+}
+
+.ai-desktop .dsk-icon-search {
+    margin-bottom: 7px;
+}
+
+.ai-desktop .dsk-icon-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
+    gap: 4px;
+    max-height: 164px;
+    overflow-y: auto;
+    padding: 5px;
+    border: 1px solid var(--dsk-panel-line);
+    border-radius: 7px;
+    background: var(--dsk-panel-subtle);
+}
+
+.ai-desktop .dsk-icon-choice {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--dsk-panel-fg-dim);
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.ai-desktop .dsk-icon-choice:hover {
+    background: var(--dsk-panel-hover);
+    color: var(--dsk-panel-fg);
+}
+
+.ai-desktop .dsk-icon-choice.active {
+    border-color: var(--dsk-accent);
+    background: var(--dsk-accent-soft);
+    color: var(--dsk-accent);
+}
+
+.ai-desktop .dsk-icon-empty {
+    grid-column: 1 / -1;
+    padding: 16px 6px;
+    color: var(--dsk-panel-fg-dim);
+    font-size: 11px;
+    text-align: center;
+}
+
+.ai-desktop .dsk-color-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.ai-desktop .dsk-color-swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 2px solid var(--dsk-panel-line);
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22);
+    cursor: pointer;
+}
+
+.ai-desktop .dsk-color-swatch:hover {
+    transform: scale(1.06);
+}
+
+.ai-desktop .dsk-color-swatch.active {
+    border-color: var(--dsk-panel-fg);
+    box-shadow: 0 0 0 2px var(--dsk-accent);
+}
+
+.ai-desktop .dsk-color-hex {
+    color: var(--dsk-panel-fg-dim);
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10.5px;
+    text-transform: uppercase;
+}
+
+.ai-desktop .dsk-shape-choices {
+    display: flex;
+    gap: 6px;
+}
+
+.ai-desktop .dsk-shape-choice {
+    min-width: 76px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 10px;
+    border: 1px solid var(--dsk-panel-line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--dsk-panel-fg-dim);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.ai-desktop .dsk-shape-choice:hover {
+    background: var(--dsk-panel-hover);
+    color: var(--dsk-panel-fg);
+}
+
+.ai-desktop .dsk-shape-choice.active {
+    border-color: var(--dsk-accent);
+    background: var(--dsk-accent-soft);
+    color: var(--dsk-accent);
+}
+
+.ai-desktop .dsk-shape-sample {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    display: inline-block;
+    border: 1px solid currentColor;
+    background: var(--dsk-accent-soft);
+}
+
+.ai-desktop .dsk-appprops-foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--dsk-panel-line);
+    background: var(--dsk-panel-subtle);
+}
+
+.ai-desktop .dsk-appprops-foot .el-button {
+    margin-left: 0;
+}
+
+.ai-desktop .dsk-appprops .el-input__inner {
+    background: var(--dsk-field-bg);
+    border-color: var(--dsk-panel-line);
+    color: var(--dsk-panel-fg);
+}
+
+.ai-desktop .dsk-appprops .el-input__inner::placeholder {
+    color: var(--dsk-panel-fg-dim);
+}
+
+.ai-desktop .dsk-appprops .el-button:not(.el-button--primary) {
+    background: var(--dsk-field-bg);
+    border-color: var(--dsk-panel-line);
+    color: var(--dsk-panel-fg);
+}
+
+.ai-desktop .dsk-appprops .el-button:not(.el-button--primary):hover {
+    background: var(--dsk-panel-hover);
+    border-color: var(--dsk-accent);
+    color: var(--dsk-accent);
+}
+
+.ai-desktop .dsk-appprops .el-button--primary {
+    background: var(--dsk-accent);
+    border-color: var(--dsk-accent);
+    color: #fff;
+}
+
+.ai-desktop .dsk-appprops .el-color-picker__trigger {
+    border-color: var(--dsk-panel-line);
+    background: var(--dsk-field-bg);
+}
+
+.ai-desktop .dsk-appprops .el-color-picker__color {
+    border-color: var(--dsk-panel-line);
+}
+
+@media (max-width: 900px) {
+    .ai-desktop .dsk-appprops {
+        width: calc(100vw - 24px);
+        max-height: calc(100vh - 24px);
+    }
+
+    .ai-desktop .dsk-appprops-body {
+        padding: 12px;
+    }
+
+    .ai-desktop .dsk-appprops-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ai-desktop .dsk-appprops-row:nth-last-child(2) {
+        border-bottom: none;
+    }
+
+    .ai-desktop .dsk-appprops-editor-body {
+        flex-direction: column;
+    }
+
+    .ai-desktop .dsk-appprops-preview {
+        width: 100%;
+        flex-basis: auto;
+        padding: 10px;
+    }
+
+    .ai-desktop .dsk-appprops-badge {
+        display: none;
+    }
+
+    .ai-desktop .dsk-icon-choice-grid {
+        max-height: 140px;
+    }
+
+    .ai-desktop .dsk-set-app-actions {
+        gap: 6px;
+    }
+}

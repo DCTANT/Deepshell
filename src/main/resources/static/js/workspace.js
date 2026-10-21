@@ -232,6 +232,143 @@ var DESKTOP_ICON_SIZES = [
     { id: 'large', label: '大', dot: 20 }
 ];
 
+/* ---------- AI 可视化桌面：系统应用图标样式 ---------- */
+var DESKTOP_APP_ICON_STYLE_KEY = 'deepshell.desktopAppIconStyles';
+var DESKTOP_APP_RELEASE_FALLBACK = '2026-10-21';
+
+var DESKTOP_APP_SHAPES = [
+    { id: 'rounded', label: '圆角' },
+    { id: 'circle', label: '圆形' },
+    { id: 'square', label: '方形' }
+];
+
+var DESKTOP_APP_ICON_COLORS = [
+    '#3d7eff', '#22a06b', '#e6a23c', '#f56c6c', '#8b5cf6',
+    '#0ea5a4', '#f59e0b', '#ec4899', '#64748b', '#111827'
+];
+
+var DESKTOP_APP_START_IDS = {
+    ai: 'ai',
+    editor: 'editor',
+    terminal: 'terminal',
+    transfers: 'transfers',
+    explorer: 'file',
+    settings: 'control'
+};
+
+var DESKTOP_APP_DEFAULTS = {
+    explorer: { icon: 'el-icon-folder-opened', color: '#e6a23c' },
+    trash: { icon: 'el-icon-delete', color: '#7b8798' },
+    editor: { icon: 'el-icon-edit-outline', color: '#3d7eff' },
+    terminal: { icon: 'el-icon-monitor', color: '#22a06b' },
+    transfers: { icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+    settings: { icon: 'el-icon-setting', color: '#54657e' },
+    ai: { icon: 'el-icon-chat-dot-round', color: '#3d7eff' }
+};
+
+var DESKTOP_START_ICON_DEFAULTS = {
+    ai: { icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+    editor: { icon: 'el-icon-edit-outline', color: '#3d7eff' },
+    terminal: { icon: 'el-icon-monitor', color: '#22a06b' },
+    transfers: { icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+    file: { icon: 'el-icon-folder-opened', color: '#e6a23c' },
+    control: { icon: 'el-icon-setting', color: '#54657e' }
+};
+
+var DESKTOP_DEFAULT_ICON_CHOICES = [
+    'el-icon-monitor', 'el-icon-folder-opened', 'el-icon-folder', 'el-icon-folder-add',
+    'el-icon-folder-checked', 'el-icon-folder-delete', 'el-icon-folder-remove',
+    'el-icon-document', 'el-icon-document-add', 'el-icon-document-copy',
+    'el-icon-document-checked', 'el-icon-document-remove', 'el-icon-files', 'el-icon-tickets',
+    'el-icon-notebook-2', 'el-icon-edit', 'el-icon-edit-outline', 'el-icon-setting',
+    'el-icon-s-tools', 'el-icon-s-operation', 'el-icon-s-promotion', 'el-icon-s-grid',
+    'el-icon-s-fold', 'el-icon-s-platform', 'el-icon-cpu', 'el-icon-coin',
+    'el-icon-pie-chart', 'el-icon-data-line', 'el-icon-data-analysis', 'el-icon-data-board',
+    'el-icon-odometer', 'el-icon-connection', 'el-icon-link', 'el-icon-share',
+    'el-icon-upload2', 'el-icon-download', 'el-icon-refresh', 'el-icon-refresh-left',
+    'el-icon-search', 'el-icon-view', 'el-icon-picture', 'el-icon-picture-outline',
+    'el-icon-video-play', 'el-icon-video-camera', 'el-icon-headset', 'el-icon-microphone',
+    'el-icon-magic-stick', 'el-icon-chat-dot-round', 'el-icon-chat-line-round',
+    'el-icon-bell', 'el-icon-message', 'el-icon-star-on', 'el-icon-star-off',
+    'el-icon-delete', 'el-icon-delete-solid', 'el-icon-key', 'el-icon-lock',
+    'el-icon-unlock', 'el-icon-user', 'el-icon-user-solid', 'el-icon-house',
+    'el-icon-office-building', 'el-icon-location', 'el-icon-location-outline',
+    'el-icon-map-location', 'el-icon-time', 'el-icon-alarm-clock', 'el-icon-date',
+    'el-icon-rank', 'el-icon-sort', 'el-icon-price-tag', 'el-icon-goods',
+    'el-icon-printer', 'el-icon-camera'
+];
+
+function desktopAppDefaultStyle(action) {
+    return DESKTOP_APP_DEFAULTS[action] || null;
+}
+
+function loadDesktopAppIconStyles() {
+    var out = {};
+    try {
+        var raw = localStorage.getItem(DESKTOP_APP_ICON_STYLE_KEY);
+        var data = raw ? JSON.parse(raw) : null;
+        if (!data || typeof data !== 'object') {
+            return out;
+        }
+        Object.keys(data).forEach(function (action) {
+            var def = DESKTOP_APP_DEFAULTS[action];
+            if (!def) {
+                return;
+            }
+            var s = data[action] || {};
+            var icon = (typeof s.icon === 'string' && /^el-icon-[a-z0-9-]+$/.test(s.icon))
+                ? s.icon : def.icon;
+            var shape = (s.shape === 'circle' || s.shape === 'square') ? s.shape : 'rounded';
+            out[action] = {
+                icon: icon,
+                color: desktopNormalizeHex(s.color, def.color),
+                shape: shape
+            };
+        });
+    } catch (e) { /* ignore */ }
+    return out;
+}
+
+function saveDesktopAppIconStyles(styles) {
+    try {
+        localStorage.setItem(DESKTOP_APP_ICON_STYLE_KEY, JSON.stringify(styles || {}));
+    } catch (e) { /* ignore */ }
+}
+
+/* 从 Element 图标样式中读取可用图标；读取失败时使用常用图标兜底 */
+function loadDesktopAppIconChoices() {
+    var set = {};
+    try {
+        for (var i = 0; i < document.styleSheets.length; i++) {
+            var rules;
+            try {
+                rules = document.styleSheets[i].cssRules;
+            } catch (e) {
+                continue;
+            }
+            if (!rules) {
+                continue;
+            }
+            for (var j = 0; j < rules.length; j++) {
+                var selector = rules[j].selectorText;
+                if (!selector) {
+                    continue;
+                }
+                var parts = selector.split(',');
+                for (var k = 0; k < parts.length; k++) {
+                    var m = parts[k].trim().match(/^\.(el-icon-[a-z0-9-]+)::?before$/);
+                    if (m && m[1] !== 'el-icon-loading') {
+                        set[m[1]] = true;
+                    }
+                }
+            }
+        }
+    } catch (e) { /* ignore */ }
+    var out = Object.keys(set);
+    out.sort();
+    return out.length ? out : DESKTOP_DEFAULT_ICON_CHOICES.slice();
+}
+
 function desktopThemeById(id) {
     for (var i = 0; i < DESKTOP_THEMES.length; i++) {
         if (DESKTOP_THEMES[i].id === id) {
@@ -3365,6 +3502,17 @@ new Vue({
         desktopThemes: DESKTOP_THEMES,
         desktopIconSizes: DESKTOP_ICON_SIZES,
         desktopAppearance: loadDesktopAppearance(),
+        desktopAppIconChoices: loadDesktopAppIconChoices(),
+        desktopAppShapes: DESKTOP_APP_SHAPES,
+        desktopAppIconColors: DESKTOP_APP_ICON_COLORS,
+        desktopAppProps: {
+            visible: false,
+            key: '',
+            icon: '',
+            color: '#3d7eff',
+            shape: 'rounded',
+            iconSearch: ''
+        },
         /* AI 可视化桌面 */
         desktopViews: [
             { id: 'large', label: '大图标', icon: 'el-icon-menu' },
@@ -3374,19 +3522,26 @@ new Vue({
         ],
         desktopAppIcons: [
             { key: 'app:explorer', type: 'app', action: 'explorer', label: '资源管理器',
-              icon: 'el-icon-folder-opened', color: '#e6a23c' },
+              icon: 'el-icon-folder-opened', color: '#e6a23c',
+              category: '文件与存储', desc: '浏览、上传、下载和管理远程服务器文件' },
             { key: 'app:trash', type: 'app', action: 'trash', label: '回收站',
-              icon: 'el-icon-delete', color: '#7b8798' },
+              icon: 'el-icon-delete', color: '#7b8798',
+              category: '文件与存储', desc: '查看并恢复已删除的远程文件' },
             { key: 'app:editor', type: 'app', action: 'editor', label: '文本编辑器',
-              icon: 'el-icon-edit-outline', color: '#3d7eff' },
+              icon: 'el-icon-edit-outline', color: '#3d7eff',
+              category: '效率工具', desc: '新建、打开和编辑远程服务器上的文本文件' },
             { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
-              icon: 'el-icon-monitor', color: '#22a06b' },
+              icon: 'el-icon-monitor', color: '#22a06b',
+              category: '终端与连接', desc: '在当前桌面连接上打开新的 SSH 终端窗口' },
             { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
-              icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+              icon: 'el-icon-s-promotion', color: '#0ea5a4',
+              category: '文件与存储', desc: '查看所有会话的上传、下载任务与进度' },
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
-              icon: 'el-icon-setting', color: '#54657e' },
+              icon: 'el-icon-setting', color: '#54657e',
+              category: '系统工具', desc: '调整桌面外观、时钟、网络与系统设置' },
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
-              icon: 'el-icon-chat-dot-round', color: '#3d7eff' }
+              icon: 'el-icon-chat-dot-round', color: '#3d7eff',
+              category: 'AI 助手', desc: '使用 AI 助手执行命令、排查服务器问题' }
         ],
         /* 已安装的桌面应用插件（由后端扫描数据目录） */
         desktopPlugins: [],
@@ -3776,7 +3931,7 @@ new Vue({
             authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
             tlsSelfSigned: false, tlsNextEnabled: false
         },
-        appInfo: { version: '1.2.0', java: '', os: '', dataDir: '' },
+        appInfo: { version: '1.2.0', java: '', os: '', dataDir: '', buildTime: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
@@ -4733,6 +4888,30 @@ new Vue({
                 '--dsk-icon-pad-x': m.padX + 'px',
                 '--dsk-icon-pad-y': m.padY + 'px'
             };
+        },
+        desktopAppPropsApp: function () {
+            var key = this.desktopAppProps.key;
+            for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                if (this.desktopAppIcons[i].key === key) {
+                    return this.desktopAppIcons[i];
+                }
+            }
+            return null;
+        },
+        desktopAppPropsIcons: function () {
+            var q = String(this.desktopAppProps.iconSearch || '').trim().toLowerCase();
+            if (!q) {
+                return this.desktopAppIconChoices;
+            }
+            return this.desktopAppIconChoices.filter(function (ic) {
+                return ic.toLowerCase().indexOf(q) >= 0;
+            });
+        },
+        desktopAppReleaseTime: function () {
+            return (this.appInfo && this.appInfo.buildTime) || DESKTOP_APP_RELEASE_FALLBACK;
+        },
+        desktopAppVersion: function () {
+            return (this.appInfo && this.appInfo.version) || '1.2.0';
         },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
@@ -6797,6 +6976,7 @@ new Vue({
             this.desktop.taskbarMenu.visible = false;
             this.desktop.trayMenu.visible = false;
             this.desktop.startOpen = false;
+            this.desktopAppProps.visible = false;
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
             this.desktop.startSearched = false;
@@ -6839,17 +7019,19 @@ new Vue({
         },
         desktopWindowIcon: function (w) {
             var type = (w && w.type) || 'explorer';
-            if (type === 'ai') {
-                return 'el-icon-chat-dot-round';
-            }
-            if (type === 'transfer') {
-                return 'el-icon-s-promotion';
+            var appAction = ({
+                explorer: 'explorer',
+                trash: 'trash',
+                editor: 'editor',
+                terminal: 'terminal',
+                transfer: 'transfers',
+                ai: 'ai'
+            })[type];
+            if (appAction) {
+                return this.desktopAppIconByAction(appAction, 'el-icon-folder-opened');
             }
             if (type === 'disk') {
                 return 'el-icon-pie-chart';
-            }
-            if (type === 'terminal') {
-                return 'el-icon-monitor';
             }
             if (type === 'taskmgr') {
                 return 'el-icon-cpu';
@@ -6874,12 +7056,6 @@ new Vue({
             }
             if (type === 'plugin') {
                 return 'el-icon-s-grid';
-            }
-            if (type === 'editor') {
-                return 'el-icon-edit-outline';
-            }
-            if (type === 'trash') {
-                return 'el-icon-delete';
             }
             return 'el-icon-folder-opened';
         },
@@ -10489,7 +10665,7 @@ new Vue({
             this.desktop.iconMenu = {
                 visible: true,
                 x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 240)),
-                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 130)),
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 220)),
                 key: item.key
             };
         },
@@ -10510,9 +10686,194 @@ new Vue({
                 this.openDesktopIcon(item);
             } else if (action === 'emptyTrash') {
                 this.emptyDesktopTrash();
+            } else if (action === 'props') {
+                this.openDesktopAppProperties(item);
             } else if (action === 'hide') {
                 this.setDesktopAppHidden(key, true);
             }
+        },
+        /* ---------- 系统应用属性与图标样式 ---------- */
+        desktopShapeRadius: function (shape) {
+            if (shape === 'circle') {
+                return '50%';
+            }
+            if (shape === 'square') {
+                return '3px';
+            }
+            return '';
+        },
+        desktopShapeLabel: function (shape) {
+            for (var i = 0; i < DESKTOP_APP_SHAPES.length; i++) {
+                if (DESKTOP_APP_SHAPES[i].id === shape) {
+                    return DESKTOP_APP_SHAPES[i].label;
+                }
+            }
+            return '圆角';
+        },
+        desktopAppIconStyle: function (app) {
+            var color = (app && app.color) || '#54657e';
+            var rgb = desktopHexToRgb(color);
+            var light = (rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114) / 255;
+            var style = {
+                background: color,
+                color: light > 0.78 ? '#243044' : '#ffffff'
+            };
+            var radius = this.desktopShapeRadius(app && app.shape);
+            if (radius) {
+                style.borderRadius = radius;
+            }
+            return style;
+        },
+        desktopAppIconByAction: function (action, fallback) {
+            for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                if (this.desktopAppIcons[i].action === action) {
+                    return this.desktopAppIcons[i].icon;
+                }
+            }
+            return fallback || 'el-icon-s-grid';
+        },
+        openDesktopAppProperties: function (item) {
+            if (typeof item === 'string') {
+                for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                    if (this.desktopAppIcons[i].key === item) {
+                        item = this.desktopAppIcons[i];
+                        break;
+                    }
+                }
+            }
+            if (!item) {
+                return;
+            }
+            this.desktop.iconMenu.visible = false;
+            this.desktop.startOpen = false;
+            this.desktop.menu.visible = false;
+            this.desktop.calendarOpen = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.closeDesktopSubMenus();
+            this.desktopAppProps = {
+                visible: true,
+                key: item.key,
+                icon: item.icon,
+                color: item.color,
+                shape: item.shape || 'rounded',
+                iconSearch: ''
+            };
+            var self = this;
+            this.$nextTick(function () {
+                self.scrollDesktopAppIconIntoView();
+            });
+        },
+        scrollDesktopAppIconIntoView: function () {
+            var grid = this.$refs.appIconGrid;
+            if (!grid) {
+                return;
+            }
+            var active = grid.querySelector('.dsk-icon-choice.active');
+            if (!active) {
+                return;
+            }
+            var gr = grid.getBoundingClientRect();
+            var ar = active.getBoundingClientRect();
+            if (ar.top < gr.top || ar.bottom > gr.bottom) {
+                grid.scrollTop += ar.top - gr.top - 8;
+            }
+        },
+        closeDesktopAppProperties: function () {
+            this.desktopAppProps.visible = false;
+        },
+        resetDesktopAppIconForm: function () {
+            var app = this.desktopAppPropsApp;
+            if (!app) {
+                return;
+            }
+            var def = desktopAppDefaultStyle(app.action);
+            if (!def) {
+                return;
+            }
+            this.desktopAppProps.icon = def.icon;
+            this.desktopAppProps.color = def.color;
+            this.desktopAppProps.shape = 'rounded';
+        },
+        applyDesktopAppIconStyle: function (action, style) {
+            if (!action || !style) {
+                return;
+            }
+            var self = this;
+            this.desktopAppIcons.forEach(function (a) {
+                if (a.action !== action) {
+                    return;
+                }
+                a.icon = style.icon;
+                a.color = style.color;
+                self.$set(a, 'shape', style.shape || 'rounded');
+            });
+            var startId = DESKTOP_APP_START_IDS[action];
+            if (!startId) {
+                return;
+            }
+            this.desktopStartApps.forEach(function (a) {
+                if (a.id !== startId) {
+                    return;
+                }
+                a.icon = style.icon;
+                a.color = style.color;
+                self.$set(a, 'shape', style.shape || 'rounded');
+            });
+        },
+        saveDesktopAppIconStyle: function () {
+            var app = this.desktopAppPropsApp;
+            var form = this.desktopAppProps;
+            if (!app) {
+                this.closeDesktopAppProperties();
+                return;
+            }
+            var def = desktopAppDefaultStyle(app.action) || { icon: app.icon, color: app.color };
+            var icon = (typeof form.icon === 'string' && /^el-icon-[a-z0-9-]+$/.test(form.icon))
+                ? form.icon : def.icon;
+            var color = desktopNormalizeHex(form.color, def.color);
+            var shape = (form.shape === 'circle' || form.shape === 'square') ? form.shape : 'rounded';
+            var styles = loadDesktopAppIconStyles();
+            if (icon === def.icon && color === def.color && shape === 'rounded') {
+                delete styles[app.action];
+            } else {
+                styles[app.action] = { icon: icon, color: color, shape: shape };
+            }
+            saveDesktopAppIconStyles(styles);
+            this.applyDesktopAppIconStyle(app.action, {
+                icon: icon,
+                color: color,
+                shape: shape
+            });
+            this.desktopAppProps.visible = false;
+            ELEMENT.Message.success('已更新「' + app.label + '」的图标样式');
+        },
+        resetAllDesktopAppIconStyles: function () {
+            var self = this;
+            this.$confirm('恢复所有系统应用的默认图标、颜色和形状？', '恢复默认图标样式',
+                { type: 'warning', confirmButtonText: '恢复默认', cancelButtonText: '取消' })
+                .then(function () {
+                    saveDesktopAppIconStyles({});
+                    self.desktopAppIcons.forEach(function (a) {
+                        var def = desktopAppDefaultStyle(a.action);
+                        if (!def) {
+                            return;
+                        }
+                        a.icon = def.icon;
+                        a.color = def.color;
+                        self.$set(a, 'shape', 'rounded');
+                    });
+                    self.desktopStartApps.forEach(function (a) {
+                        var def = DESKTOP_START_ICON_DEFAULTS[a.id];
+                        if (!def) {
+                            return;
+                        }
+                        a.icon = def.icon;
+                        a.color = def.color;
+                        self.$set(a, 'shape', 'rounded');
+                    });
+                    ELEMENT.Message.success('已恢复默认应用图标');
+                })
+                .catch(function () { /* 取消 */ });
         },
         openDesktopSurfaceMenu: function (ev, item) {
             if (!item || !item.entry) {
@@ -13447,6 +13808,13 @@ new Vue({
                 }
                 return;
             }
+            if (this.desktopAppProps.visible) {
+                if (e.key === 'Escape') {
+                    this.closeDesktopAppProperties();
+                    e.preventDefault();
+                }
+                return;
+            }
             if (e.key === 'Escape' && this._marquee) {
                 this.cancelDesktopMarquee();
                 e.preventDefault();
@@ -14160,6 +14528,7 @@ new Vue({
             this.desktop.startOpen = false;
             this.desktop.menu.visible = false;
             this.desktop.calendarOpen = false;
+            this.desktopAppProps.visible = false;
             this.closeDesktopSubMenus();
             this.desktop.settingsVisible = true;
             this.desktop.settingsSection = 'appearance';
@@ -18833,6 +19202,13 @@ new Vue({
                 })
                 .catch(function () { /* 已取消或已由拦截器提示 */ });
         }
+    },
+    created: function () {
+        var self = this;
+        var styles = loadDesktopAppIconStyles();
+        Object.keys(styles).forEach(function (action) {
+            self.applyDesktopAppIconStyle(action, styles[action]);
+        });
     },
     mounted: function () {
         var self = this;

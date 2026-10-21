@@ -418,7 +418,7 @@
                  @dragleave.stop="onDesktopIconDragLeave(icon)"
                  @drop.prevent.stop="onDesktopIconDrop($event, icon)">
                 <span v-if="icon.type === 'app'" class="dsk-icon-app"
-                      :style="{ background: icon.color }">
+                      :style="desktopAppIconStyle(icon)">
                     <i :class="icon.icon"></i>
                 </span>
                 <span v-else class="dsk-icon-file-wrap">
@@ -1833,14 +1833,14 @@
                         :class="{ active: desktopAiWin && desktop.activeWinId === desktopAiWin.id && !desktopAiWin.min,
                                   'is-min': desktopAiWin && desktopAiWin.min }"
                         title="打开 AI 终端窗口" @click.stop="toggleDesktopAiApp">
-                    <i class="el-icon-chat-dot-round"></i>
+                    <i :class="desktopAppIconByAction('ai', 'el-icon-chat-dot-round')"></i>
                     <span class="dsk-task-label">AI 终端</span>
                     <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
                 </button>
                 <button class="dsk-task-app dsk-terminal-app"
                         title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow()">
-                    <i class="el-icon-monitor"></i>
+                    <i :class="desktopAppIconByAction('terminal', 'el-icon-monitor')"></i>
                     <span class="dsk-task-label">新建终端</span>
                 </button>
                 <span class="dsk-taskbar-sep"></span>
@@ -1999,7 +1999,7 @@
                     <div class="dsk-start-apps">
                         <button v-for="a in desktopStartApps" :key="a.id" class="dsk-start-app"
                                 @click="desktopLaunchApp(a.id)">
-                            <span class="dsk-start-appico" :style="{ background: a.color }">
+                            <span class="dsk-start-appico" :style="desktopAppIconStyle(a)">
                                 <i :class="a.icon"></i>
                             </span>
                             <span class="dsk-start-applabel">{{ a.label }}</span>
@@ -2014,7 +2014,7 @@
                         <button v-for="a in desktopStartPluginApps" :key="a.id" class="dsk-start-app"
                                 :title="a.desc || a.label" @click="desktopLaunchApp(a.id)">
                             <span class="dsk-start-appico" :class="{ 'has-img': !!a.iconUrl }"
-                                  :style="{ background: a.color }">
+                                  :style="desktopAppIconStyle(a)">
                                 <img v-if="a.iconUrl" :src="a.iconUrl" alt="">
                                 <i v-else class="el-icon-s-grid"></i>
                             </span>
@@ -2044,7 +2044,7 @@
                         <div class="dsk-start-results">
                             <button v-for="a in desktopStartAppMatches" :key="'sa' + a.id"
                                     class="dsk-start-result" @click="desktopLaunchApp(a.id)">
-                                <span class="dsk-start-appico small" :style="{ background: a.color }">
+                                <span class="dsk-start-appico small" :style="desktopAppIconStyle(a)">
                                     <img v-if="a.iconUrl" :src="a.iconUrl" alt="">
                                     <i v-else :class="a.icon"></i>
                                 </span>
@@ -2400,13 +2400,30 @@
                                     </div>
                                     <el-button size="mini" @click="openBgSettings('desktop')">背景设置</el-button>
                                 </div>
-                                <div class="dsk-set-row" v-for="a in desktopAppIcons" :key="'setic' + a.key">
+                                <div class="dsk-set-row dsk-app-setting-row" v-for="a in desktopAppIcons"
+                                     :key="'setic' + a.key">
+                                    <span class="dsk-app-mini" :style="desktopAppIconStyle(a)">
+                                        <i :class="a.icon"></i>
+                                    </span>
                                     <div class="dsk-set-info">
                                         <b>{{ a.label }}</b>
-                                        <span>在桌面上显示该图标；隐藏后可在这里恢复</span>
+                                        <span>{{ a.desc }} · {{ isDesktopAppHidden(a.key) ? '已隐藏' : '在桌面显示' }}</span>
                                     </div>
-                                    <el-switch :value="!isDesktopAppHidden(a.key)" size="mini"
-                                               @change="setDesktopAppHidden(a.key, !$event)"></el-switch>
+                                    <div class="dsk-set-app-actions">
+                                        <el-button size="mini" icon="el-icon-brush"
+                                                   @click="openDesktopAppProperties(a)">图标样式</el-button>
+                                        <el-switch :value="!isDesktopAppHidden(a.key)" size="mini"
+                                                   @change="setDesktopAppHidden(a.key, !$event)"></el-switch>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>应用图标样式</b>
+                                        <span>把系统应用的图标、背景颜色和形状恢复为默认</span>
+                                    </div>
+                                    <el-button size="mini" @click="resetAllDesktopAppIconStyles">
+                                        全部恢复默认
+                                    </el-button>
                                 </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
@@ -2658,6 +2675,125 @@
             </div>
         </div>
 
+        <!-- 桌面系统应用属性与图标样式 -->
+        <div class="dsk-appprops-mask" v-if="desktopAppProps.visible"
+             @click.self="closeDesktopAppProperties">
+            <div class="dsk-appprops" v-if="desktopAppPropsApp" @click.stop>
+                <div class="dsk-appprops-head">
+                    <span class="dsk-appprops-ico" :style="desktopAppIconStyle(desktopAppProps)">
+                        <i :class="desktopAppProps.icon"></i>
+                    </span>
+                    <div class="dsk-appprops-headtext">
+                        <div class="dsk-appprops-title">{{ desktopAppPropsApp.label }} · 属性</div>
+                        <div class="dsk-appprops-sub">{{ desktopAppPropsApp.desc }}</div>
+                    </div>
+                    <span class="dsk-appprops-badge">系统应用</span>
+                    <button class="dsk-appprops-x" title="关闭 (Esc)"
+                            @click="closeDesktopAppProperties"><i class="el-icon-close"></i></button>
+                </div>
+                <div class="dsk-appprops-body">
+                    <div class="dsk-appprops-info">
+                        <div class="dsk-appprops-sec">
+                            <i class="el-icon-info"></i>应用信息
+                        </div>
+                        <div class="dsk-appprops-grid">
+                            <div class="dsk-appprops-row">
+                                <span>来源</span><b>DeepShell 系统</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>应用类型</span><b>系统内置应用</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>版本信息</span><b>DeepShell {{ desktopAppVersion }} 内置组件</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>版本号</span><b>{{ desktopAppVersion }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>发布时间</span><b>{{ desktopAppReleaseTime }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>应用类别</span><b>{{ desktopAppPropsApp.category || '系统工具' }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>组件标识</span><b class="dsk-mono">{{ desktopAppPropsApp.key }}</b>
+                            </div>
+                            <div class="dsk-appprops-row">
+                                <span>当前图标</span><b class="dsk-mono">{{ desktopAppProps.icon }}</b>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dsk-appprops-editor">
+                        <div class="dsk-appprops-sec dsk-appprops-sec-editor">
+                            <span><i class="el-icon-brush"></i>自定义图标样式</span>
+                            <em>保存后同步到桌面图标与开始菜单</em>
+                        </div>
+                        <div class="dsk-appprops-editor-body">
+                            <div class="dsk-appprops-preview">
+                                <span class="dsk-appprops-preview-icon"
+                                      :style="desktopAppIconStyle(desktopAppProps)">
+                                    <i :class="desktopAppProps.icon"></i>
+                                </span>
+                                <div class="dsk-appprops-preview-name">{{ desktopAppPropsApp.label }}</div>
+                                <div class="dsk-appprops-preview-meta">
+                                    {{ desktopAppProps.color }} · {{ desktopShapeLabel(desktopAppProps.shape) }}
+                                </div>
+                            </div>
+                            <div class="dsk-appprops-editor-main">
+                                <div class="dsk-icon-editor-label">
+                                    <span>选择图标</span>
+                                    <em>{{ desktopAppPropsIcons.length }} 个可用图标</em>
+                                </div>
+                                <el-input v-model="desktopAppProps.iconSearch" size="mini" clearable
+                                          prefix-icon="el-icon-search" class="dsk-icon-search"
+                                          placeholder="搜索图标，如 folder / monitor / star"></el-input>
+                                <div class="dsk-icon-choice-grid" ref="appIconGrid">
+                                    <button v-for="ic in desktopAppPropsIcons" :key="'appic' + ic"
+                                            type="button" class="dsk-icon-choice"
+                                            :class="{ active: desktopAppProps.icon === ic }"
+                                            :title="ic" @click="desktopAppProps.icon = ic">
+                                        <i :class="ic"></i>
+                                    </button>
+                                    <div v-if="!desktopAppPropsIcons.length" class="dsk-icon-empty">
+                                        没有匹配的图标
+                                    </div>
+                                </div>
+                                <div class="dsk-icon-editor-label">背景颜色</div>
+                                <div class="dsk-color-swatches">
+                                    <button v-for="c in desktopAppIconColors" :key="'appc' + c"
+                                            type="button" class="dsk-color-swatch"
+                                            :class="{ active: String(desktopAppProps.color).toLowerCase() === c }"
+                                            :style="{ background: c }" :title="c"
+                                            @click="desktopAppProps.color = c"></button>
+                                    <el-color-picker v-model="desktopAppProps.color"
+                                                     size="mini"></el-color-picker>
+                                    <span class="dsk-color-hex">{{ desktopAppProps.color }}</span>
+                                </div>
+                                <div class="dsk-icon-editor-label">图标形状</div>
+                                <div class="dsk-shape-choices">
+                                    <button v-for="s in desktopAppShapes" :key="'apps' + s.id"
+                                            type="button" class="dsk-shape-choice"
+                                            :class="{ active: desktopAppProps.shape === s.id }"
+                                            @click="desktopAppProps.shape = s.id">
+                                        <span class="dsk-shape-sample"
+                                              :style="{ borderRadius: desktopShapeRadius(s.id) || '6px' }"></span>
+                                        {{ s.label }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dsk-appprops-foot">
+                    <el-button size="mini" @click="resetDesktopAppIconForm">恢复默认样式</el-button>
+                    <span class="spacer"></span>
+                    <el-button size="mini" @click="closeDesktopAppProperties">取消</el-button>
+                    <el-button size="mini" type="primary" icon="el-icon-check"
+                               @click="saveDesktopAppIconStyle">保存图标样式</el-button>
+                </div>
+            </div>
+        </div>
+
         <div class="dsk-menu" ref="deskMenu" v-if="desktop.menu.visible"
              :style="{ left: desktop.menu.x + 'px', top: desktop.menu.y + 'px' }"
              @click.stop @contextmenu.prevent>
@@ -2891,6 +3027,10 @@
             <div v-if="desktop.iconMenu.key === 'app:trash'" class="dsk-menu-item danger"
                  @click="desktopIconMenuAction('emptyTrash')">
                 <i class="el-icon-delete"></i>清空回收站
+            </div>
+            <div class="dsk-menu-sep"></div>
+            <div class="dsk-menu-item" @click="desktopIconMenuAction('props')">
+                <i class="el-icon-info"></i>属性
             </div>
             <div class="dsk-menu-item" @click="desktopIconMenuAction('hide')">
                 <i class="el-icon-remove-outline"></i>隐藏
