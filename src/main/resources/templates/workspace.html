@@ -1343,6 +1343,226 @@
                         </div>
                     </div>
                 </template>
+                <template v-else-if="w.type === 'services'">
+                    <div class="dsk-svc">
+                        <div class="dsk-app-head">
+                            <button type="button" class="dsk-app-tab"
+                                    :class="{ active: servicesApp.tab === 'services' }"
+                                    @click="switchServicesTab('services')">
+                                <i class="el-icon-s-tools"></i> 服务
+                            </button>
+                            <button type="button" class="dsk-app-tab"
+                                    :class="{ active: servicesApp.tab === 'cron' }"
+                                    @click="switchServicesTab('cron')">
+                                <i class="el-icon-time"></i> 计划任务
+                            </button>
+                            <span class="spacer"></span>
+                            <span class="dsk-app-host">{{ desktopTab ? desktopTab.title : '' }}</span>
+                            <el-button size="mini" icon="el-icon-refresh"
+                                       :loading="servicesApp.tab === 'services' ? servicesApp.loading : servicesApp.cronLoading"
+                                       @click="refreshServicesTab">刷新</el-button>
+                        </div>
+                        <template v-if="servicesApp.tab === 'services'">
+                            <div class="dsk-svc-toolbar">
+                                <el-input size="mini" v-model="servicesApp.keyword" clearable
+                                          prefix-icon="el-icon-search" class="dsk-grow"
+                                          placeholder="过滤服务名称 / 描述"></el-input>
+                                <el-checkbox v-model="servicesApp.onlyRunning">只看运行中</el-checkbox>
+                                <span class="dsk-app-meta">{{ filteredServiceRows.length }} / {{ servicesApp.items.length }}</span>
+                            </div>
+                            <div class="dsk-app-error" v-if="servicesApp.error">{{ servicesApp.error }}</div>
+                            <div class="dsk-svc-list" v-loading="servicesApp.loading">
+                                <div v-for="s in filteredServiceRows" :key="s.unit" class="dsk-svc-row">
+                                    <span class="dsk-svc-dot" :class="'is-' + s.active" :title="s.active"></span>
+                                    <div class="dsk-svc-main">
+                                        <div class="dsk-svc-name">{{ s.unit }}</div>
+                                        <div class="dsk-svc-desc">{{ s.description || '—' }}</div>
+                                    </div>
+                                    <span class="dsk-svc-state" :class="'is-' + s.active">{{ serviceStateLabel(s) }}</span>
+                                    <span class="dsk-svc-enabled">{{ serviceEnabledLabel(s) }}</span>
+                                    <span class="dsk-svc-actions">
+                                        <el-button v-if="s.active !== 'active'" size="mini" type="text"
+                                                   icon="el-icon-video-play" title="启动"
+                                                   :loading="servicesApp.busy === s.unit + ':start'"
+                                                   @click="runServiceAction(s, 'start')"></el-button>
+                                        <el-button v-else size="mini" type="text"
+                                                   icon="el-icon-video-pause" title="停止"
+                                                   :loading="servicesApp.busy === s.unit + ':stop'"
+                                                   @click="runServiceAction(s, 'stop')"></el-button>
+                                        <el-button size="mini" type="text" icon="el-icon-refresh-right"
+                                                   title="重启"
+                                                   :loading="servicesApp.busy === s.unit + ':restart'"
+                                                   @click="runServiceAction(s, 'restart')"></el-button>
+                                        <el-button v-if="s.enabled === 'enabled' || s.enabled === 'enabled-runtime'"
+                                                   size="mini" type="text" title="取消开机自启"
+                                                   :loading="servicesApp.busy === s.unit + ':disable'"
+                                                   @click="runServiceAction(s, 'disable')">已自启</el-button>
+                                        <el-button v-else size="mini" type="text" title="设置开机自启"
+                                                   :loading="servicesApp.busy === s.unit + ':enable'"
+                                                   @click="runServiceAction(s, 'enable')">自启</el-button>
+                                    </span>
+                                </div>
+                                <div v-if="!servicesApp.loading && !filteredServiceRows.length" class="dsk-app-empty">
+                                    {{ servicesApp.items.length ? '没有匹配的服务' : '没有读取到服务信息（仅支持 systemd / SysV 系统）' }}
+                                </div>
+                            </div>
+                        </template>
+                        <template v-else>
+                            <div class="dsk-cron-wrap" v-loading="servicesApp.cronLoading">
+                                <div class="dsk-app-error" v-if="servicesApp.cronError">{{ servicesApp.cronError }}</div>
+                                <div class="dsk-cron-add">
+                                    <el-input size="mini" v-model="servicesApp.newCron"
+                                              placeholder="分 时 日 月 周 命令，例如 0 3 * * * /opt/backup.sh"
+                                              @keyup.enter.native="addDesktopCron"></el-input>
+                                    <el-button size="mini" type="primary"
+                                               :loading="servicesApp.addingCron"
+                                               @click="addDesktopCron">添加</el-button>
+                                </div>
+                                <div class="dsk-cron-section">
+                                    <div class="dsk-cron-title">
+                                        用户 crontab <span>{{ servicesApp.cron.user.length }} 条</span>
+                                    </div>
+                                    <div v-for="(line, i) in servicesApp.cron.user" :key="'cu' + i"
+                                         class="dsk-cron-row">
+                                        <code>{{ line }}</code>
+                                        <el-button size="mini" type="text" class="danger-text"
+                                                   @click="deleteDesktopCron(line)">删除</el-button>
+                                    </div>
+                                    <div v-if="!servicesApp.cron.user.length" class="dsk-app-empty">
+                                        当前用户没有计划任务
+                                    </div>
+                                </div>
+                                <div class="dsk-cron-section">
+                                    <div class="dsk-cron-title">
+                                        系统 crontab <span>{{ servicesApp.cron.system.length }} 条（只读）</span>
+                                    </div>
+                                    <div v-for="(item, i) in servicesApp.cron.system" :key="'cs' + i"
+                                         class="dsk-cron-row dsk-cron-system" :title="item.file">
+                                        <code>{{ item.line }}</code>
+                                        <span class="dsk-app-meta">{{ item.file }}</span>
+                                    </div>
+                                    <div v-if="!servicesApp.cron.system.length" class="dsk-app-empty">
+                                        没有系统 crontab 条目
+                                    </div>
+                                </div>
+                                <div class="dsk-cron-section">
+                                    <div class="dsk-cron-title">systemd 定时器</div>
+                                    <pre class="dsk-cron-timers">{{ servicesApp.cron.timers.length ? servicesApp.cron.timers.join('\n') : '没有定时器或系统不支持 systemd' }}</pre>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'nettool'">
+                    <div class="dsk-net">
+                        <div class="dsk-net-form">
+                            <el-radio-group v-model="netTool.tool" size="mini">
+                                <el-radio-button label="ping">Ping</el-radio-button>
+                                <el-radio-button label="traceroute">路由追踪</el-radio-button>
+                                <el-radio-button label="dns">DNS 查询</el-radio-button>
+                                <el-radio-button label="port">端口探测</el-radio-button>
+                            </el-radio-group>
+                            <el-input size="mini" v-model="netTool.target" class="dsk-net-target"
+                                      placeholder="主机名或 IP，例如 example.com"
+                                      @keyup.enter.native="runNetTool"></el-input>
+                            <el-input v-if="netTool.tool === 'port'" size="mini" v-model="netTool.port"
+                                      class="dsk-net-port" placeholder="端口"
+                                      @keyup.enter.native="runNetTool"></el-input>
+                            <el-button size="mini" type="primary" icon="el-icon-video-play"
+                                       :loading="netTool.running"
+                                       :disabled="!desktopTab || !desktopTab.sessionId"
+                                       @click="runNetTool">开始</el-button>
+                        </div>
+                        <div class="dsk-net-meta">
+                            <span v-if="desktopTab">在 {{ desktopTab.title }} 上执行</span>
+                            <span v-if="netTool.at">
+                                退出码 {{ netTool.exitCode == null ? '—' : netTool.exitCode }}
+                                · 耗时 {{ netTool.durationMs }} ms
+                            </span>
+                            <span v-if="netTool.timedOut" class="danger-text">执行超时</span>
+                        </div>
+                        <div class="dsk-app-error" v-if="netTool.error">{{ netTool.error }}</div>
+                        <pre class="dsk-net-output">{{ netTool.output || '选择工具并输入目标后点击「开始」' }}</pre>
+                    </div>
+                </template>
+                <template v-else-if="w.type === 'batchcmd'">
+                    <div class="dsk-batch">
+                        <aside class="dsk-batch-side">
+                            <div class="dsk-batch-side-head">
+                                目标服务器
+                                <span>{{ batchCmd.ids.length }} / {{ batchConnectionRows.length }}</span>
+                            </div>
+                            <el-input size="mini" v-model="batchCmd.keyword" clearable
+                                      prefix-icon="el-icon-search" placeholder="搜索连接"></el-input>
+                            <div class="dsk-batch-side-actions">
+                                <el-button size="mini" type="text" @click="selectAllBatchTargets">全选</el-button>
+                                <el-button size="mini" type="text" @click="clearBatchTargets">清空</el-button>
+                            </div>
+                            <div class="dsk-batch-list">
+                                <div v-for="c in batchConnectionRows" :key="'bc' + c.id"
+                                     class="dsk-batch-item"
+                                     :class="{ on: batchCmd.ids.indexOf(c.id) >= 0 }"
+                                     @click="toggleBatchTarget(c.id, batchCmd.ids.indexOf(c.id) < 0)">
+                                    <span class="dsk-batch-check"
+                                          :class="{ on: batchCmd.ids.indexOf(c.id) >= 0 }">
+                                        <i v-if="batchCmd.ids.indexOf(c.id) >= 0" class="el-icon-check"></i>
+                                    </span>
+                                    <span class="dsk-batch-item-main">
+                                        <span class="dsk-batch-item-name">{{ c.name }}</span>
+                                        <span class="dsk-batch-item-host">{{ c.username ? c.username + '@' : '' }}{{ c.host }}:{{ c.port }}</span>
+                                    </span>
+                                </div>
+                                <div v-if="!batchConnectionRows.length" class="dsk-app-empty">
+                                    还没有保存的连接，请先在「连接管理」中新建
+                                </div>
+                            </div>
+                        </aside>
+                        <section class="dsk-batch-main">
+                            <div class="dsk-batch-compose">
+                                <el-input type="textarea" :rows="4" resize="none"
+                                          v-model="batchCmd.command"
+                                          placeholder="输入要在所有选中服务器上执行的同一条命令…"></el-input>
+                                <div class="dsk-batch-tools">
+                                    <span class="dsk-app-meta">快捷命令</span>
+                                    <button v-for="s in snippets.slice(0, 6)" :key="'bq' + s.id"
+                                            type="button" class="dsk-batch-chip"
+                                            :title="s.command" @click="batchUseSnippet(s)">{{ s.name }}</button>
+                                    <span class="spacer"></span>
+                                    <span class="dsk-app-meta">超时 60 秒</span>
+                                    <el-button size="mini" type="primary"
+                                               :loading="batchCmd.running"
+                                               :disabled="!batchCmd.ids.length || !batchCmd.command.trim()"
+                                               @click="runBatchCommand">
+                                        发送到 {{ batchCmd.ids.length }} 台服务器
+                                    </el-button>
+                                </div>
+                            </div>
+                            <div class="dsk-app-error" v-if="batchCmd.error">{{ batchCmd.error }}</div>
+                            <div class="dsk-batch-results">
+                                <div v-if="!batchCmd.items.length && !batchCmd.running" class="dsk-app-empty">
+                                    执行结果会显示在这里
+                                </div>
+                                <div v-for="r in batchCmd.items" :key="'br' + r.connectionId"
+                                     class="dsk-batch-result">
+                                    <div class="dsk-batch-result-head">
+                                        <span class="dsk-batch-status" :class="{ ok: r.ok }">
+                                            {{ r.ok ? '成功' : (r.timedOut ? '超时' : '失败') }}
+                                        </span>
+                                        <b>{{ r.name }}</b>
+                                        <span class="dsk-app-meta">{{ r.host }}</span>
+                                        <span class="spacer"></span>
+                                        <span class="dsk-app-meta">
+                                            退出码 {{ r.exitCode == null ? '—' : r.exitCode }}
+                                            · {{ r.durationMs }} ms
+                                        </span>
+                                    </div>
+                                    <div class="dsk-batch-result-error" v-if="r.error">{{ r.error }}</div>
+                                    <pre class="dsk-batch-output">{{ r.output || '(无输出)' }}</pre>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </template>
                 <template v-else>
                 <div class="dsk-toolbar">
             <el-button-group class="dsk-nav">
@@ -3495,9 +3715,10 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、<b>从桌面图标拖到资源管理器窗口</b>（松手后选择复制或剪切）、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录；<b>双击文本文件</b>会打开「文本编辑器」应用窗口，顶部含文件 / 编辑 / 选择 / 视图 / 帮助菜单，支持多标签、新建 / 打开 / 保存 / 另存为，关闭标签前会提示未保存修改</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、<b>从桌面图标拖到资源管理器窗口</b>（松手后选择复制或剪切）、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录；<b>双击文本文件</b>会打开「文本编辑器」应用窗口，顶部含文件 / 编辑 / 选择 / 视图 / 帮助菜单，支持多标签、新建 / 打开 / 保存 / 另存为，关闭标签前会提示未保存修改；工具栏新增<b>「过滤」</b>开关，勾选后只显示包含关键词的行（支持区分大小写与正则），过滤视图为只读，关闭过滤后恢复编辑</li>
                     <li><b>桌面应用插件</b>：开始菜单「已安装应用 → 安装 / 管理」导入 ZIP（plugin.json + 入口 HTML + 图标），安装后直接出现在开始菜单；插件在隔离沙箱 iframe 中运行，支持同 ID 更新与卸载；格式详见 README「桌面应用插件」</li>
-                    <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏放置 AI 终端、新建终端，以及已打开窗口的按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 常用目录 / 快捷命令 / 连接管理，可最小化与还原）；这些工具都从开始菜单打开，均在桌面内以窗口运行，不再跳转终端工作台。右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；<b>点击或右键连接状态</b>可重新连接 / 断开 / 查看系统信息；连接断开时状态旁会显示「重新连接」，任务栏空白处右键也可重新连接。点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；开始菜单底部可在新标签页打开工作台（保留当前桌面），或直接返回工作台；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏放置 AI 终端、新建终端，以及已打开窗口的按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 服务与计划任务 / 网络工具箱 / 多机命令 / 常用目录 / 快捷命令 / 连接管理，可最小化与还原）；这些工具都从开始菜单打开，均在桌面内以窗口运行，不再跳转终端工作台。右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；<b>点击或右键连接状态</b>可重新连接 / 断开 / 查看系统信息；连接断开时状态旁会显示「重新连接」，任务栏空白处右键也可重新连接。点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；开始菜单底部可在新标签页打开工作台（保留当前桌面），或直接返回工作台；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>服务与计划任务 / 网络工具箱 / 多机命令</b>：开始菜单打开。服务窗口列出 systemd / SysV 服务，可启动、停止、重启与设置 / 取消开机自启；计划任务页查看用户 crontab（可添加 / 删除）、系统 crontab 与 systemd 定时器。网络工具箱在目标服务器上执行 ping / 路由追踪 / DNS 查询 / 端口探测。多机命令可选择多台已保存连接并发执行同一条命令，逐台查看退出码、耗时与输出；已打开的会话直接复用，未连接的按保存的代理 / 跳板机配置临时建连</li>
                     <li><b>常用目录 / 快捷命令（桌面窗口）</b>：常用目录可添加、移除目录，<b>单击目录</b>会在终端执行 cd 并让资源管理器跳转到该目录；快捷命令固定发送到当前桌面会话，单击执行、右侧 + 仅填入输入框；桌面终端窗口底栏也提供快捷命令入口，工作台的快捷命令面板保持不变</li>
                     <li><b>连接管理（桌面窗口）</b>：开始菜单「连接管理」在桌面内以窗口打开，支持搜索、收藏 / 置顶、文件夹分组、拖动排序、连接导入导出以及新建 / 编辑 / 复制 / 删除；<b>单击连接</b>会在新浏览器标签页打开该连接的 AI 桌面，当前桌面保持不变。终端工作台的「打开连接」弹窗行为不变</li>
                     <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后会按退避策略自动重连，也可在任务栏连接状态处右键手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
@@ -4506,6 +4727,26 @@
         </button>
     </div>
 
+    <div class="te-filterbar" v-if="win">
+        <el-checkbox v-model="filter.on" class="te-filter-check" @change="onFilterToggle">过滤</el-checkbox>
+        <el-input ref="filterInput" size="mini" v-model="filter.text" class="te-filter-input"
+                  :disabled="!filter.on" placeholder="只显示包含关键词的行"
+                  @input="scheduleFilter">
+            <i slot="prefix" class="el-icon-search"></i>
+        </el-input>
+        <button type="button" class="edit-opt" :class="{ active: filter.caseSensitive }"
+                :disabled="!filter.on" title="区分大小写"
+                @click="toggleFilterOption('caseSensitive')">Aa</button>
+        <button type="button" class="edit-opt edit-opt-regex" :class="{ active: filter.regex }"
+                :disabled="!filter.on" title="正则表达式"
+                @click="toggleFilterOption('regex')">.*</button>
+        <span class="te-filter-count" :class="{ invalid: !!filter.error }">
+            {{ filter.error || (filter.on ? (filter.total + ' 行匹配' + (filter.truncated ? ' · 仅显示前 2000 行' : '')) : '') }}
+        </span>
+        <span class="spacer"></span>
+        <span class="te-filter-note" v-if="filter.on">过滤视图只读 · 关闭过滤后可编辑</span>
+    </div>
+
     <div class="edit-toolbar te-findbar" v-show="find.open">
         <div class="edit-find-row">
             <div class="edit-find-box">
@@ -4544,8 +4785,18 @@
         </div>
     </div>
 
-    <div ref="editorHost" class="edit-cm-host te-editor-host"
+    <div ref="editorHost" class="edit-cm-host te-editor-host" v-show="!filter.on"
          v-loading="opening" element-loading-text="正在打开远程文件…"></div>
+
+    <div class="te-filter-view" v-if="win && filter.on" v-loading="opening">
+        <div v-if="filter.error" class="te-filter-empty">{{ filter.error }}</div>
+        <div v-else-if="!filter.rows.length" class="te-filter-empty">没有匹配的行</div>
+        <div v-for="row in filter.rows" :key="'fl' + row.no" class="te-filter-line">
+            <span class="te-filter-no">{{ row.no }}</span>
+            <span class="te-filter-code"><span v-for="(seg, si) in row.segs" :key="si"
+                                              :class="{ hit: seg.hit }">{{ seg.text }}</span></span>
+        </div>
+    </div>
 
     <div class="edit-statusbar te-statusbar">
         <span v-if="activeDoc && activeDoc.dirty" class="edit-dirty"><i class="el-icon-edit"></i> 未保存</span>

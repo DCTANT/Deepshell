@@ -2139,6 +2139,101 @@ body.resizing .term-host {
     min-height: 0;
 }
 
+/* 文本编辑器：行过滤视图 */
+.te-filterbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    overflow-x: auto;
+    background: #f7f9fc;
+    border-bottom: 1px solid #eef1f6;
+}
+
+.te-filter-check {
+    flex: 0 0 auto;
+    margin-right: 2px;
+}
+
+.te-filter-input {
+    width: 260px;
+    flex: 0 1 320px;
+}
+
+.te-filterbar .edit-opt:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.te-filter-count {
+    flex: 0 0 auto;
+    color: #6b7891;
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.te-filter-count.invalid {
+    color: var(--err);
+}
+
+.te-filter-note {
+    flex: 0 0 auto;
+    color: #9aa7bd;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.te-filter-view {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px 0 12px;
+    background: #fff;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12.5px;
+    line-height: 1.65;
+}
+
+.te-filter-line {
+    display: flex;
+    min-height: 21px;
+}
+
+.te-filter-line:hover {
+    background: #f5f8ff;
+}
+
+.te-filter-no {
+    flex: 0 0 54px;
+    padding-right: 10px;
+    color: #a6b2c6;
+    text-align: right;
+    user-select: none;
+}
+
+.te-filter-code {
+    flex: 1;
+    padding-right: 14px;
+    color: #2b3442;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.te-filter-code .hit {
+    border-radius: 2px;
+    background: #ffe8a3;
+    color: #7a4b00;
+}
+
+.te-filter-empty {
+    padding: 26px 12px;
+    color: #9aa7bd;
+    font-family: var(--font);
+    font-size: 12px;
+    text-align: center;
+}
+
 .te-statusbar {
     flex: 0 0 auto;
     padding: 4px 10px;
@@ -9025,4 +9120,515 @@ body.resizing .term-host {
     margin: 10px 0 0 !important;
     color: #909399;
     font-size: 12px;
+}
+
+/* ---------- 桌面：服务与计划任务 / 网络工具箱 / 多机命令 ---------- */
+.dsk-app-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: #f7f9fc;
+    border-bottom: 1px solid #e5ebf4;
+}
+
+.dsk-app-tab {
+    height: 28px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #5c6b7e;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+
+.dsk-app-tab:hover {
+    background: #eef3fb;
+}
+
+.dsk-app-tab.active {
+    background: #e4efff;
+    color: #1f5fc4;
+    font-weight: 600;
+}
+
+.dsk-app-host {
+    max-width: 280px;
+    overflow: hidden;
+    color: #8a94a4;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-app-error {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3d6d6;
+    background: #fff5f5;
+    color: #c0392b;
+    font-size: 12px;
+}
+
+.dsk-app-empty {
+    padding: 26px 12px;
+    color: #9aa7bd;
+    font-size: 12px;
+    text-align: center;
+}
+
+.dsk-app-meta {
+    color: #8a94a4;
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.dsk-grow {
+    flex: 1;
+}
+
+/* 服务与计划任务 */
+.dsk-svc {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fbfcfe;
+}
+
+.dsk-svc-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #eef1f6;
+}
+
+.dsk-svc-list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 4px 8px 12px;
+}
+
+.dsk-svc-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border-bottom: 1px solid #f1f4f9;
+    border-radius: 6px;
+}
+
+.dsk-svc-row:hover {
+    background: #f4f8ff;
+}
+
+.dsk-svc-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #c3cbd8;
+}
+
+.dsk-svc-dot.is-active {
+    background: #22a06b;
+    box-shadow: 0 0 0 3px rgba(34, 160, 107, .13);
+}
+
+.dsk-svc-dot.is-failed {
+    background: #e05252;
+}
+
+.dsk-svc-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.dsk-svc-name {
+    overflow: hidden;
+    color: #2b3442;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-svc-desc {
+    margin-top: 2px;
+    overflow: hidden;
+    color: #8a94a4;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-svc-state {
+    flex: 0 0 78px;
+    color: #8a94a4;
+    font-size: 11.5px;
+}
+
+.dsk-svc-state.is-active {
+    color: #1f8a5b;
+}
+
+.dsk-svc-state.is-failed {
+    color: #c0392b;
+}
+
+.dsk-svc-enabled {
+    flex: 0 0 82px;
+    color: #9aa7bd;
+    font-size: 11px;
+}
+
+.dsk-svc-actions {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.dsk-svc-actions .el-button + .el-button {
+    margin-left: 2px;
+}
+
+.dsk-cron-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 10px 12px 20px;
+    background: #fbfcfe;
+}
+
+.dsk-cron-add {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.dsk-cron-add .el-input {
+    flex: 1;
+}
+
+.dsk-cron-section {
+    margin-bottom: 18px;
+}
+
+.dsk-cron-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+    color: #2b3442;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.dsk-cron-title span {
+    color: #8a94a4;
+    font-size: 11.5px;
+    font-weight: 400;
+}
+
+.dsk-cron-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #f1f4f9;
+}
+
+.dsk-cron-row code {
+    flex: 1;
+    color: #3d4a5c;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.dsk-cron-system .dsk-app-meta {
+    flex: 0 0 auto;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dsk-cron-timers {
+    margin: 0;
+    padding: 8px 10px;
+    overflow: auto;
+    border: 1px solid #e5ebf4;
+    border-radius: 6px;
+    background: #fff;
+    color: #3d4a5c;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+/* 网络工具箱 */
+.dsk-net {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fbfcfe;
+}
+
+.dsk-net-form {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #f7f9fc;
+    border-bottom: 1px solid #eef1f6;
+}
+
+.dsk-net-target {
+    flex: 1;
+    min-width: 180px;
+}
+
+.dsk-net-port {
+    flex: 0 0 80px;
+    width: 80px;
+}
+
+.dsk-net-meta {
+    display: flex;
+    gap: 14px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #f1f4f9;
+    color: #8a94a4;
+    font-size: 11.5px;
+}
+
+.dsk-net-output {
+    flex: 1;
+    min-height: 0;
+    margin: 0;
+    padding: 12px 14px;
+    overflow: auto;
+    background: #101318;
+    color: #d7dde8;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* 多机命令 */
+.dsk-batch {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    background: #fbfcfe;
+}
+
+.dsk-batch-side {
+    width: 268px;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background: #f7f9fc;
+    border-right: 1px solid #e5ebf4;
+}
+
+.dsk-batch-side-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    color: #2b3442;
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.dsk-batch-side-head span {
+    color: #8a94a4;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.dsk-batch-side-actions {
+    display: flex;
+    gap: 2px;
+}
+
+.dsk-batch-list {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin-top: 2px;
+}
+
+.dsk-batch-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.dsk-batch-item:hover {
+    background: #eef3fb;
+}
+
+.dsk-batch-item.on {
+    background: #e4efff;
+}
+
+.dsk-batch-check {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #c3cbd8;
+    border-radius: 4px;
+    background: #fff;
+    color: #fff;
+    font-size: 11px;
+}
+
+.dsk-batch-check.on {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+.dsk-batch-item-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dsk-batch-item-name {
+    overflow: hidden;
+    color: #2b3442;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-batch-item-host {
+    overflow: hidden;
+    color: #8a94a4;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 10.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-batch-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.dsk-batch-compose {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    background: #fff;
+    border-bottom: 1px solid #eef1f6;
+}
+
+.dsk-batch-tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.dsk-batch-chip {
+    max-width: 150px;
+    overflow: hidden;
+    padding: 2px 8px;
+    border: 1px solid #dbe4f1;
+    border-radius: 999px;
+    background: #f7f9fc;
+    color: #5c6b7e;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.dsk-batch-chip:hover {
+    border-color: #9fc0f0;
+    background: #eef5ff;
+    color: #1f5fc4;
+}
+
+.dsk-batch-results {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 10px 12px 16px;
+}
+
+.dsk-batch-result {
+    margin-bottom: 12px;
+    overflow: hidden;
+    border: 1px solid #e5ebf4;
+    border-radius: 8px;
+    background: #fff;
+}
+
+.dsk-batch-result-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: #f7f9fc;
+    border-bottom: 1px solid #eef1f6;
+    font-size: 12px;
+}
+
+.dsk-batch-status {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #fdecec;
+    color: #c0392b;
+    font-size: 10.5px;
+}
+
+.dsk-batch-status.ok {
+    background: #e8f7ef;
+    color: #1f8a5b;
+}
+
+.dsk-batch-result-error {
+    padding: 6px 10px;
+    border-bottom: 1px solid #f6dede;
+    background: #fff5f5;
+    color: #c0392b;
+    font-size: 11.5px;
+}
+
+.dsk-batch-output {
+    margin: 0;
+    padding: 9px 11px;
+    max-height: 260px;
+    overflow: auto;
+    background: #101318;
+    color: #d7dde8;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
