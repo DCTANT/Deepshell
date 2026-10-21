@@ -4194,9 +4194,9 @@ new Vue({
         desktopTrashPath: function () {
             var home = this.desktopHomeDir;
             if (!home) {
-                return '.recycle-bin';
+                return '.local/share/Trash';
             }
-            return String(home).replace(/\/+$/, '') + '/.recycle-bin';
+            return String(home).replace(/\/+$/, '') + '/.local/share/Trash';
         },
         desktopQuickDirs: function () {
             return [
