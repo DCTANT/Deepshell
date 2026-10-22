@@ -1268,6 +1268,13 @@ public class SshSessionManager {
         return sessionId != null && sessions.containsKey(sessionId);
     }
 
+    /** 关闭全部会话（恢复系统备份等需要整体替换连接配置的场景） */
+    public void closeAll(String reason) {
+        for (String id : new ArrayList<>(sessions.keySet())) {
+            close(id, reason, false);
+        }
+    }
+
     /**
      * WebSocket 断开时挂起会话：保留 SSH 连接与最近输出，10 分钟内可用同一客户端键重新附着。
      * attachmentId 用于避免旧连接关闭时误挂起刚附着的新连接。

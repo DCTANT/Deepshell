@@ -548,6 +548,10 @@
                 <i class="el-icon-arrow-left tab-menu-arrow"></i>
             </div>
             <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'service'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('backup')">
+                    <i class="el-icon-folder-opened"></i>备份与还原
+                </div>
+                <div class="tab-menu-sep"></div>
                 <div class="tab-menu-item" @click="onMenuCommand('appRestart')">
                     <i class="el-icon-refresh-right"></i>重启 DeepShell
                 </div>

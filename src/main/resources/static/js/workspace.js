@@ -3889,6 +3889,7 @@ new Vue({
             { id: 'power', label: '电源与休眠', icon: 'el-icon-switch-button' },
             { id: 'ai', label: 'AI 助手', icon: 'el-icon-magic-stick' },
             { id: 'network', label: '网络与连接', icon: 'el-icon-connection' },
+            { id: 'backup', label: '备份与还原', icon: 'el-icon-folder-opened' },
             { id: 'system', label: '系统信息', icon: 'el-icon-cpu' }
         ],
         desktopResizeDirs: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
@@ -4128,6 +4129,15 @@ new Vue({
         connImportVisible: false,
         connExportVisible: false,
         connExportChecked: [],
+        backupVisible: false,
+        backupBusy: false,
+        backupAction: '',
+        backupBusyText: '',
+        backupFile: null,
+        backupFileName: '',
+        backupFileSize: 0,
+        backupResult: null,
+        backupRestored: false,
         fontVisible: false,
         hotkeyVisible: false,
         bgVisible: false,
@@ -6109,6 +6119,8 @@ new Vue({
                 this.aiSetVisible = true;
             } else if (cmd === 'desktop') {
                 this.openDesktopInNewTab(t);
+            } else if (cmd === 'backup') {
+                this.openBackupDialog();
             } else if (cmd === 'appRestart') {
                 this.askAppLifecycle('restart');
             } else if (cmd === 'appShutdown') {
@@ -16065,6 +16077,249 @@ new Vue({
             a.remove();
             this.connExportVisible = false;
             ELEMENT.Message.success('已导出 ' + ids.length + ' 个连接');
+        },
+        /* ---------- 系统备份与还原 ---------- */
+        openBackupDialog: function () {
+            this.topMenuVisible = false;
+            this.topSubMenu = '';
+            this.backupVisible = true;
+            this.backupResult = null;
+            this.backupRestored = false;
+            this.backupFile = null;
+            this.backupFileName = '';
+            this.backupFileSize = 0;
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.backupFileInput) {
+                    self.$refs.backupFileInput.value = '';
+                }
+            });
+        },
+        pickBackupFile: function () {
+            var el = this.$refs.backupFileInput;
+            if (el) {
+                el.value = '';
+                el.click();
+            }
+        },
+        onBackupFilePick: function (ev) {
+            var input = ev.target;
+            var file = input.files && input.files[0];
+            input.value = '';
+            if (!file) {
+                return;
+            }
+            if (!/\.zip$/i.test(file.name)) {
+                ELEMENT.Message.warning('请选择 DeepShell 备份 ZIP 文件');
+                return;
+            }
+            this.backupFile = file;
+            this.backupFileName = file.name;
+            this.backupFileSize = file.size || 0;
+        },
+        formatBackupSize: function (bytes) {
+            var size = Number(bytes) || 0;
+            if (size < 1024) {
+                return size + ' B';
+            }
+            if (size < 1024 * 1024) {
+                return (size / 1024).toFixed(1) + ' KB';
+            }
+            if (size < 1024 * 1024 * 1024) {
+                return (size / 1024 / 1024).toFixed(1) + ' MB';
+            }
+            return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        },
+        backupCountItems: function (counts) {
+            var defs = [
+                ['connections', '连接'], ['folders', '文件夹'], ['quickCommands', '快捷命令'],
+                ['commonDirs', '常用目录'], ['portForwards', '端口转发'], ['knownHosts', '已知主机'],
+                ['desktopLayouts', '桌面布局'], ['aiConversations', 'AI 对话'], ['sshKeys', 'SSH 私钥'],
+                ['plugins', '插件'], ['backgrounds', '背景图'], ['pluginDataFiles', '插件数据文件']
+            ];
+            var data = counts || {};
+            return defs.map(function (d) {
+                return { label: d[1], value: Number(data[d[0]] || 0) };
+            });
+        },
+        backupErrorText: function (err) {
+            if (err && err.response && err.response.data) {
+                var data = err.response.data;
+                if (typeof data.text === 'function') {
+                    return data.text().then(function (text) {
+                        try {
+                            var json = JSON.parse(text);
+                            return json.msg || json.message || '操作失败';
+                        } catch (e) {
+                            return text ? text.slice(0, 300) : '操作失败';
+                        }
+                    }).catch(function () {
+                        return '操作失败';
+                    });
+                }
+                if (typeof data === 'string') {
+                    return Promise.resolve(data.slice(0, 300));
+                }
+            }
+            return Promise.resolve((err && err.message) ? err.message : '操作失败');
+        },
+        showBackupError: function (err) {
+            this.backupErrorText(err).then(function (msg) {
+                ELEMENT.Message.error(msg, { duration: 7000, showClose: true });
+            });
+        },
+        backupWarnings: function (resp) {
+            var header = resp && resp.headers && (resp.headers['x-backup-warnings']
+                || resp.headers['X-Backup-Warnings']);
+            if (!header) {
+                return [];
+            }
+            try {
+                var bin = atob(header.replace(/-/g, '+').replace(/_/g, '/'));
+                var bytes = new Uint8Array(bin.length);
+                for (var i = 0; i < bin.length; i++) {
+                    bytes[i] = bin.charCodeAt(i);
+                }
+                return new TextDecoder('utf-8').decode(bytes).split('\n').filter(function (s) {
+                    return !!s;
+                });
+            } catch (e) {
+                return [];
+            }
+        },
+        exportSystemBackup: function () {
+            if (this.backupBusy) {
+                return;
+            }
+            var self = this;
+            var items = {};
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+                    if (key && key.indexOf('deepshell.') === 0) {
+                        items[key] = localStorage.getItem(key);
+                    }
+                }
+            } catch (e) { /* localStorage 不可用时仍导出服务端配置 */ }
+            this.backupBusy = true;
+            this.backupAction = 'export';
+            this.backupBusyText = '正在收集配置并打包，请稍候…';
+            axios.post('/api/backup/export', {
+                browser: { origin: location.origin, items: items }
+            }, { responseType: 'blob', timeout: 0 }).then(function (resp) {
+                var blob = resp.data;
+                if (blob && blob.type && blob.type.indexOf('json') >= 0) {
+                    return blob.text().then(function (text) {
+                        var json = null;
+                        try { json = JSON.parse(text); } catch (e) { /* ignore */ }
+                        throw new Error((json && json.msg) ? json.msg : '导出失败');
+                    });
+                }
+                var name = 'deepshell-backup.zip';
+                var cd = (resp.headers && (resp.headers['content-disposition']
+                    || resp.headers['Content-Disposition'])) || '';
+                var matched = /filename="?([^";]+)"?/i.exec(cd);
+                if (matched && matched[1]) {
+                    name = matched[1].replace(/"/g, '');
+                }
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+                var warnings = self.backupWarnings(resp);
+                if (warnings.length) {
+                    ELEMENT.Message.warning('备份已导出，但部分文件未包含：'
+                        + warnings.slice(0, 3).join('；'), { duration: 9000, showClose: true });
+                } else {
+                    ELEMENT.Message.success('备份已导出：' + name, { duration: 5000, showClose: true });
+                }
+            }).catch(function (err) {
+                self.showBackupError(err);
+            }).then(function () {
+                self.backupBusy = false;
+                self.backupAction = '';
+            });
+        },
+        importSystemBackup: function () {
+            if (!this.backupFile || this.backupBusy) {
+                return;
+            }
+            var self = this;
+            this.$confirm('还原会覆盖当前所有连接与密码、快捷命令、AI 对话、桌面外观、背景图、插件与插件数据，'
+                + '且无法撤销；备份中的插件后端会以本机权限运行。确定继续？', '覆盖并还原', {
+                type: 'warning',
+                confirmButtonText: '覆盖并还原',
+                cancelButtonText: '取消'
+            }).then(function () {
+                var fd = new FormData();
+                fd.append('file', self.backupFile, self.backupFileName || 'backup.zip');
+                self.backupBusy = true;
+                self.backupAction = 'import';
+                self.backupBusyText = '正在校验备份并还原，请勿关闭页面…';
+                self.backupResult = null;
+                return axios.post('/api/backup/import', fd, { timeout: 0 }).then(function (resp) {
+                    var body = resp.data;
+                    if (!body || body.code !== 0) {
+                        throw new Error((body && body.msg) ? body.msg : '还原失败');
+                    }
+                    var result = body.data || {};
+                    var failed = self.applyBackupBrowserSettings(result.browser);
+                    if (failed > 0) {
+                        result.warnings = result.warnings || [];
+                        result.warnings.push(failed + ' 项浏览器设置因存储空间不足未能恢复');
+                    }
+                    self.backupResult = result;
+                    self.backupRestored = true;
+                    self.backupFile = null;
+                    self.backupFileName = '';
+                    self.backupFileSize = 0;
+                    ELEMENT.Message.success('还原完成，请刷新页面加载新配置');
+                });
+            }).catch(function (err) {
+                if (err === 'cancel' || err === 'close') {
+                    return;
+                }
+                self.showBackupError(err);
+            }).then(function () {
+                self.backupBusy = false;
+                self.backupAction = '';
+            });
+        },
+        applyBackupBrowserSettings: function (browser) {
+            if (!browser || !browser.items) {
+                return 0;
+            }
+            var items = browser.items;
+            var keys = [];
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+                    if (key && key.indexOf('deepshell.') === 0) {
+                        keys.push(key);
+                    }
+                }
+                keys.forEach(function (key) {
+                    localStorage.removeItem(key);
+                });
+            } catch (e) {
+                return 0;
+            }
+            var failed = 0;
+            Object.keys(items).forEach(function (key) {
+                if (key.indexOf('deepshell.') !== 0) {
+                    return;
+                }
+                try {
+                    localStorage.setItem(key, items[key]);
+                } catch (e) {
+                    failed++;
+                }
+            });
+            return failed;
         },
         buildTermTheme: function () {
             var th = {};

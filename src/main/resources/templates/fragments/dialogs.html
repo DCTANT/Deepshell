@@ -142,6 +142,98 @@
         </div>
     </el-dialog>
 
+    <!-- 系统备份与还原 -->
+    <el-dialog title="系统备份与还原" :visible.sync="backupVisible" width="620px" append-to-body
+               custom-class="backup-dialog"
+               :show-close="!backupBusy && !backupRestored"
+               :close-on-click-modal="!backupBusy && !backupRestored"
+               :close-on-press-escape="!backupBusy && !backupRestored">
+        <div class="backup-scope">
+            <i class="el-icon-folder-opened"></i>
+            <span>完整备份连接与密码、文件夹、快捷命令、常用目录、端口转发、AI 设置与对话、桌面外观 / 颜色 / 图标 / 字体、
+                背景图片、已安装插件与插件数据。</span>
+        </div>
+        <div class="backup-warn">
+            <i class="el-icon-warning-outline"></i>
+            备份包含连接密码、AI API Key、SSH 私钥等敏感信息，请妥善保管，不要发送给他人。
+        </div>
+
+        <div class="backup-section">
+            <div class="backup-section-head">
+                <div class="backup-section-info">
+                    <b>导出备份</b>
+                    <span>生成 ZIP 文件，可在新安装的 DeepShell 中完整还原</span>
+                </div>
+                <el-button size="small" type="primary" icon="el-icon-download"
+                           :loading="backupBusy && backupAction === 'export'"
+                           :disabled="backupBusy" @click="exportSystemBackup">
+                    导出 ZIP
+                </el-button>
+            </div>
+        </div>
+
+        <div class="backup-section">
+            <div class="backup-section-head">
+                <div class="backup-section-info">
+                    <b>还原备份</b>
+                    <span>导入后覆盖当前全部配置；浏览器外观设置会同步写入当前浏览器</span>
+                </div>
+                <div class="backup-actions">
+                    <input ref="backupFileInput" type="file" accept=".zip,application/zip"
+                           class="backup-file-input" @change="onBackupFilePick">
+                    <el-button size="small" icon="el-icon-upload2" :disabled="backupBusy"
+                               @click="pickBackupFile">选择 ZIP</el-button>
+                    <el-button size="small" type="danger" plain :disabled="!backupFile || backupBusy"
+                               @click="importSystemBackup">开始还原</el-button>
+                </div>
+            </div>
+            <div class="backup-file" v-if="backupFile">
+                <i class="el-icon-document"></i>
+                <span>{{ backupFileName }}</span>
+                <em>{{ formatBackupSize(backupFileSize) }}</em>
+            </div>
+        </div>
+
+        <div class="backup-busy" v-if="backupBusy">
+            <i class="el-icon-loading"></i>
+            <span>{{ backupBusyText }}</span>
+        </div>
+
+        <div class="backup-result" v-if="backupResult">
+            <div class="backup-result-head">
+                <i class="el-icon-circle-check"></i>
+                <b>还原完成</b>
+                <span>刷新页面后使用还原的配置</span>
+            </div>
+            <div class="backup-result-grid">
+                <div v-for="c in backupCountItems(backupResult.counts)" :key="c.label">
+                    <b>{{ c.value }}</b><span>{{ c.label }}</span>
+                </div>
+            </div>
+            <div class="backup-result-warn" v-if="backupResult.warnings && backupResult.warnings.length">
+                <div v-for="(w, i) in backupResult.warnings" :key="'bw' + i">
+                    <i class="el-icon-warning-outline"></i>{{ w }}
+                </div>
+            </div>
+            <div class="backup-result-tip" v-if="backupResult.restartRequired">
+                局域网访问设置已还原，需要重启 DeepShell 后生效。
+            </div>
+        </div>
+
+        <div class="backup-tip">
+            · 只导入自己导出或可信来源的备份；备份中的插件后端会以 DeepShell 本机权限运行。<br>
+            · 还原会保留当前实例的登录配置、HTTPS 证书与审计日志；其余配置以上一次备份为准。<br>
+            · 桌面外观、字体、图标样式与窗口布局等浏览器设置仅对当前浏览器生效。<br>
+            · 还原期间会断开当前所有 SSH 会话，插件后端会自动重新加载。
+        </div>
+        <span slot="footer">
+            <el-button v-if="!backupRestored" size="small" :disabled="backupBusy"
+                       @click="backupVisible = false">关闭</el-button>
+            <el-button v-else size="small" type="primary" icon="el-icon-refresh-right"
+                       @click="reloadPage">刷新页面</el-button>
+        </span>
+    </el-dialog>
+
     <!-- 字体设置 -->
     <el-dialog title="字体设置（终端）" :visible.sync="fontVisible" width="470px" append-to-body>
         <div class="set-row">
@@ -880,12 +972,14 @@
                 <div class="help-title"><i class="el-icon-menu"></i>右上角菜单</div>
                 <ul>
                     <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、终端背景设置、AI 设置（DeepSeek / 通义千问 / 智谱 GLM / MiniMax / Kimi / OpenAI 等厂商，模型列表实时获取、下拉选择）</li>
+                    <li>「DeepShell 服务 → 备份与还原」可把连接与密码、快捷命令、AI 对话、桌面外观与图标 / 字体、背景图、插件及插件数据打包为 ZIP；在新安装的 DeepShell 中导入即可恢复</li>
                 </ul>
             </div>
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-folder"></i>数据与安全</div>
                 <ul>
                     <li>连接、密码（AES 加密）、快捷命令与背景图存放于数据目录（分发包为程序目录下 <b>data/</b>），拷贝该目录即可迁移</li>
+                    <li>系统备份包含连接密码、AI API Key 与 SSH 私钥，请妥善保管；登录配置、HTTPS 证书和审计日志不包含在备份中</li>
                     <li>本工具设计为本机使用，请勿直接暴露到公网</li>
                 </ul>
             </div>
