@@ -4133,6 +4133,13 @@ new Vue({
         bgVisible: false,
         helpVisible: false,
         aboutVisible: false,
+        /* DeepShell 后端自身的关闭 / 重启状态 */
+        appLifecycle: {
+            visible: false,
+            mode: 'shutdown',
+            status: 'closing',
+            elapsed: 0
+        },
         lanVisible: false,
         authSetVisible: false,
         authSetSaving: false,
@@ -4378,6 +4385,34 @@ new Vue({
         }
     },
     computed: {
+        appLifecycleTitle: function () {
+            var s = this.appLifecycle;
+            if (s.mode === 'shutdown') {
+                return s.status === 'closing' ? '正在关闭 DeepShell 后端' : 'DeepShell 后端服务已关闭';
+            }
+            if (s.status === 'timeout') {
+                return '等待 DeepShell 重启超时';
+            }
+            if (s.status === 'restored') {
+                return 'DeepShell 已重启，正在刷新页面';
+            }
+            return '正在重启 DeepShell 后端';
+        },
+        appLifecycleSub: function () {
+            var s = this.appLifecycle;
+            if (s.mode === 'shutdown') {
+                return s.status === 'closing'
+                    ? '正在停止终端、文件传输与 AI 服务，请稍候…'
+                    : '终端、文件传输与 AI 服务均已停止。重新启动 DeepShell 后，点击下方按钮刷新页面。';
+            }
+            if (s.status === 'timeout') {
+                return '已等待 ' + s.elapsed + ' 秒仍未检测到服务恢复，请确认 DeepShell 后端是否启动成功，然后刷新页面。';
+            }
+            if (s.status === 'restored') {
+                return '服务已恢复，页面即将自动刷新。';
+            }
+            return '服务退出后会自动重新启动，已等待 ' + s.elapsed + ' 秒，恢复后页面将自动刷新…';
+        },
         /* 当前选中的 AI 厂商预设（弹窗中展示默认地址 / Key 获取地址） */
         aiCurrentPreset: function () {
             var id = this.aiSetForm.provider;
@@ -6074,6 +6109,10 @@ new Vue({
                 this.aiSetVisible = true;
             } else if (cmd === 'desktop') {
                 this.openDesktopInNewTab(t);
+            } else if (cmd === 'appRestart') {
+                this.askAppLifecycle('restart');
+            } else if (cmd === 'appShutdown') {
+                this.askAppLifecycle('shutdown');
             }
         },
         /* ---------- AI 设置（厂商预设 + 模型列表实时获取） ---------- */
@@ -15368,6 +15407,171 @@ new Vue({
                     });
                 }
             }).catch(function () { /* 取消或失败（已由拦截器提示） */ });
+        },
+        /* ---------- DeepShell 后端关闭 / 重启（与远端服务器的关机 / 重启无关） ---------- */
+        askAppLifecycle: function (mode) {
+            var self = this;
+            this.topMenuVisible = false;
+            this.topSubMenu = '';
+            this.desktop.startOpen = false;
+            this.desktop.powerOpen = false;
+            if (this.appLifecycle.visible) {
+                return;
+            }
+            var restarting = mode === 'restart';
+            var label = restarting ? '重启' : '关闭';
+            var detail = restarting
+                ? 'DeepShell 后端会立即退出并自动重新启动。正在执行的终端命令、文件传输和 AI 任务都会中断。'
+                : 'DeepShell 后端会立即退出。正在执行的终端命令、文件传输和 AI 任务都会中断，'
+                    + '需要手动重新启动 DeepShell 才能继续使用。';
+            this.$confirm(detail + '确定' + label + ' DeepShell 吗？', label + ' DeepShell', {
+                type: 'warning',
+                confirmButtonText: '确定' + label,
+                cancelButtonText: '取消'
+            }).then(function () {
+                self.performAppLifecycle(mode);
+            }).catch(function () { /* 取消 */ });
+        },
+        performAppLifecycle: function (mode) {
+            var self = this;
+            var restarting = mode === 'restart';
+            this.stopAppLifecycleTimer();
+            this.appLifecycle = {
+                visible: true,
+                mode: mode,
+                status: restarting ? 'working' : 'closing',
+                elapsed: 0
+            };
+            this._appLifecycleTick = setInterval(function () {
+                self.appLifecycle.elapsed += 1;
+            }, 1000);
+
+            if (!restarting) {
+                // 关闭：服务可能来不及返回响应就退出，因此响应、网络错误和超时都按「已关闭」处理；
+                // 只有后端明确返回业务错误时才认为关闭失败并撤掉遮罩
+                axios.post('/api/app-lifecycle/shutdown', {}, { timeout: 8000 }).then(function (resp) {
+                    var d = resp && resp.data;
+                    if (d && d.code !== 0) {
+                        self.cancelAppLifecycle(d.msg || '关闭 DeepShell 失败');
+                        return;
+                    }
+                    self.markAppShutdownDone();
+                }).catch(function (err) {
+                    if (err && err.response) {
+                        self.cancelAppLifecycle('关闭 DeepShell 失败');
+                    } else {
+                        self.markAppShutdownDone();
+                    }
+                });
+                setTimeout(function () {
+                    if (self.appLifecycle.visible && self.appLifecycle.mode === 'shutdown'
+                            && self.appLifecycle.status === 'closing') {
+                        self.markAppShutdownDone();
+                    }
+                }, 2500);
+                return;
+            }
+
+            // 重启：先记下当前进程的启动时间，再请求重启，之后轮询等待新进程就绪
+            var baseline = '';
+            axios.get('/api/app-info', { timeout: 5000 }).then(function (resp) {
+                var d = resp && resp.data;
+                if (d && d.code === 0 && d.data) {
+                    baseline = String(d.data.startedAt || '');
+                }
+            }).catch(function () { /* 服务可能已开始退出 */ }).then(function () {
+                self._appLifecycleBaseline = baseline;
+                return axios.post('/api/app-lifecycle/restart', {}, { timeout: 8000 });
+            }).then(function (resp) {
+                var d = resp && resp.data;
+                if (d && d.code !== 0) {
+                    self.cancelAppLifecycle(d.msg || '重启 DeepShell 失败');
+                    return;
+                }
+                self.pollAppLifecycle();
+            }).catch(function (err) {
+                if (err && err.response) {
+                    self.cancelAppLifecycle('重启 DeepShell 失败');
+                    return;
+                }
+                self.pollAppLifecycle(); // 请求发出后服务已退出，继续等待新进程
+            });
+        },
+        cancelAppLifecycle: function (message) {
+            this.stopAppLifecycleTimer();
+            this.appLifecycle.visible = false;
+            if (message) {
+                ELEMENT.Message.error(message);
+            }
+        },
+        markAppShutdownDone: function () {
+            if (this.appLifecycle.mode !== 'shutdown') {
+                return;
+            }
+            this.stopAppLifecycleTimer();
+            this.appLifecycle.status = 'closed';
+        },
+        pollAppLifecycle: function () {
+            var self = this;
+            var baseline = this._appLifecycleBaseline || '';
+            var sawDown = false;
+            var began = Date.now();
+
+            function schedule(delay) {
+                setTimeout(probe, delay);
+            }
+            function probe() {
+                if (!self.appLifecycle.visible || self.appLifecycle.mode !== 'restart'
+                        || self.appLifecycle.status !== 'working') {
+                    return;
+                }
+                if (Date.now() - began > 120000) {
+                    self.stopAppLifecycleTimer();
+                    self.appLifecycle.status = 'timeout';
+                    return;
+                }
+                axios.get('/api/app-info', { timeout: 3000, params: { _t: Date.now() } })
+                    .then(function (resp) {
+                        var d = resp && resp.data;
+                        if (!d || d.code !== 0 || !d.data) {
+                            throw new Error('not ready');
+                        }
+                        var startedAt = String(d.data.startedAt || '');
+                        if (baseline && startedAt) {
+                            if (startedAt !== baseline) {
+                                self.finishAppRestart();
+                                return;
+                            }
+                            schedule(sawDown ? 700 : 900);
+                            return;
+                        }
+                        // 拿不到启动时间时，至少观察到一次服务不可用后才认为响应来自新进程
+                        if (sawDown || Date.now() - began > 3000) {
+                            self.finishAppRestart();
+                            return;
+                        }
+                        schedule(700);
+                    })
+                    .catch(function () {
+                        sawDown = true;
+                        schedule(700);
+                    });
+            }
+            schedule(1200);
+        },
+        finishAppRestart: function () {
+            this.stopAppLifecycleTimer();
+            this.appLifecycle.status = 'restored';
+            setTimeout(function () { location.reload(); }, 600);
+        },
+        stopAppLifecycleTimer: function () {
+            if (this._appLifecycleTick) {
+                clearInterval(this._appLifecycleTick);
+                this._appLifecycleTick = null;
+            }
+        },
+        reloadPage: function () {
+            location.reload();
         },
         openDesktopSysInfo: function () {
             this.desktop.startOpen = false;

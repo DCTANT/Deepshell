@@ -538,6 +538,25 @@
                 </div>
             </div>
         </div>
+
+        <div class="tab-menu-group" @mouseenter="topSubMenu = 'service'">
+            <div class="tab-menu-item tab-menu-group-head"
+                 :class="{ open: topSubMenu === 'service' }"
+                 @click.stop="topSubMenu = topSubMenu === 'service' ? '' : 'service'">
+                <i class="el-icon-switch-button"></i>
+                <span class="tab-menu-grow">DeepShell 服务</span>
+                <i class="el-icon-arrow-left tab-menu-arrow"></i>
+            </div>
+            <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'service'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('appRestart')">
+                    <i class="el-icon-refresh-right"></i>重启 DeepShell
+                </div>
+                <div class="tab-menu-sep"></div>
+                <div class="tab-menu-item danger" @click="onMenuCommand('appShutdown')">
+                    <i class="el-icon-switch-button"></i>关闭 DeepShell
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 文件夹右键菜单（打开连接弹窗内） -->
@@ -589,6 +608,26 @@
         <div class="tab-menu-sep"></div>
         <div class="tab-menu-item" @click="menuAction('closeAll')">
             <i class="el-icon-delete"></i>关闭所有
+        </div>
+    </div>
+
+    <!-- DeepShell 后端关闭 / 重启遮罩 -->
+    <div class="app-service-mask" v-if="appLifecycle.visible">
+        <div class="app-service-box" :class="['mode-' + appLifecycle.mode, 'status-' + appLifecycle.status]">
+            <div class="app-service-icon">
+                <i v-if="appLifecycle.mode === 'restart' && appLifecycle.status === 'working'"
+                   class="el-icon-loading"></i>
+                <i v-else-if="appLifecycle.mode === 'restart'" class="el-icon-refresh-right"></i>
+                <i v-else class="el-icon-switch-button"></i>
+            </div>
+            <div class="app-service-title">{{ appLifecycleTitle }}</div>
+            <div class="app-service-sub">{{ appLifecycleSub }}</div>
+            <div class="app-service-bar" v-if="appLifecycle.mode === 'restart' && appLifecycle.status === 'working'">
+                <span></span>
+            </div>
+            <button class="app-service-btn" v-if="appLifecycle.status !== 'working'" @click="reloadPage">
+                <i class="el-icon-refresh"></i>刷新页面
+            </button>
         </div>
     </div>
 </div>

@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.File;
+import java.lang.management.ManagementFactory;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -27,6 +28,8 @@ public class AppInfoController {
         m.put("java", System.getProperty("java.version"));
         m.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));
         m.put("dataDir", DataDir.root().toString());
+        // 进程启动时间：前端重启后用它判断响应是否已来自新进程
+        m.put("startedAt", String.valueOf(ManagementFactory.getRuntimeMXBean().getStartTime()));
         return R.ok(m);
     }
 

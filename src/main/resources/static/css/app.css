@@ -5722,3 +5722,125 @@ body.resizing .term-host {
 .tab-menu-state.on {
     color: #8bd49c;
 }
+
+/* 菜单中的危险操作（关闭 DeepShell 等） */
+.tab-menu-item.danger {
+    color: #e08787;
+}
+
+.tab-menu-item.danger i {
+    color: #e08787;
+}
+
+.tab-menu-item.danger:hover {
+    background: rgba(224, 108, 117, .16);
+    color: #ffb3b3;
+}
+
+.tab-menu-item.danger:hover i {
+    color: #ffb3b3;
+}
+
+/* DeepShell 后端关闭 / 重启遮罩：覆盖工作台与 AI 桌面 */
+.app-service-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 8000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(8, 12, 20, .82);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: app-service-fade .18s ease-out;
+}
+
+.app-service-box {
+    width: min(460px, calc(100vw - 48px));
+    padding: 34px 36px 30px;
+    border: 1px solid rgba(110, 150, 210, .28);
+    border-radius: 14px;
+    background: linear-gradient(160deg, #1b2434 0%, #141b28 100%);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+    text-align: center;
+    color: #dce6f5;
+}
+
+.app-service-icon {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(76, 141, 255, .14);
+    color: #6ea8ff;
+    font-size: 27px;
+}
+
+.app-service-box.mode-shutdown .app-service-icon {
+    background: rgba(224, 108, 117, .14);
+    color: #ff9a9a;
+}
+
+.app-service-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #f1f6ff;
+}
+
+.app-service-sub {
+    margin-top: 10px;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: #93a3bb;
+}
+
+.app-service-bar {
+    position: relative;
+    height: 3px;
+    margin: 22px auto 4px;
+    width: 72%;
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(110, 150, 210, .18);
+}
+
+.app-service-bar span {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 38%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, transparent, #5f9bff, transparent);
+    animation: app-service-slide 1.25s ease-in-out infinite;
+}
+
+.app-service-btn {
+    margin-top: 22px;
+    height: 34px;
+    padding: 0 20px;
+    border: 1px solid rgba(110, 150, 210, .4);
+    border-radius: 7px;
+    background: rgba(76, 141, 255, .16);
+    color: #bcd3f7;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+
+.app-service-btn:hover {
+    background: rgba(76, 141, 255, .28);
+    color: #ffffff;
+}
+
+@keyframes app-service-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes app-service-slide {
+    0% { left: -40%; }
+    100% { left: 105%; }
+}

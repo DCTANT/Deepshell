@@ -1797,10 +1797,17 @@
                     </button>
                     <div class="dsk-power-menu" v-if="desktop.powerOpen">
                         <button class="dsk-power-item danger" @click="desktopPowerShutdown">
-                            <i class="el-icon-switch-button"></i>关机
+                            <i class="el-icon-switch-button"></i>服务器关机
                         </button>
                         <button class="dsk-power-item danger" @click="desktopPowerReboot">
-                            <i class="el-icon-refresh-right"></i>重启
+                            <i class="el-icon-refresh-right"></i>服务器重启
+                        </button>
+                        <div class="dsk-power-sep"></div>
+                        <button class="dsk-power-item" @click="askAppLifecycle('restart')">
+                            <i class="el-icon-refresh-right"></i>重启 DeepShell
+                        </button>
+                        <button class="dsk-power-item danger" @click="askAppLifecycle('shutdown')">
+                            <i class="el-icon-switch-button"></i>关闭 DeepShell
                         </button>
                         <div class="dsk-power-sep"></div>
                         <button class="dsk-power-item" @click="desktopPowerDisconnect">
