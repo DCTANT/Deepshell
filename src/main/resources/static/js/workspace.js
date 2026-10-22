@@ -683,6 +683,12 @@ var AI_CHAT_MAX = 160;              // 每个对话保留的消息数上限（�
 var AI_MAX_STEPS_DEFAULT = 30;      // 单轮默认最大步数（可在 AI 设置中调整，1-100）
 var AI_MAX_STEPS_LIMIT = 100;
 var AI_HISTORY_MAX = 50;            // 输入框 ↑↓ 历史条数
+var AI_CONTEXT_WINDOW_DEFAULT = 128000; // 上下文窗口默认值（AI 设置中按模型调整）
+var AI_CONTEXT_WINDOW_MIN = 4096;
+var AI_CONTEXT_WINDOW_MAX = 2000000;
+var AI_CONTEXT_RETAIN_RATIO = 0.16; // 压缩时保留最近约 16% 的上下文窗口（与 DSH 默认一致）
+var AI_CONTEXT_THRESHOLD_RATIO = 0.80; // 超过窗口 80% 提示压缩
+var AI_SYSTEM_PROMPT_TOKENS = 1200; // 系统提示词与工具说明的粗略固定开销
 
 /* 读取浏览器里旧存的对话（新格式 deepshell.aiConv / 更早的单对话格式），返回待上传数组或 [] */
 function readStoredAiConvs(connId) {
@@ -1217,6 +1223,43 @@ function clipAiSteps(n) {
     return Math.max(1, Math.min(AI_MAX_STEPS_LIMIT, v));
 }
 
+function clipAiContextWindow(n) {
+    var v = parseInt(n, 10);
+    if (isNaN(v)) {
+        return AI_CONTEXT_WINDOW_DEFAULT;
+    }
+    return Math.max(AI_CONTEXT_WINDOW_MIN, Math.min(AI_CONTEXT_WINDOW_MAX, v));
+}
+
+function formatTokenCount(n) {
+    var v = Math.max(0, Math.round(Number(n) || 0));
+    if (v < 1000) {
+        return String(v);
+    }
+    var scaled = function (x) {
+        return x >= 100 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
+    };
+    return v < 1000000 ? scaled(v / 1000) + 'K' : scaled(v / 1000000) + 'M';
+}
+
+/* 上下文 token 粗估：中文 / 日文 / 韩文约 1.6 字符/token，代码与英文约 4 字符/token */
+function estimateTextTokens(text) {
+    var s = String(text == null ? '' : text);
+    var cjk = 0;
+    var other = 0;
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if ((c >= 0x2E80 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7AF)
+                || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF00 && c <= 0xFFEF)
+                || (c >= 0x3040 && c <= 0x30FF)) {
+            cjk++;
+        } else {
+            other++;
+        }
+    }
+    return Math.ceil(cjk / 1.6 + other / 4);
+}
+
 /* 自动重连延迟（毫秒），超过次数后停止并提示手动重连 */
 var RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 20000, 30000, 30000, 30000];
 var UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -1375,6 +1418,11 @@ Vue.component('ai-chat-panel', {
                 return [];
             }
             return t.chatConvs.slice().sort(function (a, b) {
+                var pa = a.pinned ? 1 : 0;
+                var pb = b.pinned ? 1 : 0;
+                if (pa !== pb) {
+                    return pb - pa;
+                }
                 return (b.updatedAt || 0) - (a.updatedAt || 0);
             });
         },
@@ -1401,23 +1449,59 @@ Vue.component('ai-chat-panel', {
             }
             return '第 ' + Math.min(run.step || 0, this.stepLimit) + '/' + this.stepLimit + ' 步';
         },
-        contextChars: function () {
-            var n = 0;
-            var conv = this.activeConv;
-            ((conv && conv.msgs) || []).forEach(function (m) {
-                n += (m.text || '').length + (m.cmd || '').length + (m.output || '').length
-                    + (m.note || '').length + (m.reasoning || '').length;
-            });
-            var run = this.activeRun;
-            if (run) {
-                n += (run.streamText || '').length + (run.reasonText || '').length;
-            }
-            return n;
+        contextWindow: function () {
+            return this.$root.aiContextWindow || AI_CONTEXT_WINDOW_DEFAULT;
         },
-        contextTokensText: function () {
-            // 中英文混合按约 2.5 字符/token 粗估，仅用于提示上下文规模
-            var t = Math.ceil(this.contextChars / 2.5);
-            return t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(t);
+        lastUsage: function () {
+            return this.$root.aiLastUsage(this.activeConv);
+        },
+        contextEstimateTokens: function () {
+            return this.$root.aiEstimateContextTokens(this.activeConv);
+        },
+        contextTokens: function () {
+            var exact = this.lastUsage && this.lastUsage.promptTokens != null
+                ? Number(this.lastUsage.promptTokens) : 0;
+            return Math.max(this.contextEstimateTokens, exact);
+        },
+        contextPercent: function () {
+            var w = this.contextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+            return Math.max(0, Math.min(100, Math.round(this.contextTokens * 100 / w)));
+        },
+        contextLevel: function () {
+            if (this.contextPercent >= 90) {
+                return 'danger';
+            }
+            return this.contextPercent >= AI_CONTEXT_THRESHOLD_RATIO * 100 ? 'warn' : '';
+        },
+        contextUsageText: function () {
+            return formatTokenCount(this.contextTokens);
+        },
+        contextWindowText: function () {
+            return formatTokenCount(this.contextWindow);
+        },
+        cacheHitText: function () {
+            var u = this.lastUsage;
+            if (!u || !u.promptTokens || u.cachedTokens == null) {
+                return '—';
+            }
+            var pct = Number(u.cachedTokens) * 100 / Number(u.promptTokens);
+            return (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + '%';
+        },
+        compacting: function () {
+            return !!(this.activeConv && this.activeConv._compacting);
+        },
+        hasCompact: function () {
+            var msgs = (this.activeConv && this.activeConv.msgs) || [];
+            for (var i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i] && msgs[i].role === 'compact') {
+                    return true;
+                }
+            }
+            return false;
+        },
+        contextTitle: function () {
+            return '上下文估算 ' + this.contextUsageText + ' / ' + this.contextWindowText
+                + '（' + this.contextPercent + '%），点击查看用量与压缩';
         },
         queuedText: function () {
             var c = this.activeConv;
@@ -1565,6 +1649,21 @@ Vue.component('ai-chat-panel', {
         },
         delConv: function (c) {
             this.$root.aiConvDelete(c);
+        },
+        togglePin: function (c) {
+            this.$root.aiConvPin(c || this.activeConv);
+        },
+        fork: function (msgIndex) {
+            this.$root.aiConvFork(this.activeConv, msgIndex);
+        },
+        compact: function () {
+            this.$root.aiCompactContext(this.tab, this.activeConv);
+        },
+        fmtTokens: function (n) {
+            return formatTokenCount(n);
+        },
+        usageTitle: function (u) {
+            return this.$root.aiUsageTitle(u);
         },
         send: function () {
             this.$root.aiChatSend();
@@ -4176,6 +4275,7 @@ new Vue({
             ['LOGIN_FAILURE', '登录失败'],
             ['LOGOUT', '退出登录'],
             ['AI_COMMAND', 'AI 命令'],
+            ['AI_CONTEXT_COMPACT', 'AI 上下文压缩'],
             ['FILE_UPLOAD', '上传'],
             ['FILE_DOWNLOAD', '下载'],
             ['FILE_DELETE', '删除'],
@@ -4200,11 +4300,15 @@ new Vue({
         aiSetVisible: false,
         aiSetSaving: false,
         aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false,
-            maxSteps: AI_MAX_STEPS_DEFAULT },
+            maxSteps: AI_MAX_STEPS_DEFAULT, contextWindow: AI_CONTEXT_WINDOW_DEFAULT },
         aiMaxSteps: AI_MAX_STEPS_DEFAULT,
+        aiContextWindow: AI_CONTEXT_WINDOW_DEFAULT,
         aiSlashCommands: [
             { id: 'new', label: '/new', desc: '开始一个新对话' },
             { id: 'clear', label: '/clear', desc: '清空当前对话记录' },
+            { id: 'compact', label: '/compact', desc: '压缩较早上下文，保留最近消息' },
+            { id: 'pin', label: '/pin', desc: '置顶 / 取消置顶当前对话' },
+            { id: 'fork', label: '/fork', desc: '复制当前对话并开始分叉' },
             { id: 'auto', label: '/auto', desc: '切换为自动执行' },
             { id: 'manual', label: '/manual', desc: '切换为每步确认' },
             { id: 'desktop', label: '/desktop', desc: '打开 AI 可视化桌面' },
@@ -5514,6 +5618,11 @@ new Vue({
                 return [];
             }
             return t.chatConvs.slice().sort(function (a, b) {
+                var pa = a.pinned ? 1 : 0;
+                var pb = b.pinned ? 1 : 0;
+                if (pa !== pb) {
+                    return pb - pa;
+                }
                 return (b.updatedAt || 0) - (a.updatedAt || 0);
             });
         },
@@ -6148,6 +6257,7 @@ new Vue({
             return http.get('/api/ai/config').then(function (d) {
                 if (d) {
                     self.aiMaxSteps = clipAiSteps(d.maxSteps);
+                    self.aiContextWindow = clipAiContextWindow(d.contextWindow);
                 }
             }).catch(function () { /* 未配置或接口不可用时用默认值 */ });
         },
@@ -6164,6 +6274,8 @@ new Vue({
                 self.aiSetForm.hasKey = !!d.hasKey;
                 self.aiMaxSteps = clipAiSteps(d.maxSteps);
                 self.aiSetForm.maxSteps = self.aiMaxSteps;
+                self.aiContextWindow = clipAiContextWindow(d.contextWindow);
+                self.aiSetForm.contextWindow = self.aiContextWindow;
                 self.aiSetForm.apiKey = '';
                 var ready = self.aiProviders.length ? Promise.resolve() : self.loadAiProviders();
                 ready.then(function () {
@@ -6263,12 +6375,14 @@ new Vue({
             }
             this.aiSetSaving = true;
             var maxSteps = clipAiSteps(this.aiSetForm.maxSteps);
+            var contextWindow = clipAiContextWindow(this.aiSetForm.contextWindow);
             http.post('/api/ai/config', {
                 provider: this.aiSetForm.provider,
                 baseUrl: baseUrl,
                 model: model,
                 apiKey: this.aiSetForm.apiKey,
-                maxSteps: maxSteps
+                maxSteps: maxSteps,
+                contextWindow: contextWindow
             }).then(function (d) {
                 ELEMENT.Message.success('AI 设置已保存');
                 if (d) {
@@ -6278,6 +6392,11 @@ new Vue({
                     self.aiSetForm.hasKey = !!d.hasKey;
                     self.aiMaxSteps = clipAiSteps(d.maxSteps);
                     self.aiSetForm.maxSteps = self.aiMaxSteps;
+                    self.aiContextWindow = clipAiContextWindow(d.contextWindow);
+                    self.aiSetForm.contextWindow = self.aiContextWindow;
+                } else {
+                    self.aiContextWindow = contextWindow;
+                    self.aiSetForm.contextWindow = contextWindow;
                 }
                 self.aiSetForm.apiKey = '';
                 self.aiSetVisible = false;
@@ -6391,6 +6510,10 @@ new Vue({
                 return;
             }
             if (id === 'clear') {
+                if (conv._compacting) {
+                    ELEMENT.Message.warning('正在压缩上下文，请稍后再清空');
+                    return;
+                }
                 if (conv._run && conv._run.busy) {
                     ELEMENT.Message.warning('该对话正在执行中，请先停止再清空');
                     return;
@@ -6411,6 +6534,18 @@ new Vue({
                 t.chatMode = id;
                 this.onChatModeChange(id);
                 ELEMENT.Message.success(id === 'auto' ? '已切换为自动执行' : '已切换为每步确认');
+                return;
+            }
+            if (id === 'compact') {
+                this.aiCompactContext(t, conv);
+                return;
+            }
+            if (id === 'pin') {
+                this.aiConvPin(conv);
+                return;
+            }
+            if (id === 'fork') {
+                this.aiConvFork(conv, -1);
                 return;
             }
             if (id === 'desktop') {
@@ -6468,6 +6603,12 @@ new Vue({
             if (!conv.msgs) {
                 this.$set(conv, 'msgs', []);
             }
+            if (conv.pinned == null) {
+                this.$set(conv, 'pinned', false);
+            }
+            if (conv._compacting == null) {
+                this.$set(conv, '_compacting', false);
+            }
             if (!conv._hist) {
                 this.$set(conv, '_hist', []);
             }
@@ -6478,6 +6619,319 @@ new Vue({
                 this.$set(conv, '_queued', '');
             }
             return conv;
+        },
+        /* 最近一次真实模型用量：压缩后，旧消息带的用量不能再算作当前上下文 */
+        aiLastUsage: function (conv) {
+            var msgs = (conv && conv.msgs) || [];
+            var compactAt = 0;
+            for (var c = msgs.length - 1; c >= 0; c--) {
+                if (msgs[c] && msgs[c].role === 'compact') {
+                    compactAt = Number(msgs[c].at) || 0;
+                    break;
+                }
+            }
+            for (var i = msgs.length - 1; i >= 0; i--) {
+                var m = msgs[i];
+                if (!m || m.role === 'compact') {
+                    continue;
+                }
+                if (m.usage && (m.usage.promptTokens != null || m.usage.totalTokens != null)) {
+                    // 压缩前保留的最近消息仍带着旧 usage，必须用时间戳排除
+                    if (compactAt && !(Number(m.usageAt) >= compactAt)) {
+                        continue;
+                    }
+                    return m.usage;
+                }
+            }
+            return null;
+        },
+        aiUsageTitle: function (usage) {
+            if (!usage) {
+                return '';
+            }
+            var parts = [];
+            if (usage.promptTokens != null) {
+                parts.push('输入 ' + formatTokenCount(usage.promptTokens));
+            }
+            if (usage.completionTokens != null) {
+                parts.push('输出 ' + formatTokenCount(usage.completionTokens));
+            }
+            if (usage.cachedTokens != null && usage.promptTokens) {
+                var pct = Number(usage.cachedTokens) * 100 / Number(usage.promptTokens);
+                parts.push('缓存命中 ' + (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + '%');
+            }
+            if (usage.reasoningTokens) {
+                parts.push('思考 ' + formatTokenCount(usage.reasoningTokens));
+            }
+            if (usage.estimated) {
+                parts.push('字符估算');
+            }
+            return parts.join(' · ');
+        },
+        aiMsgChars: function (m) {
+            if (!m) {
+                return 0;
+            }
+            return (m.text || '').length + (m.cmd || '').length + (m.output || '').length
+                + (m.note || '').length + (m.reasoning || '').length + 24;
+        },
+        aiHistoryEntries: function (msgs) {
+            var self = this;
+            var out = [];
+            (msgs || []).forEach(function (m) {
+                if (!m) {
+                    return;
+                }
+                if (m.role === 'compact') {
+                    out.push({
+                        role: 'user',
+                        content: '[较早对话的自动压缩摘要]\n请将以下摘要视为已经发生并确认的背景，'
+                            + '不要复述，也不要向用户提及压缩本身，直接继续最近的消息。\n\n' + (m.text || '')
+                    });
+                } else if (m.role === 'user') {
+                    out.push({ role: 'user', content: m.text || '' });
+                } else if (m.role === 'ai' && m.cmd) {
+                    out.push({
+                        role: 'assistant',
+                        content: JSON.stringify({ cmd: m.cmd, note: m.note || '' })
+                    });
+                    if (m.state === 'done') {
+                        out.push({ role: 'user', content: self.aiToolResult(m) });
+                    } else if (m.state === 'skipped') {
+                        out.push({
+                            role: 'user',
+                            content: '（用户跳过了这条命令）请不要重复执行它，换一种方式或先向用户说明。'
+                        });
+                    }
+                } else if (m.role === 'ai' && m.text) {
+                    out.push({ role: 'assistant', content: m.text });
+                }
+            });
+            return out;
+        },
+        aiEstimateContextTokensForMsgs: function (msgs) {
+            var entries = this.aiHistoryEntries(msgs);
+            var tokens = AI_SYSTEM_PROMPT_TOKENS;
+            entries.forEach(function (e) {
+                tokens += estimateTextTokens(e.content) + 4;
+            });
+            return tokens;
+        },
+        aiEstimateContextTokens: function (conv) {
+            return this.aiEstimateContextTokensForMsgs((conv && conv.msgs) || []);
+        },
+        /* 选择较早消息用于压缩：保留最近约 35%（且不超过窗口 16%），优先在用户消息边界切分 */
+        aiBuildCompactPlan: function (conv) {
+            var msgs = (conv && conv.msgs) || [];
+            if (msgs.length < 4) {
+                return null;
+            }
+            var totalChars = 0;
+            var lastCompact = -1;
+            for (var i = 0; i < msgs.length; i++) {
+                totalChars += this.aiMsgChars(msgs[i]);
+                if (msgs[i].role === 'compact') {
+                    lastCompact = i;
+                }
+            }
+            if (totalChars < 3000) {
+                return null;
+            }
+            var windowSize = this.aiContextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+            var retainTokens = Math.max(2000, Math.min(24000, Math.round(windowSize * AI_CONTEXT_RETAIN_RATIO)));
+            // 手动压缩可以比自动压缩更积极：保留最近约 35%，同时不超过窗口 16%，最低保留 3000 字符
+            var retainChars = Math.max(3000, Math.min(totalChars * 0.35, retainTokens * 4));
+            var from = msgs.length;
+            var recentChars = 0;
+            var guard = 0;
+            for (var j = msgs.length - 1; j >= 0; j--) {
+                recentChars += this.aiMsgChars(msgs[j]);
+                from = j;
+                guard++;
+                if ((recentChars >= retainChars && guard >= 6) || guard >= 40) {
+                    break;
+                }
+            }
+            if (from <= 0) {
+                return null;
+            }
+            // 尽量让最近一段从用户消息开始，避免留下孤立的 AI 回复
+            while (from > 0 && msgs[from] && msgs[from].role !== 'user') {
+                from--;
+            }
+            if (from <= 0) {
+                return null;
+            }
+            // 旧压缩摘要必须一起进入新摘要，避免同时残留多张压缩卡
+            if (lastCompact >= 0 && from <= lastCompact) {
+                from = lastCompact + 1;
+                while (from < msgs.length - 1 && msgs[from] && msgs[from].role !== 'user') {
+                    from++;
+                }
+            }
+            if (from >= msgs.length) {
+                from = msgs.length - 1;
+            }
+            if (from <= 0 || from >= msgs.length) {
+                return null;
+            }
+            var compacted = msgs.slice(0, from);
+            if (compacted.length < 2) {
+                return null;
+            }
+            var compactedChars = 0;
+            compacted.forEach(function (m) {
+                compactedChars += (m.text || '').length + (m.cmd || '').length
+                    + (m.output || '').length + (m.note || '').length;
+            });
+            if (compactedChars < 800) {
+                return null;
+            }
+            var history = this.aiHistoryEntries(compacted);
+            if (history.length < 2) {
+                return null;
+            }
+            var recent = msgs.slice(from);
+            var beforeTokens = this.aiEstimateContextTokens(conv);
+            var afterTokens = this.aiEstimateContextTokensForMsgs(recent) + 1600;
+            return {
+                start: from,
+                compactCount: compacted.length,
+                keepCount: recent.length,
+                beforeTokens: beforeTokens,
+                afterTokens: Math.min(beforeTokens, afterTokens),
+                compactedChars: compactedChars,
+                history: history
+            };
+        },
+        /* 压缩较早上下文：调用模型生成结构化检查点，替换旧消息，保留最近消息 */
+        aiCompactContext: function (t, conv) {
+            if (!conv) {
+                return;
+            }
+            if (conv._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍候');
+                return;
+            }
+            var run = this.aiConvRun(conv);
+            if (run && run.busy) {
+                ELEMENT.Message.warning('AI 正在执行中，请先停止或等待完成');
+                return;
+            }
+            var plan = this.aiBuildCompactPlan(conv);
+            if (!plan) {
+                ELEMENT.Message.info('对话还不够长，没有可压缩的较早消息');
+                return;
+            }
+            var self = this;
+            var msg = '将较早的 ' + plan.compactCount + ' 条消息压缩成一份摘要，保留最近 '
+                + plan.keepCount + ' 条消息。\n\n估算上下文：≈' + formatTokenCount(plan.beforeTokens)
+                + ' → ≈' + formatTokenCount(plan.afterTokens) + ' tokens。\n\n'
+                + '压缩会调用一次模型生成摘要，可能产生少量费用；原对话的最近消息不受影响。';
+            this.$confirm(msg, '压缩上下文', {
+                type: 'warning',
+                confirmButtonText: '开始压缩',
+                cancelButtonText: '取消'
+            }).then(function () {
+                self.$set(conv, '_compacting', true);
+                return http.post('/api/ai/compact', {
+                    messages: plan.history,
+                    cwd: conv.cwd || ''
+                }, { silent: true });
+            }).then(function (res) {
+                if (!res || !res.summary) {
+                    throw new Error('模型未返回有效摘要');
+                }
+                var recent = conv.msgs.slice(plan.start);
+                var summaryTokens = estimateTextTokens(res.summary) + 4;
+                var afterTokens = self.aiEstimateContextTokensForMsgs(recent) + summaryTokens;
+                var compactMsg = {
+                    role: 'compact',
+                    text: res.summary,
+                    beforeMessages: plan.compactCount,
+                    keepMessages: recent.length,
+                    beforeTokens: plan.beforeTokens,
+                    afterTokens: afterTokens,
+                    at: Date.now(),
+                    open: false,
+                    usage: res.usage || null
+                };
+                conv.msgs = [compactMsg].concat(recent);
+                conv.updatedAt = Date.now();
+                self.$set(conv, '_compacting', false);
+                if (t && t.chatConvId === conv.id) {
+                    t.chatMsgs = conv.msgs;
+                    self.scrollAiChat(true);
+                }
+                self.saveConv(t, conv);
+                ELEMENT.Message.success('已压缩 ' + plan.compactCount + ' 条消息，估算上下文减少约 '
+                    + formatTokenCount(Math.max(0, plan.beforeTokens - afterTokens)) + ' tokens');
+            }).catch(function (e) {
+                self.$set(conv, '_compacting', false);
+                if (e && e.message && e.message !== 'cancel') {
+                    if (!(e.response && e.response.status === 401)) {
+                        ELEMENT.Message.error(e.message);
+                    }
+                }
+            });
+        },
+        aiConvPin: function (c) {
+            if (!c || c.id == null) {
+                return;
+            }
+            var self = this;
+            var next = !c.pinned;
+            http.put('/api/ai/convs/' + c.id, { pinned: next }).then(function (d) {
+                self.$set(c, 'pinned', d && d.pinned != null ? !!d.pinned : next);
+                ELEMENT.Message.success(next ? '对话已置顶' : '已取消置顶');
+            }).catch(function () { /* 拦截器已提示 */ });
+        },
+        aiConvFork: function (conv, msgIndex) {
+            if (!conv || conv.id == null) {
+                return;
+            }
+            if (conv._compacting || (conv._run && conv._run.busy)) {
+                ELEMENT.Message.warning('对话正在执行或压缩，请稍后再分叉');
+                return;
+            }
+            var msgs = conv.msgs || [];
+            if (!msgs.length) {
+                ELEMENT.Message.info('当前对话为空，无法分叉');
+                return;
+            }
+            var count = msgIndex == null || msgIndex < 0
+                ? msgs.length : Math.min(msgs.length, msgIndex + 1);
+            var self = this;
+            this.$confirm('将从「' + conv.title + '」复制前 ' + count + ' 条消息为一个新对话，原对话保持不变。',
+                '分叉对话', { type: 'info', confirmButtonText: '创建分叉', cancelButtonText: '取消' })
+                .then(function () {
+                    return http.post('/api/ai/convs/' + conv.id + '/fork', {
+                        msgIndex: msgIndex == null ? -1 : msgIndex
+                    });
+                })
+                .then(function (nc) {
+                    if (!nc) {
+                        return;
+                    }
+                    var t = self.activeTab;
+                    if (!t || !(t.chatConvs || []).some(function (x) { return x.id === conv.id; })) {
+                        t = self.tabs.find(function (tab) {
+                            return (tab.chatConvs || []).some(function (x) { return x.id === conv.id; });
+                        }) || t;
+                    }
+                    if (!t) {
+                        return;
+                    }
+                    self.aiEnsureConvState(nc);
+                    t.chatConvs.forEach(function (x) { x.active = false; });
+                    t.chatConvs.push(nc);
+                    t.chatConvId = nc.id;
+                    t.chatMsgs = nc.msgs || [];
+                    t.chatInput = '';
+                    self.scrollAiChat(true);
+                    ELEMENT.Message.success('已创建分叉对话「' + nc.title + '」');
+                })
+                .catch(function () { /* 取消或拦截器已提示 */ });
         },
         aiConvRun: function (conv) {
             return conv && conv._run ? conv._run : null;
@@ -6593,6 +7047,11 @@ new Vue({
             if (!t || t.chatLoading) {
                 return;
             }
+            var current = this.aiActiveConv(t);
+            if (current && current._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍候');
+                return;
+            }
             this.aiConvCreateRemote(t).catch(function () { /* 拦截器已提示 */ });
         },
         aiConvSwitch: function (c) {
@@ -6616,6 +7075,10 @@ new Vue({
         aiConvDelete: function (c) {
             var t = this.activeTab;
             if (!t || !c) {
+                return;
+            }
+            if (c._compacting) {
+                ELEMENT.Message.warning('该对话正在压缩上下文，请稍后再删除');
                 return;
             }
             if (c._run && c._run.busy) {
@@ -6668,6 +7131,10 @@ new Vue({
             this.aiEnsureConvState(conv);
             var run = conv._run;
             var text = (t.chatInput || '').trim();
+            if (conv._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍候再发送');
+                return;
+            }
             if (run.busy) {
                 // 忙碌时按 Enter 不打断当前任务，而是排队到本轮结束自动发送
                 if (!text) {
@@ -6796,7 +7263,8 @@ new Vue({
                 }
                 if (r.kind === 'reply') {
                     conv.msgs.push({ role: 'ai', text: r.text || '（无内容）',
-                        reasoning: reasoning, reasonOpen: false });
+                        reasoning: reasoning, reasonOpen: false, usage: r.usage || null,
+                        usageAt: r.usage ? Date.now() : null });
                     self.aiChatFinish(t, conv, '');
                     return;
                 }
@@ -6804,7 +7272,8 @@ new Vue({
                 var m = {
                     role: 'ai', cmd: r.command, note: r.note || '', danger: r.danger || '',
                     state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: '',
-                    reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0
+                    reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0,
+                    usage: r.usage || null, usageAt: r.usage ? Date.now() : null
                 };
                 if (r.needConfirm) {
                     m.state = 'confirm';
@@ -7182,29 +7651,7 @@ new Vue({
         },
         /* 把某个对话拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
         aiBuildHistory: function (conv) {
-            var self = this;
-            var out = [];
-            ((conv && conv.msgs) || []).forEach(function (m) {
-                if (m.role === 'user') {
-                    out.push({ role: 'user', content: m.text || '' });
-                } else if (m.role === 'ai' && m.cmd) {
-                    out.push({
-                        role: 'assistant',
-                        content: JSON.stringify({ cmd: m.cmd, note: m.note || '' })
-                    });
-                    if (m.state === 'done') {
-                        out.push({ role: 'user', content: self.aiToolResult(m) });
-                    } else if (m.state === 'skipped') {
-                        out.push({
-                            role: 'user',
-                            content: '（用户跳过了这条命令）请不要重复执行它，换一种方式或先向用户说明。'
-                        });
-                    }
-                } else if (m.role === 'ai' && m.text) {
-                    out.push({ role: 'assistant', content: m.text });
-                }
-            });
-            return out;
+            return this.aiHistoryEntries((conv && conv.msgs) || []);
         },
         aiToolResult: function (m) {
             var lines = ['[命令执行结果]', '$ ' + m.cmd, '退出码: ' + (m.rc == null ? '未知' : m.rc)];

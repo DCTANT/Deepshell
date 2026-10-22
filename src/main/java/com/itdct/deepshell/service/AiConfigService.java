@@ -19,6 +19,10 @@ public class AiConfigService {
     public static final int DEFAULT_MAX_STEPS = 30;
     public static final int MIN_MAX_STEPS = 1;
     public static final int MAX_MAX_STEPS = 100;
+    /** 上下文窗口（tokens）：用于上下文占用百分比、压缩保留量，按实际模型配置 */
+    public static final int DEFAULT_CONTEXT_WINDOW = 128_000;
+    public static final int MIN_CONTEXT_WINDOW = 4_096;
+    public static final int MAX_CONTEXT_WINDOW = 2_000_000;
 
     private final Path file = DataDir.root().resolve("ai.properties");
 
@@ -69,8 +73,23 @@ public class AiConfigService {
         }
     }
 
+    /** 上下文窗口大小：未配置时默认 128000，越界自动收敛 */
+    public int contextWindow() {
+        String v = load().getProperty("context-window", "").trim();
+        if (v.isEmpty()) {
+            return DEFAULT_CONTEXT_WINDOW;
+        }
+        try {
+            int n = Integer.parseInt(v);
+            return Math.max(MIN_CONTEXT_WINDOW, Math.min(MAX_CONTEXT_WINDOW, n));
+        } catch (NumberFormatException e) {
+            return DEFAULT_CONTEXT_WINDOW;
+        }
+    }
+
     /** apiKey 传 null / 空白表示保持原值 */
-    public synchronized void save(String provider, String baseUrl, String apiKey, String model, Integer maxSteps) {
+    public synchronized void save(String provider, String baseUrl, String apiKey, String model,
+                                  Integer maxSteps, Integer contextWindow) {
         Properties p = load();
         if (provider != null && !provider.trim().isEmpty()) {
             p.setProperty("provider", provider.trim());
@@ -87,6 +106,10 @@ public class AiConfigService {
         if (maxSteps != null) {
             int n = Math.max(MIN_MAX_STEPS, Math.min(MAX_MAX_STEPS, maxSteps));
             p.setProperty("max-steps", String.valueOf(n));
+        }
+        if (contextWindow != null) {
+            int n = Math.max(MIN_CONTEXT_WINDOW, Math.min(MAX_CONTEXT_WINDOW, contextWindow));
+            p.setProperty("context-window", String.valueOf(n));
         }
         try {
             Files.createDirectories(file.getParent());

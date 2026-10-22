@@ -334,6 +334,14 @@
                              :step="5" controls-position="right" style="width:140px"></el-input-number>
             <span class="set-hint" style="margin-left:10px;flex:1">一次任务最多连续执行的步数，默认 30（1-100）</span>
         </div>
+        <div class="set-row">
+            <span class="set-label">上下文窗口</span>
+            <el-input-number v-model="aiSetForm.contextWindow" size="small" :min="4096" :max="2000000"
+                             :step="1000" controls-position="right" style="width:160px"></el-input-number>
+            <span class="set-hint" style="margin-left:10px;flex:1">
+                按所用模型的上下文窗口填写（tokens），默认 128000；用于计算占用比例和压缩保留量
+            </span>
+        </div>
         <div class="set-hint" style="line-height:1.9;min-height:19px">
             <span v-if="aiModelsLoading">正在从厂商接口实时获取模型列表…</span>
             <span v-else-if="aiModelsNote">{{ aiModelsNote }}</span>
@@ -342,7 +350,8 @@
             · 模型列表由厂商接口实时获取（点「刷新列表」随时更新），列表中没有的模型可直接输入<br>
             · <template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">API Key 获取：{{ aiCurrentPreset.keyUrl }}<br></template>
             · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口<br>
-            · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度
+            · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度<br>
+            · 上下文窗口用于计算占用比例和压缩保留量，请按所用模型填写；压缩会调用一次模型生成结构化摘要
         </div>
         <div slot="footer">
             <el-button size="small" @click="aiSetVisible = false">取消</el-button>
@@ -910,7 +919,10 @@
                 <div class="help-title"><i class="el-icon-chat-dot-round"></i>AI 终端（右侧面板）</div>
                 <ul>
                     <li>用自然语言描述需求，AI 会以当前会话的<b>登录用户身份</b>在服务器上自动执行命令、读取输出并逐步推进，直到任务完成；命令与输出以卡片形式展示（含退出码、耗时，可复制命令 / 输出）</li>
-                    <li><b>输入</b>：Enter 发送、Shift+Enter 换行；<b>↑↓</b> 调出历史输入；输入 <b>/</b> 打开快捷命令（/new、/clear、/auto、/manual、/desktop、/stop、/help）；AI 执行中按 Enter 会把新要求<b>排队</b>，本轮结束后自动发送；中文输入法回车不会误触发送</li>
+                    <li><b>输入</b>：Enter 发送、Shift+Enter 换行；<b>↑↓</b> 调出历史输入；输入 <b>/</b> 打开快捷命令（/new、/clear、/compact、/pin、/fork、/auto、/manual、/desktop、/stop、/help）；AI 执行中按 Enter 会把新要求<b>排队</b>，本轮结束后自动发送；中文输入法回车不会误触发送</li>
+                    <li><b>上下文用量</b>：输入框下方显示当前上下文占用与窗口比例，点击可查看上次请求的真实 Prompt / 输出 / 前缀缓存命中；超过 80% 会提示压缩。厂商未返回 usage 时自动按字符估算</li>
+                    <li><b>压缩上下文</b>：点击上下文卡片中的「压缩上下文」或输入 <b>/compact</b>，把较早对话生成结构化摘要并替换旧消息，保留最近消息；压缩卡片可展开查看摘要，摘要会作为后续请求的背景</li>
+                    <li><b>置顶与分叉</b>：对话列表顶部按钮可置顶当前对话（置顶优先展示且不会被数量上限淘汰）；工具栏「分叉」会复制当前对话为新对话，AI 回复或命令结果下方的「分叉」可从该条消息处复制分支，原对话保持不变</li>
                     <li><b>输出</b>：回复支持 Markdown（列表 / 加粗 / 行内代码 / 代码块）；模型返回思考过程时显示可折叠的「思考过程」；长命令输出可展开全部或复制；请求失败可一键重试，达到单轮步数上限可一键继续</li>
                     <li><b>单轮步数</b>：默认 30 步，可在右上角菜单「AI 设置」中调整为 1-100；达到上限会暂停并给出「继续执行」按钮，不会无限执行消耗额度</li>
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>

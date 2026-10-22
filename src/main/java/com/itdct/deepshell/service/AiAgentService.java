@@ -75,14 +75,18 @@ public class AiAgentService {
         public String error;
         /** 命令执行耗时（毫秒），用于结果卡片展示 */
         public Long durationMs;
+        /** 本次模型调用的 token 用量；命令执行结果不包含 */
+        public AiChatClient.Usage usage;
     }
 
     /** 一轮对话：调用模型并解析；auto=false 时命令不自动执行，auto=true 时高危命令仍需确认 */
     public AgentResult step(String sessionId, String cwd, boolean auto, List<AgentMessage> history) {
         SshSessionManager.SshSession s = sessions.get(sessionId);
         List<Map<String, String>> messages = sanitize(history);
-        String content = chatClient.complete(systemPrompt(s, cwd), messages);
-        return handleContent(s, cwd, auto, content, new AiCancellationToken());
+        AiChatClient.ChatResult result = chatClient.completeDetailed(systemPrompt(s, cwd), messages);
+        AgentResult r = handleContent(s, cwd, auto, result.text, new AiCancellationToken());
+        r.usage = result.usage;
+        return r;
     }
 
     /**
@@ -117,7 +121,7 @@ public class AiAgentService {
         List<Map<String, String>> messages = sanitize(history);
         final StringBuilder acc = new StringBuilder();
         final String[] shown = {""};
-        String content = chatClient.stream(systemPrompt(s, cwd), messages, delta -> {
+        AiChatClient.ChatResult result = chatClient.streamDetailed(systemPrompt(s, cwd), messages, delta -> {
             if (token.isCancelled()) {
                 throw new AiCancellationToken.CancelledException();
             }
@@ -131,7 +135,9 @@ public class AiAgentService {
         if (token.isCancelled()) {
             throw new AiCancellationToken.CancelledException();
         }
-        return handleContent(s, cwd, auto, content, token);
+        AgentResult r = handleContent(s, cwd, auto, result.text, token);
+        r.usage = result.usage;
+        return r;
     }
 
     /** 把模型输出解析为回复或命令，并按自动模式策略执行 */

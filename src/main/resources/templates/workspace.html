@@ -669,9 +669,17 @@
                                 <i class="el-icon-loading"></i> {{ activeRun.phase }}
                             </span>
                             <span class="spacer"></span>
+                            <el-button size="mini" icon="el-icon-top"
+                                       :class="{ pinned: activeConv && activeConv.pinned }"
+                                       :title="activeConv && activeConv.pinned ? '取消置顶当前对话' : '置顶当前对话'"
+                                       :disabled="tab.chatLoading || !activeConv"
+                                       @click="togglePin(activeConv)"></el-button>
+                            <el-button size="mini" icon="el-icon-share" title="从当前对话分叉出一个新对话"
+                                       :disabled="tab.chatLoading || !activeConv || activeBusy || compacting"
+                                       @click="fork(-1)"></el-button>
                             <el-button size="mini" icon="el-icon-plus" title="开始一个新对话"
                                        :disabled="tab.chatLoading"
-                                       @click="newConv">新对话</el-button>
+                                       @click="newConv"></el-button>
                         </div>
                         <div class="aichat-body">
                             <div class="aichat-convs">
@@ -681,7 +689,9 @@
                                      :title="(c._run && c._run.busy ? (c._run.phase || '生成中') + ' · ' : '') + c.title"
                                      @click="switchConv(c)">
                                     <i v-if="c._run && c._run.busy" class="el-icon-loading aichat-conv-busy"></i>
-                                    <span class="aichat-conv-title">{{ c.title }}</span>
+                                    <span class="aichat-conv-title">
+                                        <i v-if="c.pinned" class="el-icon-top aichat-conv-pin" title="已置顶"></i>{{ c.title }}
+                                    </span>
                                     <span class="aichat-conv-time">{{ fmtTime(c.updatedAt) }}</span>
                                     <i class="el-icon-close aichat-conv-del" title="删除对话"
                                        @click.stop="delConv(c)"></i>
@@ -707,6 +717,25 @@
                                     </div>
                                     <div v-for="(m, i) in tab.chatMsgs" :key="i" class="aichat-msg"
                                          :class="m.role">
+                                        <div v-if="m.role === 'compact'" class="aichat-compact">
+                                            <div class="aichat-compact-head" @click="m.open = !m.open">
+                                                <i class="el-icon-s-fold aichat-compact-ico"></i>
+                                                <span class="aichat-compact-title">上下文已压缩</span>
+                                                <span class="aichat-compact-meta">
+                                                    合并 {{ m.beforeMessages }} 条 · {{ fmtTokens(m.beforeTokens) }} → {{ fmtTokens(m.afterTokens) }}
+                                                </span>
+                                                <span class="spacer"></span>
+                                                <i :class="m.open ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"></i>
+                                            </div>
+                                            <div class="aichat-compact-tip">
+                                                较早的对话已由摘要替代，最近 {{ m.keepMessages }} 条消息保持完整；摘要会作为后续请求的上下文。
+                                            </div>
+                                            <div v-if="m.open" class="aichat-compact-body aichat-md"
+                                                 v-html="renderMd(m.text)"></div>
+                                            <div v-if="m.usage" class="aichat-compact-usage">
+                                                摘要生成用量 ↑{{ fmtTokens(m.usage.promptTokens) }} ↓{{ fmtTokens(m.usage.completionTokens) }}
+                                            </div>
+                                        </div>
                                         <div v-if="m.role === 'ai' && m.reasoning" class="aichat-think">
                                             <div class="aichat-think-head" @click="toggleReason(m)">
                                                 <i :class="m.reasonOpen ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
@@ -718,10 +747,17 @@
                                         </div>
                                         <div v-if="m.text && m.role === 'ai'" class="aichat-bubble aichat-md"
                                              v-html="renderMd(m.text)"></div>
-                                        <div v-else-if="m.text" class="aichat-bubble">{{ m.role === 'note' ? noteText(m) : m.text }}</div>
+                                        <div v-else-if="m.text && m.role !== 'compact'" class="aichat-bubble">{{ m.role === 'note' ? noteText(m) : m.text }}</div>
                                         <div v-if="m.role === 'ai' && m.text" class="aichat-actions">
                                             <span @click="copy(m.text)" title="复制这条回复">
                                                 <i class="el-icon-document-copy"></i> 复制
+                                            </span>
+                                            <span v-if="!activeBusy && !compacting" @click="fork(i)"
+                                                  title="从这条回复之后分叉出一个新对话">
+                                                <i class="el-icon-share"></i> 分叉
+                                            </span>
+                                            <span v-if="m.usage" class="aichat-usage" :title="usageTitle(m.usage)">
+                                                ↑{{ fmtTokens(m.usage.promptTokens) }} ↓{{ fmtTokens(m.usage.completionTokens) }}
                                             </span>
                                         </div>
                                         <div v-if="m.role === 'note' && m.action" class="aichat-note-actions">
@@ -767,7 +803,14 @@
                                                 <span v-else-if="m.truncated" class="aicard-warn">输出过长，已截断</span>
                                                 <span v-else-if="!m.output" class="dim">（无输出）</span>
                                                 <span v-else class="dim">{{ m.outputLines }} 行输出</span>
+                                                <span v-if="m.usage" class="aicard-usage" :title="usageTitle(m.usage)">
+                                                    ↑{{ fmtTokens(m.usage.promptTokens) }} ↓{{ fmtTokens(m.usage.completionTokens) }}
+                                                </span>
                                                 <span class="spacer"></span>
+                                                <span v-if="!activeBusy && !compacting" class="aicard-act"
+                                                      title="从这条命令结果之后分叉出一个新对话" @click="fork(i)">
+                                                    <i class="el-icon-share"></i> 分叉
+                                                </span>
                                                 <span v-if="m.output" class="aicard-act" @click="copyOutput(m)">
                                                     <i class="el-icon-document-copy"></i> 复制输出
                                                 </span>
@@ -828,7 +871,72 @@
                                         <span class="aichat-foot-stat">
                                             <span v-if="activeBusy" class="aichat-foot-step">{{ stepText }}</span>
                                             <span v-else class="aichat-foot-step dim">单轮上限 {{ stepLimit }} 步</span>
-                                            <span class="aichat-foot-ctx" title="按对话字符数粗估，仅供参考">上下文 ≈ {{ contextTokensText }} tokens</span>
+                                            <el-popover placement="top-end" width="340" trigger="click"
+                                                        popper-class="aichat-ctx-pop">
+                                                <div class="aichat-ctx-panel">
+                                                    <div class="aichat-ctx-head">
+                                                        <span><i class="el-icon-data-analysis"></i> 上下文用量</span>
+                                                        <b :class="contextLevel">{{ contextPercent }}%</b>
+                                                    </div>
+                                                    <div class="aichat-ctx-bar">
+                                                        <i :class="contextLevel" :style="{ width: contextPercent + '%' }"></i>
+                                                    </div>
+                                                    <div class="aichat-ctx-row">
+                                                        <span>当前占用</span>
+                                                        <b>≈ {{ contextUsageText }} tokens</b>
+                                                    </div>
+                                                    <div class="aichat-ctx-row">
+                                                        <span>上下文窗口</span>
+                                                        <b>{{ contextWindowText }} tokens</b>
+                                                    </div>
+                                                    <div class="aichat-ctx-row" v-if="lastUsage && lastUsage.promptTokens != null">
+                                                        <span>上次请求 Prompt</span>
+                                                        <b>{{ fmtTokens(lastUsage.promptTokens) }} tokens</b>
+                                                    </div>
+                                                    <div class="aichat-ctx-row" v-if="lastUsage && lastUsage.cachedTokens != null">
+                                                        <span>前缀缓存命中</span>
+                                                        <b>{{ cacheHitText }}</b>
+                                                    </div>
+                                                    <div class="aichat-ctx-row" v-if="lastUsage && lastUsage.completionTokens != null">
+                                                        <span>上次输出</span>
+                                                        <b>{{ fmtTokens(lastUsage.completionTokens) }} tokens<template
+                                                            v-if="lastUsage.reasoningTokens">（思考 {{ fmtTokens(lastUsage.reasoningTokens) }}）</template></b>
+                                                    </div>
+                                                    <div class="aichat-ctx-row" v-if="lastUsage && lastUsage.estimated">
+                                                        <span>用量来源</span>
+                                                        <b class="dim">字符估算</b>
+                                                    </div>
+                                                    <div class="aichat-ctx-tip">
+                                                        <template v-if="lastUsage">
+                                                            占用取最近一次真实 Prompt 用量与当前对话估算的较大值；压缩后以估算为准。
+                                                        </template>
+                                                        <template v-else-if="hasCompact">
+                                                            压缩后尚未发起新的模型请求，当前按摘要和最近消息估算；下一次请求后会重新校准。
+                                                        </template>
+                                                        <template v-else>
+                                                            尚未发起模型请求，当前为字符估算；每次请求后会使用厂商返回的真实用量校准。
+                                                        </template>
+                                                    </div>
+                                                    <div class="aichat-ctx-alert" v-if="contextPercent >= 80">
+                                                        <i class="el-icon-warning-outline"></i>
+                                                        上下文已超过窗口的 80%，建议先压缩较早对话再继续。
+                                                    </div>
+                                                    <div class="aichat-ctx-actions">
+                                                        <el-button size="mini" type="primary" icon="el-icon-s-fold"
+                                                                   :loading="compacting"
+                                                                   :disabled="activeBusy || !activeConv"
+                                                                   @click="compact">压缩上下文</el-button>
+                                                        <span class="aichat-ctx-hint">保留最近消息，较早内容生成摘要</span>
+                                                    </div>
+                                                </div>
+                                                <span slot="reference" class="aichat-foot-ctx" :class="contextLevel"
+                                                      :title="contextTitle">
+                                                    <i class="el-icon-data-analysis"></i>
+                                                    <span class="aichat-ctx-meter"><i :class="contextLevel"
+                                                                                     :style="{ width: contextPercent + '%' }"></i></span>
+                                                    {{ contextUsageText }} / {{ contextWindowText }}
+                                                </span>
+                                            </el-popover>
                                         </span>
                                     </div>
                                 </div>

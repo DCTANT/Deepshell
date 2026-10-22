@@ -4249,7 +4249,288 @@ body.resizing .term-host {
 }
 
 .aichat-foot-ctx {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #7d8ea6;
+    font-family: Consolas, Menlo, monospace;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.aichat-foot-ctx:hover {
+    color: #b9d4f6;
+}
+
+.aichat-foot-ctx.warn {
+    color: #e6b45c;
+}
+
+.aichat-foot-ctx.danger {
+    color: #ef8b8b;
+}
+
+.aichat-ctx-meter {
+    width: 34px;
+    height: 4px;
+    border-radius: 2px;
+    background: #263246;
+    overflow: hidden;
+}
+
+.aichat-ctx-meter i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: #4c8dff;
+    transition: width .2s ease;
+}
+
+.aichat-ctx-meter i.warn {
+    background: #e6a23c;
+}
+
+.aichat-ctx-meter i.danger {
+    background: #e05b5b;
+}
+
+/* 上下文用量弹层（Element popover 挂载在 body 下） */
+.el-popover.aichat-ctx-pop {
+    padding: 0 !important;
+    background: #131b28 !important;
+    border-color: #2d3a4f !important;
+    color: #c7d6ee !important;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, .48) !important;
+}
+
+.aichat-ctx-pop .popper__arrow,
+.aichat-ctx-pop .popper__arrow::after {
+    border-top-color: #131b28 !important;
+}
+
+.aichat-ctx-panel {
+    padding: 12px 14px 13px;
+}
+
+.aichat-ctx-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 600;
+    color: #dbe7f8;
+}
+
+.aichat-ctx-head i {
+    color: #6ea8ff;
+    margin-right: 4px;
+}
+
+.aichat-ctx-head b {
+    font-family: Consolas, Menlo, monospace;
+    color: #9cc3ff;
+}
+
+.aichat-ctx-head b.warn {
+    color: #e6b45c;
+}
+
+.aichat-ctx-head b.danger {
+    color: #ef8b8b;
+}
+
+.aichat-ctx-bar {
+    height: 6px;
+    margin: 10px 0;
+    border-radius: 3px;
+    background: #202b3d;
+    overflow: hidden;
+}
+
+.aichat-ctx-bar i {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #3d7eff, #6ea8ff);
+    transition: width .2s ease;
+}
+
+.aichat-ctx-bar i.warn {
+    background: linear-gradient(90deg, #d78a16, #f0b95c);
+}
+
+.aichat-ctx-bar i.danger {
+    background: linear-gradient(90deg, #c94a4a, #ef8b8b);
+}
+
+.aichat-ctx-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 0;
+    font-size: 11.5px;
+    color: #7d8ea6;
+}
+
+.aichat-ctx-row b {
+    color: #dbe7f8;
+    font-weight: 500;
+    font-family: Consolas, Menlo, monospace;
+    text-align: right;
+}
+
+.aichat-ctx-row b.dim {
     color: #6b7890;
+}
+
+.aichat-ctx-tip {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #263246;
+    font-size: 10.5px;
+    line-height: 1.65;
+    color: #64748b;
+}
+
+.aichat-ctx-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 9px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    background: rgba(230, 162, 60, .1);
+    border: 1px solid rgba(230, 162, 60, .24);
+    color: #e6b45c;
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+.aichat-ctx-actions {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 11px;
+}
+
+.aichat-ctx-hint {
+    font-size: 10.5px;
+    color: #64748b;
+}
+
+.aichat-ctx-pop .el-button--primary {
+    background: #2b4a7d;
+    border-color: #3d6fb8;
+}
+
+.aichat-ctx-pop .el-button--primary:hover {
+    background: #35598f;
+    border-color: #4c8dff;
+}
+
+/* 对话置顶、分叉与每轮 token 用量 */
+.aichat-conv-pin {
+    color: #e6a23c;
+    font-size: 10px;
+    margin-right: 3px;
+    vertical-align: 1px;
+}
+
+.aichat .aichat-toolbar .el-button.pinned {
+    color: #f0b95c !important;
+    border-color: rgba(240, 185, 92, .45) !important;
+    background: rgba(240, 185, 92, .09) !important;
+}
+
+.aichat-usage {
+    margin-left: auto;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10.5px;
+    color: #5f6c82;
+    cursor: default !important;
+    white-space: nowrap;
+}
+
+.aichat-usage:hover {
+    color: #7d8ea6 !important;
+}
+
+.aicard-usage {
+    color: #5f6c82;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 10.5px;
+    white-space: nowrap;
+}
+
+/* 上下文压缩卡片 */
+.aichat-msg.compact {
+    align-items: stretch;
+}
+
+.aichat-compact {
+    border: 1px solid #2d3f5a;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #172233, #121a27);
+    overflow: hidden;
+}
+
+.aichat-compact-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    color: #b9cbe4;
+}
+
+.aichat-compact-ico {
+    color: #6ea8ff;
+}
+
+.aichat-compact-title {
+    flex: 0 0 auto;
+    font-size: 12.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.aichat-compact-meta {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: #6b7890;
+    font-size: 10.5px;
+    font-family: Consolas, Menlo, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.aichat-compact-tip {
+    padding: 0 10px 8px;
+    color: #697a92;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.aichat-compact-body {
+    margin: 0 10px 10px;
+    padding: 9px 10px;
+    max-height: 320px;
+    overflow: auto;
+    background: #0f151f;
+    border-radius: 6px;
+    color: #aebbcf;
+    font-size: 11.5px;
+    line-height: 1.65;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.aichat-compact-usage {
+    padding: 0 10px 9px;
+    color: #5f6c82;
+    font-size: 10.5px;
     font-family: Consolas, Menlo, monospace;
 }
 
