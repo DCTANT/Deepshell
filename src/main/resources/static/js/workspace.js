@@ -656,6 +656,21 @@ function loadDangerConfirmEnabled() {
     return true;
 }
 
+/* 终端显示：自动跟随最新输出默认关闭，日志级别高亮默认开启 */
+function loadTermAutoScroll() {
+    try {
+        return localStorage.getItem('deepshell.termAutoScroll') === '1';
+    } catch (e) { /* ignore */ }
+    return false;
+}
+
+function loadTermLogHighlight() {
+    try {
+        return localStorage.getItem('deepshell.termLogHighlight') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
 /* 本次启动（同一标签页会话）只有首个连接自动进桌面，之后新开连接一律保持终端标签 */
 function consumeFirstConnect() {
     try {
@@ -967,6 +982,89 @@ function protectedSystemTarget(token) {
         return true;
     }
     return /^\/(?:bin|sbin|etc|usr|var|boot|lib|lib64|opt|home|root|dev|sys|proc|run|srv|mnt|media)(?:\/\*?)?$/.test(s);
+}
+
+/* ---------- 终端日志级别高亮 ----------
+ * 只在普通缓冲区生效，按 VSCode 日志习惯给 INFO / WARN / ERROR 等级别着色。
+ * 高亮器会保留原始 ANSI 转义序列，并缓存跨数据块的不完整转义序列。
+ */
+var TERM_LOG_LEVEL_COLORS = {
+    INFO: '92',
+    WARN: '93',
+    WARNING: '93',
+    ERROR: '91',
+    DEBUG: '96',
+    TRACE: '90',
+    FATAL: '95',
+    CRITICAL: '95',
+    NOTICE: '94'
+};
+var TERM_LOG_LEVEL_WORDS = ['INFO', 'WARN', 'WARNING', 'ERROR', 'DEBUG', 'TRACE', 'FATAL', 'CRITICAL', 'NOTICE'];
+var TERM_LOG_LEVEL_RE = /\b(INFO|WARN(?:ING)?|ERROR|DEBUG|TRACE|FATAL|CRITICAL|NOTICE)\b/gi;
+var TERM_ANSI_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])/g;
+
+function terminalLogColorizeText(text) {
+    return String(text || '').replace(TERM_LOG_LEVEL_RE, function (level) {
+        var color = TERM_LOG_LEVEL_COLORS[level.toUpperCase()];
+        return color ? ('\x1b[' + color + 'm' + level + '\x1b[39m') : level;
+    });
+}
+
+function terminalLogAnsiCut(text) {
+    var idx = text.lastIndexOf('\x1b');
+    if (idx < 0) {
+        return text.length;
+    }
+    var tail = text.slice(idx);
+    if (/^\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b]*)?$/.test(tail)) {
+        return idx;
+    }
+    if (/^\x1b\[[0-?]*[ -/]*[@-~]/.test(tail)
+            || /^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/.test(tail)
+            || /^\x1b[@-_]/.test(tail)) {
+        return text.length;
+    }
+    return text.length;
+}
+
+function terminalLogLevelPrefix(word) {
+    var w = String(word || '').toUpperCase();
+    if (w.length < 3 || !/^[A-Z]+$/.test(w)) {
+        return false;
+    }
+    for (var i = 0; i < TERM_LOG_LEVEL_WORDS.length; i++) {
+        var level = TERM_LOG_LEVEL_WORDS[i];
+        if (level !== w && level.indexOf(w) === 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* 把新输出追加到待处理缓冲，返回可立即写入的文本和需要继续等待的尾部 */
+function terminalLogHighlightChunk(pending, chunk) {
+    var buf = (pending || '') + (chunk || '');
+    if (!buf) {
+        return { out: '', pending: '' };
+    }
+    var cut = terminalLogAnsiCut(buf);
+    var head = buf.slice(0, cut);
+    var word = head.match(/([A-Za-z]{3,})$/);
+    if (word && terminalLogLevelPrefix(word[1])) {
+        cut -= word[1].length;
+        head = buf.slice(0, cut);
+    }
+    var out = '';
+    var last = 0;
+    var match;
+    TERM_ANSI_RE.lastIndex = 0;
+    while ((match = TERM_ANSI_RE.exec(head)) !== null) {
+        out += terminalLogColorizeText(head.slice(last, match.index));
+        out += match[0];
+        last = match.index + match[0].length;
+    }
+    out += terminalLogColorizeText(head.slice(last));
+    return { out: out, pending: buf.slice(cut) };
 }
 
 
@@ -3789,7 +3887,7 @@ new Vue({
             { id: 'appearance', label: '外观与桌面', icon: 'el-icon-monitor' },
             { id: 'time', label: '时间与时钟', icon: 'el-icon-time' },
             { id: 'shortcuts', label: '快捷键', icon: 'el-icon-set-up' },
-            { id: 'safety', label: '终端安全', icon: 'el-icon-lock' },
+            { id: 'safety', label: '终端与安全', icon: 'el-icon-lock' },
             { id: 'power', label: '电源与休眠', icon: 'el-icon-switch-button' },
             { id: 'ai', label: 'AI 助手', icon: 'el-icon-magic-stick' },
             { id: 'network', label: '网络与连接', icon: 'el-icon-connection' },
@@ -4125,6 +4223,8 @@ new Vue({
         bgDraft: { url: '', opacity: 0.35, blur: 0 },
         openAfterConnect: loadOpenAfterConnect(),
         dangerConfirmEnabled: loadDangerConfirmEnabled(),
+        termAutoScrollEnabled: loadTermAutoScroll(),
+        termLogHighlightEnabled: loadTermLogHighlight(),
         chatExamples: ['看看哪个目录占用空间最大', '这台服务器上都装了什么服务，分别监听哪些端口',
             '最近的登录记录里有没有异常 IP'],
         fontCandidates: ['Consolas', 'JetBrains Mono', 'Courier New', 'monospace',
@@ -4160,6 +4260,16 @@ new Vue({
         },
         dangerConfirmEnabled: function (v) {
             try { localStorage.setItem('deepshell.dangerConfirm', v ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        termAutoScrollEnabled: function (v) {
+            try { localStorage.setItem('deepshell.termAutoScroll', v ? '1' : '0'); } catch (e) { /* ignore */ }
+            if (v) {
+                this.scrollAllTerminalsToBottom();
+            }
+        },
+        termLogHighlightEnabled: function (v) {
+            try { localStorage.setItem('deepshell.termLogHighlight', v ? '1' : '0'); } catch (e) { /* ignore */ }
+            this.resetAllTermLogStreams(!v);
         },
         topMenuVisible: function (v) {
             if (!v) {
@@ -5923,6 +6033,14 @@ new Vue({
                 this.openBgSettings('terminal');
             } else if (cmd === 'fitTerminal') {
                 this.fitActive();
+            } else if (cmd === 'toggleTermAutoScroll') {
+                this.termAutoScrollEnabled = !this.termAutoScrollEnabled;
+                ELEMENT.Message.success(this.termAutoScrollEnabled
+                    ? '已开启自动跟随最新输出' : '已关闭自动跟随最新输出');
+            } else if (cmd === 'toggleTermLogHighlight') {
+                this.termLogHighlightEnabled = !this.termLogHighlightEnabled;
+                ELEMENT.Message.success(this.termLogHighlightEnabled
+                    ? '已开启日志级别高亮' : '已关闭日志级别高亮');
             } else if (cmd === 'openAiPanel') {
                 if (!t) {
                     ELEMENT.Message.warning('当前没有打开的连接');
@@ -15684,6 +15802,75 @@ new Vue({
             this.applyBgDraft();
             ELEMENT.Message.success('已清除背景');
         },
+        allTerminalTabs: function () {
+            var out = (this.tabs || []).slice();
+            (this.desktop.windows || []).forEach(function (w) {
+                if (w.type === 'terminal' && w.termTab) {
+                    out.push(w.termTab);
+                }
+            });
+            return out;
+        },
+        scrollAllTerminalsToBottom: function () {
+            this.allTerminalTabs().forEach(function (t) {
+                if (t && t.term) {
+                    try { t.term.scrollToBottom(); } catch (e) { /* ignore */ }
+                }
+            });
+        },
+        resetTermLogStream: function (tab, flush) {
+            if (!tab) {
+                return;
+            }
+            if (flush && tab._termLogPending && tab.term) {
+                try { tab.term.write(tab._termLogPending); } catch (e) { /* ignore */ }
+            }
+            tab._termLogPending = '';
+            try {
+                tab._termLogDecoder = (typeof TextDecoder !== 'undefined')
+                    ? new TextDecoder('utf-8') : null;
+            } catch (e) {
+                tab._termLogDecoder = null;
+            }
+        },
+        resetAllTermLogStreams: function (flush) {
+            var self = this;
+            this.allTerminalTabs().forEach(function (t) {
+                self.resetTermLogStream(t, flush);
+            });
+        },
+        writeTermOutput: function (tab, term, data) {
+            if (!term || data == null) {
+                return;
+            }
+            var isBuffer = (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer);
+            var isBytes = isBuffer
+                || (typeof Uint8Array !== 'undefined' && data instanceof Uint8Array);
+            var bytes = isBytes ? (isBuffer ? new Uint8Array(data) : data) : null;
+            if (!this.termLogHighlightEnabled || !bytes || !tab || !tab._termLogDecoder) {
+                term.write(bytes || data);
+                return;
+            }
+            try {
+                var active = term.buffer && term.buffer.active;
+                if (active && active.type === 'alternate') {
+                    tab._termLogPending = '';
+                    term.write(bytes);
+                    return;
+                }
+                var text = tab._termLogDecoder.decode(bytes, { stream: true });
+                if (!text) {
+                    return;
+                }
+                var result = terminalLogHighlightChunk(tab._termLogPending, text);
+                tab._termLogPending = result.pending;
+                if (result.out) {
+                    term.write(result.out);
+                }
+            } catch (e) {
+                try { term.write(bytes); } catch (err) { /* ignore */ }
+            }
+        },
         initTerminal: function (tab, el) {
             var self = this;
             if (!el) {
@@ -15723,6 +15910,20 @@ new Vue({
             tab.fit = fit;
             tab._dangerInput = '';
             tab._dangerInputUnknown = false;
+            tab._termLogPending = '';
+            try {
+                tab._termLogDecoder = (typeof TextDecoder !== 'undefined')
+                    ? new TextDecoder('utf-8') : null;
+            } catch (e) {
+                tab._termLogDecoder = null;
+            }
+            if (typeof term.onWriteParsed === 'function') {
+                term.onWriteParsed(function () {
+                    if (self.termAutoScrollEnabled) {
+                        try { term.scrollToBottom(); } catch (e) { /* ignore */ }
+                    }
+                });
+            }
 
             term.onData(function (data) {
                 var sendData = function () {
@@ -15825,6 +16026,7 @@ new Vue({
                             if (msg.reattached) {
                                 // 服务端会紧接着发来最近输出快照，先清屏避免重复
                                 try { term.reset(); } catch (e) { /* ignore */ }
+                                self.resetTermLogStream(tab, false);
                                 dirReady = tab.sftpHome
                                     ? self.loadDir(tab.sftpPath || tab.sftpHome, tab)
                                     : self.loadHome(tab);
@@ -15861,7 +16063,7 @@ new Vue({
                         self.onTermCwd(tab, msg.path);
                     }
                 } else {
-                    term.write(new Uint8Array(ev.data));
+                    self.writeTermOutput(tab, term, ev.data);
                 }
             };
             ws.onclose = function () {

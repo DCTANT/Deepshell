@@ -2165,9 +2165,23 @@
                         <template v-else-if="desktop.settingsSection === 'safety'">
                             <div class="dsk-set-heading">
                                 <i class="el-icon-lock"></i>
-                                <div><b>终端安全</b><span>危险命令确认与终端执行保护</span></div>
+                                <div><b>终端与安全</b><span>终端显示、危险命令确认与执行保护</span></div>
                             </div>
                             <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>自动跟随最新输出</b>
+                                        <span>有新输出时滚动到底部，类似 tail -f；默认关闭</span>
+                                    </div>
+                                    <el-switch v-model="termAutoScrollEnabled" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>日志级别高亮</b>
+                                        <span>按 VSCode 日志习惯给 INFO / WARN / ERROR / DEBUG 等标签着色</span>
+                                    </div>
+                                    <el-switch v-model="termLogHighlightEnabled" size="mini"></el-switch>
+                                </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
                                         <b>危险命令确认</b>
@@ -2181,12 +2195,12 @@
                                         <span>终端直接输入、底部命令栏、快捷命令与 AI 桌面终端</span>
                                     </div>
                                     <span class="dsk-set-value" :class="dangerConfirmEnabled ? 'ok' : 'warn'">
-                                        {{ dangerConfirmEnabled ? '已开启' : '已关闭' }}
+                                        {{ dangerConfirmEnabled ? '确认已开启' : '确认已关闭' }}
                                     </span>
                                 </div>
                             </div>
                             <div class="dsk-set-note">
-                                关闭后危险命令会直接发送执行，请仅在明确知道风险时关闭。该设置按浏览器保存。
+                                终端显示设置对所有终端窗口生效，并随危险命令确认设置一起保存在当前浏览器。
                             </div>
                         </template>
 

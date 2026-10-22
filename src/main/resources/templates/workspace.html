@@ -454,6 +454,20 @@
                 <div class="tab-menu-item" @click="onMenuCommand('fitTerminal')">
                     <i class="el-icon-full-screen"></i>终端自适应
                 </div>
+                <div class="tab-menu-item" @click="onMenuCommand('toggleTermAutoScroll')">
+                    <i class="el-icon-bottom"></i>
+                    <span class="tab-menu-grow">自动跟随最新输出</span>
+                    <span class="tab-menu-state" :class="{ on: termAutoScrollEnabled }">
+                        {{ termAutoScrollEnabled ? '已开启' : '已关闭' }}
+                    </span>
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('toggleTermLogHighlight')">
+                    <i class="el-icon-magic-stick"></i>
+                    <span class="tab-menu-grow">日志级别高亮</span>
+                    <span class="tab-menu-state" :class="{ on: termLogHighlightEnabled }">
+                        {{ termLogHighlightEnabled ? '已开启' : '已关闭' }}
+                    </span>
+                </div>
                 <div class="tab-menu-item" @click="onMenuCommand('openFilePanel')">
                     <i class="el-icon-folder"></i>显示文件 SFTP 面板
                 </div>
@@ -942,6 +956,15 @@
                         <span>忽略空白行</span>
                         <el-switch v-model="$root.cmdOpts.ignoreBlank" size="mini"></el-switch>
                     </div>
+                    <div class="cmd-opt-row">
+                        <span>自动跟随最新输出</span>
+                        <el-switch v-model="$root.termAutoScrollEnabled" size="mini"></el-switch>
+                    </div>
+                    <div class="cmd-opt-row">
+                        <span>日志级别高亮</span>
+                        <el-switch v-model="$root.termLogHighlightEnabled" size="mini"></el-switch>
+                    </div>
+                    <div class="cmd-hint">终端显示设置，对所有终端窗口生效</div>
                 </div>
                 <i slot="reference" class="el-icon-setting cmd-tool" title="选项"></i>
             </el-popover>
