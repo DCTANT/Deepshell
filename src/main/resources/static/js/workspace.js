@@ -656,14 +656,6 @@ function loadDangerConfirmEnabled() {
     return true;
 }
 
-/* 终端显示：自动跟随最新输出默认关闭，日志级别高亮默认开启 */
-function loadTermAutoScroll() {
-    try {
-        return localStorage.getItem('deepshell.termAutoScroll') === '1';
-    } catch (e) { /* ignore */ }
-    return false;
-}
-
 function loadTermLogHighlight() {
     try {
         return localStorage.getItem('deepshell.termLogHighlight') !== '0';
@@ -807,6 +799,7 @@ function createTerminalState(connId, conn, clientKey) {
         procAuto: true,
         cmdText: '',
         cmdVisible: true,
+        termAutoScrollEnabled: false,
         cmdHistory: loadHistory(connId),
         desktopBg: loadDesktopBgSettings(connId),
         sendTargets: [],
@@ -4223,7 +4216,6 @@ new Vue({
         bgDraft: { url: '', opacity: 0.35, blur: 0 },
         openAfterConnect: loadOpenAfterConnect(),
         dangerConfirmEnabled: loadDangerConfirmEnabled(),
-        termAutoScrollEnabled: loadTermAutoScroll(),
         termLogHighlightEnabled: loadTermLogHighlight(),
         chatExamples: ['看看哪个目录占用空间最大', '这台服务器上都装了什么服务，分别监听哪些端口',
             '最近的登录记录里有没有异常 IP'],
@@ -4260,12 +4252,6 @@ new Vue({
         },
         dangerConfirmEnabled: function (v) {
             try { localStorage.setItem('deepshell.dangerConfirm', v ? '1' : '0'); } catch (e) { /* ignore */ }
-        },
-        termAutoScrollEnabled: function (v) {
-            try { localStorage.setItem('deepshell.termAutoScroll', v ? '1' : '0'); } catch (e) { /* ignore */ }
-            if (v) {
-                this.scrollAllTerminalsToBottom();
-            }
         },
         termLogHighlightEnabled: function (v) {
             try { localStorage.setItem('deepshell.termLogHighlight', v ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -15807,12 +15793,14 @@ new Vue({
             });
             return out;
         },
-        scrollAllTerminalsToBottom: function () {
-            this.allTerminalTabs().forEach(function (t) {
-                if (t && t.term) {
-                    try { t.term.scrollToBottom(); } catch (e) { /* ignore */ }
-                }
-            });
+        toggleTermAutoScroll: function (tab) {
+            if (!tab) {
+                return;
+            }
+            tab.termAutoScrollEnabled = !tab.termAutoScrollEnabled;
+            if (tab.termAutoScrollEnabled && tab.term) {
+                try { tab.term.scrollToBottom(); } catch (e) { /* ignore */ }
+            }
         },
         resetTermLogStream: function (tab, flush) {
             if (!tab) {
@@ -15915,7 +15903,7 @@ new Vue({
             }
             if (typeof term.onWriteParsed === 'function') {
                 term.onWriteParsed(function () {
-                    if (self.termAutoScrollEnabled) {
+                    if (tab.termAutoScrollEnabled) {
                         try { term.scrollToBottom(); } catch (e) { /* ignore */ }
                     }
                 });

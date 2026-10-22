@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <title>DeepShell · 工作台</title>
+    <link rel="icon" type="image/x-icon" th:href="@{/favicon.ico}">
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}">
+    <link rel="icon" type="image/png" sizes="32x32" th:href="@{/favicon-32.png}">
+    <link rel="apple-touch-icon" sizes="180x180" th:href="@{/apple-touch-icon.png}">
     <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
     <link rel="stylesheet" th:href="@{/vendor/xterm/xterm.css}">
     <link rel="stylesheet" th:href="@{/vendor/codemirror/codemirror.min.css}">
@@ -892,9 +896,9 @@
         <span class="cmd-tools">
             <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
                :class="{ 'cmd-tool-active': tab.aiVisible }" @click="toggleAi"></i>
-            <i class="el-icon-bottom cmd-tool" :title="'自动跟随最新输出（tail -f）：' + ($root.termAutoScrollEnabled ? '已开启，点击关闭' : '已关闭，点击开启')"
-               :class="{ 'cmd-tool-active': $root.termAutoScrollEnabled }"
-               @click="$root.termAutoScrollEnabled = !$root.termAutoScrollEnabled"></i>
+            <i class="el-icon-bottom cmd-tool" :title="'自动跟随最新输出（当前终端，tail -f）：' + (tab.termAutoScrollEnabled ? '已开启，点击关闭' : '已关闭，点击开启')"
+               :class="{ 'cmd-tool-active': tab.termAutoScrollEnabled }"
+               @click="$root.toggleTermAutoScroll(tab)"></i>
             <el-popover v-if="context === 'window'" placement="top-end" width="320" trigger="click"
                         v-model="snippetsVisible" popper-class="cmd-pop">
                 <div class="cmd-hist">
