@@ -1,7 +1,6 @@
 (function () {
     'use strict';
 
-    var API_BASE = '/api/desktop/redis';
     var TYPE_LIST = ['all', 'string', 'hash', 'list', 'set', 'zset', 'stream'];
     var TYPE_LABELS = {
         all: '全部', string: 'String', hash: 'Hash', list: 'List',
@@ -202,7 +201,7 @@
 
     /* ---------------- host bridge ---------------- */
 
-    function api(method, path, body) {
+    function api(action, payload) {
         return new Promise(function (resolve, reject) {
             if (window.parent === window) {
                 reject(new Error('请从 DeepShell AI 可视化桌面打开此应用'));
@@ -217,11 +216,10 @@
             try {
                 window.parent.postMessage({
                     source: 'deepshell-plugin',
-                    type: 'redis.api',
+                    type: 'plugin.invoke',
                     requestId: id,
-                    method: method,
-                    path: path,
-                    body: body || null
+                    action: action,
+                    payload: payload || null
                 }, '*');
             } catch (e) {
                 clearTimeout(timer);
@@ -233,7 +231,7 @@
 
     window.addEventListener('message', function (ev) {
         var msg = ev.data;
-        if (!msg || msg.source !== 'deepshell-host' || msg.type !== 'redis.api.result') {
+        if (!msg || msg.source !== 'deepshell-host' || msg.type !== 'plugin.invoke.result') {
             return;
         }
         var item = pending[msg.requestId];
@@ -245,7 +243,7 @@
         if (msg.ok) {
             item.resolve(msg.data);
         } else {
-            item.reject(new Error(msg.error || '请求失败'));
+            item.reject(new Error(msg.error || '插件请求失败'));
         }
     });
 
@@ -415,7 +413,7 @@
         dom.btnConnect.textContent = '连接中…';
         dom.connectError.classList.add('hidden');
         try {
-            var data = await api('POST', API_BASE + '/connect', {
+            var data = await api('connect', {
                 host: host,
                 port: port,
                 username: dom.fUser.value.trim(),
@@ -486,7 +484,7 @@
         }
         var id = state.conn.connectionId;
         try {
-            await api('POST', API_BASE + '/disconnect', { connectionId: id });
+            await api('disconnect', { connectionId: id });
         } catch (e) {
             // 即使后端已断开，也把本地界面恢复为空闲状态
         }
@@ -499,7 +497,7 @@
             return;
         }
         try {
-            var data = await api('POST', API_BASE + '/select', {
+            var data = await api('select', {
                 connectionId: state.conn.connectionId,
                 db: db
             });
@@ -715,7 +713,7 @@
         dom.btnSearch.disabled = true;
         updateCounts();
         try {
-            var data = await api('POST', API_BASE + '/scan', {
+            var data = await api('scan', {
                 connectionId: state.conn.connectionId,
                 cursor: reset ? '0' : state.cursor,
                 match: state.pattern || '*',
@@ -784,7 +782,7 @@
             state.currentTab = 'value';
         }
         try {
-            var data = await api('POST', API_BASE + '/key', {
+            var data = await api('key', {
                 connectionId: state.conn.connectionId,
                 key: key,
                 limit: 500
@@ -972,7 +970,7 @@
         button.disabled = true;
         button.textContent = '保存中…';
         try {
-            await api('POST', API_BASE + '/key/string', {
+            await api('string/save', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 value: text
@@ -1051,7 +1049,7 @@
             return;
         }
         try {
-            await api('POST', API_BASE + '/key/hash', {
+            await api('hash', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 op: op,
@@ -1125,7 +1123,7 @@
             return;
         }
         try {
-            await api('POST', API_BASE + '/key/list', {
+            await api('list', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 op: op,
@@ -1181,7 +1179,7 @@
             return;
         }
         try {
-            await api('POST', API_BASE + '/key/set', {
+            await api('set', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 op: op,
@@ -1262,7 +1260,7 @@
             return;
         }
         try {
-            await api('POST', API_BASE + '/key/zset', {
+            await api('zset', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 op: op,
@@ -1310,7 +1308,7 @@
             return;
         }
         try {
-            var data = await api('POST', API_BASE + '/key/ttl', {
+            var data = await api('ttl', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 ttl: ttl
@@ -1359,7 +1357,7 @@
             return;
         }
         try {
-            await api('POST', API_BASE + '/key/rename', {
+            await api('rename', {
                 connectionId: state.conn.connectionId,
                 key: state.current.key,
                 newKey: newKey
@@ -1385,7 +1383,7 @@
             return;
         }
         try {
-            await api('POST', API_BASE + '/key/delete', {
+            await api('delete', {
                 connectionId: state.conn.connectionId,
                 key: key
             });
@@ -1462,7 +1460,7 @@
         }
         state.consoleIndex = state.consoleHistory.length;
         try {
-            var data = await api('POST', API_BASE + '/command', {
+            var data = await api('command', {
                 connectionId: state.conn.connectionId,
                 command: command
             });
@@ -1579,7 +1577,7 @@
             return;
         }
         try {
-            var data = await api('POST', API_BASE + '/info', {
+            var data = await api('info', {
                 connectionId: state.conn.connectionId
             });
             state.info = data.info || {};

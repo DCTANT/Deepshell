@@ -3,6 +3,7 @@ package com.itdct.deepshell.service;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.plugin.PluginSignatureService;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -22,18 +23,23 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
  * AI 桌面应用插件：导入 ZIP、校验 plugin.json、解压到数据目录并提供静态资源。
  *
- * <p>插件是纯静态网页应用（HTML / JS / CSS / 图片等），运行在桌面窗口的沙箱 iframe 中。
- * ZIP 根目录（或唯一的顶层文件夹）需要包含 plugin.json，示例：</p>
+ * <p>插件前端是静态网页应用（HTML / JS / CSS / 图片等），运行在桌面窗口的沙箱 iframe 中。
+ * 插件也可以声明 backend JAR，由 {@code PluginRuntimeService} 在启动时隔离加载。
+ * ZIP 可携带官方 RSA 签名的 plugin.sig；根目录（或唯一顶层文件夹）需要包含 plugin.json，示例：</p>
  * <pre>
  * {
  *   "id": "com.example.notes",
@@ -57,6 +63,7 @@ public class DesktopPluginService {
     private static final long MAX_MANIFEST_BYTES = 512 * 1024;
     private static final int DEFAULT_WIDTH = 760;
     private static final int DEFAULT_HEIGHT = 520;
+    private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList("com.deepshell.redis"));
     private static final ObjectMapper OM = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -117,6 +124,14 @@ public class DesktopPluginService {
      * 导入或更新一个插件 ZIP。同名 / 同 ID 插件会覆盖更新，返回 updated=true。
      */
     public PluginInfo install(MultipartFile zip) throws Exception {
+        return install(zip, null);
+    }
+
+    /**
+     * 导入插件。beforeReplace 在确定插件 ID、移动到正式目录之前调用，
+     * 供运行时释放旧版本的后端类加载器（Windows 会锁定已加载的 JAR）。
+     */
+    public PluginInfo install(MultipartFile zip, Consumer<String> beforeReplace) throws Exception {
         if (zip == null || zip.isEmpty()) {
             throw new IllegalArgumentException("请选择插件 ZIP 包");
         }
@@ -124,12 +139,16 @@ public class DesktopPluginService {
             throw new IllegalArgumentException("插件包不能超过 50MB");
         }
         try (InputStream in = zip.getInputStream()) {
-            return installStream(in, zip.getSize(), false);
+            return installStream(in, zip.getSize(), false, beforeReplace);
         }
     }
 
     /** 安装随程序分发的内置插件（例如 Redis 管理器）。 */
     public PluginInfo installBundled(String bundleId) throws Exception {
+        return installBundled(bundleId, null);
+    }
+
+    public PluginInfo installBundled(String bundleId, Consumer<String> beforeReplace) throws Exception {
         if (bundleId == null || !bundleId.matches("[A-Za-z0-9._-]{1,64}")) {
             throw new IllegalArgumentException("内置插件 ID 不合法");
         }
@@ -138,27 +157,41 @@ public class DesktopPluginService {
             throw new IllegalArgumentException("内置插件包不存在");
         }
         try (InputStream in = resource.getInputStream()) {
-            return installStream(in, resource.contentLength(), true);
+            return installStream(in, resource.contentLength(), true, beforeReplace);
         }
     }
 
     public List<BuiltinPluginInfo> listBuiltin() {
         List<BuiltinPluginInfo> out = new ArrayList<>();
-        boolean installed = list().stream()
-                .anyMatch(p -> "com.deepshell.redis".equals(p.getId()));
+        PluginInfo installed = null;
+        for (PluginInfo p : list()) {
+            if ("com.deepshell.redis".equals(p.getId())) {
+                installed = p;
+                break;
+            }
+        }
+        String bundledVersion = "2.0.0";
+        boolean officialInstalled = installed != null && installed.isVerified();
+        String installedVersion = installed == null ? "" : installed.getVersion();
+        boolean updateAvailable = officialInstalled && versionGreater(bundledVersion, installedVersion);
         out.add(new BuiltinPluginInfo(
                 "redis",
                 "com.deepshell.redis",
                 "Redis 管理器",
-                "1.0.0",
+                bundledVersion,
                 "面向 AI 桌面的 Redis 浏览与调试工具：列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
                 "DeepShell",
                 "/plugin-icons/redis.svg",
-                installed));
+                officialInstalled,
+                installedVersion,
+                updateAvailable,
+                true,
+                true));
         return out;
     }
 
-    private PluginInfo installStream(InputStream zip, long size, boolean builtin) throws Exception {
+    private PluginInfo installStream(InputStream zip, long size, boolean builtin,
+                                     Consumer<String> beforeReplace) throws Exception {
         if (size > MAX_TOTAL_BYTES) {
             throw new IllegalArgumentException("插件包不能超过 50MB");
         }
@@ -184,10 +217,26 @@ public class DesktopPluginService {
             if (manifest.icon != null && !manifest.icon.trim().isEmpty()) {
                 ensureFileUnder(base, safeEntry(manifest.icon), "图标文件");
             }
+            PluginSignatureService.Verification sig = PluginSignatureService.verify(base);
+            if (sig.getStatus() == PluginSignatureService.Status.INVALID) {
+                throw new IllegalArgumentException("插件签名无效：" + sig.getMessage());
+            }
+            if (sig.getStatus() == PluginSignatureService.Status.UNSIGNED
+                    && PluginSignatureService.claimsOfficialAuthor(manifest.author)) {
+                throw new IllegalArgumentException("未签名插件不能声明 DeepShell 官方作者，请使用官方签名");
+            }
+            if (BUILTIN_IDS.contains(id)
+                    && sig.getStatus() != PluginSignatureService.Status.VERIFIED) {
+                throw new IllegalArgumentException("内置应用 ID 只能由 DeepShell 官方签名插件使用");
+            }
+            validateBackend(manifest, base);
 
             target = root.resolve(id).normalize();
             if (!target.startsWith(root)) {
                 throw new IllegalArgumentException("插件 ID 不合法");
+            }
+            if (beforeReplace != null) {
+                beforeReplace.accept(id);
             }
             hadExisting = Files.exists(target);
             if (hadExisting) {
@@ -206,6 +255,8 @@ public class DesktopPluginService {
             committed = true;
             audit.record("PLUGIN_INSTALL", id, "OK",
                     info.getName() + " v" + info.getVersion()
+                            + (info.isVerified() ? "（官方签名）" : "（未验证）")
+                            + (info.isHasBackend() ? "（含后端）" : "")
                             + (builtin ? "（内置）" : "") + (hadExisting ? "（更新）" : ""));
             return info;
         } catch (IllegalArgumentException e) {
@@ -469,8 +520,79 @@ public class DesktopPluginService {
         String version = m.version == null || m.version.trim().isEmpty() ? "1.0.0" : limit(m.version.trim(), 32);
         String description = m.description == null ? "" : limit(m.description.trim(), 500);
         String author = m.author == null ? "" : limit(m.author.trim(), 60);
+        PluginSignatureService.Verification sig = PluginSignatureService.verify(dir);
+        boolean hasBackend = false;
+        if (m.backend != null) {
+            try {
+                validateBackend(m, dir);
+                hasBackend = true;
+            } catch (Exception e) {
+                log.warn("插件 {} 的后端配置无效: {}", id, e.getMessage());
+            }
+        }
         return new PluginInfo(id, limit(m.name.trim(), 60), version, description, author,
-                iconUrl, entryUrl, title, width, height, count[0], bytes[0], installedAt);
+                iconUrl, entryUrl, title, width, height, count[0], bytes[0], installedAt,
+                sig.isVerified(), sig.getStatus().name().toLowerCase(Locale.ROOT),
+                sig.getKeyId() == null ? "" : sig.getKeyId(), hasBackend);
+    }
+
+    private static void validateBackend(Manifest m, Path base) throws Exception {
+        if (m.backend == null) {
+            return;
+        }
+        String main = m.backend.main == null ? "" : m.backend.main.trim();
+        if (main.isEmpty() || main.length() > 255
+                || !main.matches("[A-Za-z_$][A-Za-z0-9_$.]*")) {
+            throw new IllegalArgumentException("backend.main 不是合法的 Java 类名");
+        }
+        if (m.backend.jars == null || m.backend.jars.isEmpty()) {
+            throw new IllegalArgumentException("后端插件必须至少包含一个 JAR");
+        }
+        if (m.backend.jars.size() > 64) {
+            throw new IllegalArgumentException("后端 JAR 数量不能超过 64 个");
+        }
+        for (String jar : m.backend.jars) {
+            String rel = safeEntry(jar);
+            if (!rel.toLowerCase(Locale.ROOT).endsWith(".jar")) {
+                throw new IllegalArgumentException("后端依赖必须是 JAR 文件: " + rel);
+            }
+            ensureFileUnder(base, rel, "后端 JAR");
+            if (Files.size(base.resolve(rel)) <= 0) {
+                throw new IllegalArgumentException("后端 JAR 为空: " + rel);
+            }
+        }
+    }
+
+    private static boolean versionGreater(String a, String b) {
+        if (a == null || a.isEmpty()) {
+            return false;
+        }
+        if (b == null || b.isEmpty()) {
+            return true;
+        }
+        String[] ap = a.split("\\.");
+        String[] bp = b.split("\\.");
+        int n = Math.max(ap.length, bp.length);
+        for (int i = 0; i < n; i++) {
+            int av = i < ap.length ? numericPart(ap[i]) : 0;
+            int bv = i < bp.length ? numericPart(bp[i]) : 0;
+            if (av != bv) {
+                return av > bv;
+            }
+        }
+        return false;
+    }
+
+    private static int numericPart(String s) {
+        String digits = s.replaceAll("[^0-9].*$", "");
+        if (digits.isEmpty()) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(digits);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private void cleanupTrash() {
@@ -559,12 +681,18 @@ public class DesktopPluginService {
         public String icon;
         public String entry;
         public Window window;
+        public Backend backend;
     }
 
     public static class Window {
         public Integer width;
         public Integer height;
         public String title;
+    }
+
+    public static class Backend {
+        public List<String> jars;
+        public String main;
     }
 
     @Getter
@@ -577,9 +705,14 @@ public class DesktopPluginService {
         private final String author;
         private final String iconUrl;
         private final boolean installed;
+        private final String installedVersion;
+        private final boolean updateAvailable;
+        private final boolean verified;
+        private final boolean hasBackend;
 
         BuiltinPluginInfo(String key, String id, String name, String version, String description,
-                          String author, String iconUrl, boolean installed) {
+                          String author, String iconUrl, boolean installed, String installedVersion,
+                          boolean updateAvailable, boolean verified, boolean hasBackend) {
             this.key = key;
             this.id = id;
             this.name = name;
@@ -588,6 +721,10 @@ public class DesktopPluginService {
             this.author = author;
             this.iconUrl = iconUrl;
             this.installed = installed;
+            this.installedVersion = installedVersion;
+            this.updateAvailable = updateAvailable;
+            this.verified = verified;
+            this.hasBackend = hasBackend;
         }
     }
 
@@ -606,11 +743,17 @@ public class DesktopPluginService {
         private final int fileCount;
         private final long totalBytes;
         private final long installedAt;
+        private final boolean verified;
+        private final String signatureStatus;
+        private final String signatureKeyId;
+        private final boolean hasBackend;
+        private boolean backendLoaded;
         private boolean updated;
 
         PluginInfo(String id, String name, String version, String description, String author,
                    String iconUrl, String entryUrl, String title, int windowWidth, int windowHeight,
-                   int fileCount, long totalBytes, long installedAt) {
+                   int fileCount, long totalBytes, long installedAt, boolean verified,
+                   String signatureStatus, String signatureKeyId, boolean hasBackend) {
             this.id = id;
             this.name = name;
             this.version = version;
@@ -624,6 +767,14 @@ public class DesktopPluginService {
             this.fileCount = fileCount;
             this.totalBytes = totalBytes;
             this.installedAt = installedAt;
+            this.verified = verified;
+            this.signatureStatus = signatureStatus;
+            this.signatureKeyId = signatureKeyId;
+            this.hasBackend = hasBackend;
+        }
+
+        public void setBackendLoaded(boolean backendLoaded) {
+            this.backendLoaded = backendLoaded;
         }
     }
 }

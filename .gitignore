@@ -42,3 +42,9 @@ application-develop.yml
 
 ### DeepShell 运行数据（便携模式）###
 /data/
+
+# 插件签名私钥与签名临时文件（私钥仅保存在维护者本机，严禁提交）
+deepshell-plugin-private.pem
+*.private.pem
+.signing/
+*.signed.tmp

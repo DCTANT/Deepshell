@@ -1098,7 +1098,7 @@
                custom-class="plugin-dialog" append-to-body :close-on-click-modal="false">
         <div class="plugin-mgr-hint">
             <i class="el-icon-info"></i>
-            导入 ZIP 或安装内置应用后，应用会出现在 AI 可视化桌面的「开始菜单 → 已安装应用」。插件在隔离沙箱 iframe 中运行，无法访问 DeepShell 页面内容与登录令牌。
+            官方插件使用 DeepShell RSA 公钥验证签名；未验证插件可能被篡改或冒充官方。含后端 JAR 的插件会以服务端权限运行，安装后需重启 DeepShell 才会加载。
         </div>
         <div class="plugin-mgr-actions">
             <el-button size="small" type="primary" icon="el-icon-upload2"
@@ -1122,14 +1122,20 @@
                     <div class="plugin-builtin-name">
                         {{ p.name }}
                         <span class="plugin-builtin-ver">v{{ p.version }}</span>
+                        <span class="plugin-sign-badge verified">官方签名</span>
+                        <span v-if="p.hasBackend" class="plugin-backend-badge">含后端</span>
                         <span class="plugin-builtin-tag">内置</span>
                     </div>
                     <div class="plugin-builtin-desc" :title="p.description">{{ p.description }}</div>
-                    <div class="plugin-builtin-meta">{{ p.author }} · Redis 客户端 · 安装后从开始菜单打开</div>
+                    <div class="plugin-builtin-meta">
+                        {{ p.author }} · 仅 AI 桌面
+                        <template v-if="p.updateAvailable"> · 已安装 v{{ p.installedVersion }}，可更新</template>
+                        <template v-if="p.hasBackend"> · 安装后重启加载后端</template>
+                    </div>
                 </div>
                 <el-button size="mini" type="primary"
                            :loading="pluginBuiltinInstalling === p.key"
-                           @click="installBuiltinPlugin(p)">安装</el-button>
+                           @click="installBuiltinPlugin(p)">{{ p.updateAvailable ? '更新' : '安装' }}</el-button>
             </div>
         </div>
 
@@ -1143,13 +1149,25 @@
                 <div class="plugin-mgr-main">
                     <div class="plugin-mgr-name">
                         {{ p.name }}<span class="plugin-mgr-version">v{{ p.version }}</span>
+                        <span class="plugin-sign-badge"
+                              :class="p.verified ? 'verified' : (p.signatureStatus === 'invalid' ? 'invalid' : 'unsigned')">
+                            {{ p.verified ? '官方签名' : (p.signatureStatus === 'invalid' ? '签名异常' : '未验证') }}
+                        </span>
+                        <span v-if="p.hasBackend" class="plugin-backend-badge"
+                              :class="{ loaded: p.backendLoaded }">
+                            {{ p.backendLoaded ? '含后端 · 已加载' : '含后端 · 待重启' }}
+                        </span>
                     </div>
                     <div class="plugin-mgr-desc" :title="p.description">{{ p.description || '暂无描述' }}</div>
                     <div class="plugin-mgr-meta">
-                        {{ p.author ? p.author + ' · ' : '' }}{{ p.fileCount }} 个文件 · {{ fmtSize(p.totalBytes) }}
+                        {{ p.verified ? '官方签名 · 发布者 ' + (p.author || '未知') : '未验证 · 发布者 ' + (p.author || '未知') }}
+                        · {{ p.fileCount }} 个文件 · {{ fmtSize(p.totalBytes) }}
                     </div>
                 </div>
-                <el-button size="mini" type="text" @click="openDesktopPlugin(p)">打开</el-button>
+                <el-button size="mini" type="text"
+                           :disabled="p.hasBackend && p.backendLoaded === false"
+                           :title="p.hasBackend && p.backendLoaded === false ? '需要重启 DeepShell 后加载后端模块' : '打开插件'"
+                           @click="openDesktopPlugin(p)">打开</el-button>
                 <el-button size="mini" type="text" class="danger-text" @click="deletePlugin(p)">卸载</el-button>
             </div>
             <div v-if="!pluginMgrLoading && !desktopPlugins.length" class="plugin-mgr-empty">
@@ -1158,7 +1176,7 @@
         </div>
         <div class="plugin-mgr-tip">
             <i class="el-icon-warning-outline"></i>
-            插件是本地安装的第三方网页代码，请只安装可信来源的包。插件可使用 HTML / JS / CSS / 图片等静态资源，入口和图标路径相对于 plugin.json 所在目录。
+            未验证插件无法证明发布者身份，也不能防止内容被篡改；含后端 JAR 的插件可以读取/修改服务器资源，请只安装可信来源的包。修改官方插件内容会使 RSA 签名失效。
         </div>
         <div slot="footer">
             <el-button size="small" @click="pluginMgrVisible = false">关闭</el-button>

@@ -1,8 +1,6 @@
-package com.itdct.deepshell.service;
+package com.itdct.deepshell.plugin.redis;
 
-import org.springframework.stereotype.Service;
 
-import javax.annotation.PreDestroy;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -35,7 +33,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>这里只提供单机 Redis 的核心能力：AUTH / SELECT / SCAN / 类型化读写 /
  * TTL / 重命名 / 删除 / 命令控制台 / INFO。</p>
  */
-@Service
 public class RedisClientService {
 
     private static final int MAX_SESSIONS = 8;
@@ -416,7 +413,6 @@ public class RedisClientService {
         });
     }
 
-    @PreDestroy
     public void shutdown() {
         for (Session session : sessions.values()) {
             session.conn.close();

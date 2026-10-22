@@ -2765,6 +2765,57 @@
     font-size: 11px;
     font-weight: 400;
 }
+.plugin-sign-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 9px;
+    font-weight: 500;
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+
+.plugin-sign-badge.verified {
+    border: 1px solid #b7e2c6;
+    background: #edf9f1;
+    color: #2f8b52;
+}
+
+.plugin-sign-badge.unsigned {
+    border: 1px solid #f0d9b0;
+    background: #fff8ea;
+    color: #a56a16;
+}
+
+.plugin-sign-badge.invalid {
+    border: 1px solid #f2c4c1;
+    background: #fff1f0;
+    color: #c4453d;
+}
+
+.plugin-backend-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border: 1px solid #c9daf3;
+    border-radius: 999px;
+    background: #eef5ff;
+    color: #4b72ad;
+    font-size: 9px;
+    font-weight: 500;
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+
+.plugin-backend-badge.loaded {
+    border-color: #b7e2c6;
+    background: #edf9f1;
+    color: #2f8b52;
+}
+
 
 .plugin-mgr-desc {
     margin-top: 2px;

@@ -578,6 +578,8 @@ function createDesktopWindow(id) {
         pluginVersion: '',
         pluginIconUrl: '',
         pluginUrl: '',
+        pluginVerified: false,
+        pluginBackend: false,
         /* 桌面代码编辑器窗口 */
         editorPath: '',
         editorTitle: '',
@@ -5309,7 +5311,7 @@ new Vue({
         },
         builtinAvailablePlugins: function () {
             return (this.builtinPlugins || []).filter(function (p) {
-                return !p.installed;
+                return !p.installed || p.updateAvailable;
             });
         },
         desktopStartAppMatches: function () {
@@ -7551,7 +7553,9 @@ new Vue({
             }
             if (w && w.type === 'plugin') {
                 var ver = w.pluginVersion ? ' · v' + w.pluginVersion : '';
-                return '桌面插件' + ver + ' · 沙箱运行';
+                var trust = w.pluginVerified ? ' · 官方签名' : ' · 未验证';
+                var backend = w.pluginBackend ? ' · 后端模块' : '';
+                return '桌面插件' + ver + trust + backend + ' · 沙箱运行';
             }
             if (w && w.type === 'editor') {
                 return '文本编辑器 · ' + (w.editorSubtitle || w.editorPath || '未命名');
@@ -14731,15 +14735,39 @@ new Vue({
                 return;
             }
             var self = this;
+            var updated = !!p.installed;
             this.pluginBuiltinInstalling = p.key;
             this.pluginMgrError = '';
+            if (p.id) {
+                this.closePluginWindows(p.id);
+            }
             http.post('/api/desktop/plugins/builtin/' + encodeURIComponent(p.key) + '/install')
                 .then(function (info) {
-                    ELEMENT.Message.success('已安装 ' + (info && info.name ? info.name : p.name));
+                    var name = info && info.name ? info.name : p.name;
+                    var needRestart = !!(info && info.hasBackend);
+                    var action = updated ? '已更新 ' : '已安装 ';
+                    if (needRestart) {
+                        if (info && info.id) {
+                            self.closePluginWindows(info.id);
+                        }
+                        ELEMENT.Message({
+                            type: 'success',
+                            message: action + name + '，重启 DeepShell 后后端模块生效',
+                            duration: 7000,
+                            showClose: true
+                        });
+                    } else {
+                        ELEMENT.Message({
+                            type: 'success',
+                            message: action + name,
+                            duration: 3000,
+                            showClose: true
+                        });
+                    }
                     return self.loadDesktopPlugins(true).then(function () {
                         return self.loadBuiltinPlugins(true);
                     }).then(function () {
-                        if (info) {
+                        if (info && !needRestart) {
                             self.openDesktopPlugin(info);
                         }
                     });
@@ -14760,10 +14788,10 @@ new Vue({
             this.loadDesktopPlugins(true);
             this.loadBuiltinPlugins(true);
         },
-        /* 内置 Redis 插件的受限消息桥：沙箱 iframe 不接触 Cookie，只转发 Redis API 请求 */
+        /* 桌面插件的受限后端调用桥：iframe 不接触 Cookie，只能调用自己插件的运行时模块 */
         onPluginBridgeMessage: function (ev) {
             var msg = ev && ev.data;
-            if (!msg || msg.source !== 'deepshell-plugin' || msg.type !== 'redis.api') {
+            if (!msg || msg.source !== 'deepshell-plugin' || msg.type !== 'plugin.invoke') {
                 return;
             }
             var requestId = msg.requestId;
@@ -14771,15 +14799,17 @@ new Vue({
                 return;
             }
             var sourceWin = null;
+            var pluginId = '';
             for (var i = 0; i < this.desktop.windows.length; i++) {
                 var w = this.desktop.windows[i];
-                if (w.type !== 'plugin' || w.pluginId !== 'com.deepshell.redis') {
+                if (w.type !== 'plugin' || !w.pluginId) {
                     continue;
                 }
                 var ref = this.$refs['plugin-frame-' + w.id];
                 var frame = Array.isArray(ref) ? ref[0] : ref;
                 if (frame && frame.contentWindow === ev.source) {
                     sourceWin = frame.contentWindow;
+                    pluginId = w.pluginId;
                     break;
                 }
             }
@@ -14790,7 +14820,7 @@ new Vue({
                 try {
                     sourceWin.postMessage({
                         source: 'deepshell-host',
-                        type: 'redis.api.result',
+                        type: 'plugin.invoke.result',
                         requestId: requestId,
                         ok: !!ok,
                         data: data,
@@ -14798,24 +14828,33 @@ new Vue({
                     }, '*');
                 } catch (e) { /* 窗口已关闭 */ }
             };
-            var method = String(msg.method || '').toUpperCase();
-            var path = String(msg.path || '');
-            if (['GET', 'POST', 'DELETE'].indexOf(method) < 0
-                    || !/^\/api\/desktop\/redis\/[A-Za-z0-9/_-]+$/.test(path)
-                    || path.indexOf('..') >= 0) {
-                reply(false, null, '不允许的插件请求');
+            var plugin = null;
+            for (var j = 0; j < this.desktopPlugins.length; j++) {
+                if (this.desktopPlugins[j].id === pluginId) {
+                    plugin = this.desktopPlugins[j];
+                    break;
+                }
+            }
+            if (!plugin || !plugin.hasBackend) {
+                reply(false, null, '该插件未声明后端模块');
                 return;
             }
-            http.request({
-                method: method,
-                url: path,
-                data: msg.body == null ? undefined : msg.body,
-                silent: true,
-                timeout: 35000
-            }).then(function (data) {
+            if (plugin.backendLoaded === false) {
+                reply(false, null, '插件后端尚未加载，请重启 DeepShell 后重试');
+                return;
+            }
+            var action = String(msg.action || '');
+            if (!action || action.length > 128) {
+                reply(false, null, '插件 action 不合法');
+                return;
+            }
+            http.post('/api/desktop/plugins/runtime/' + encodeURIComponent(pluginId) + '/invoke', {
+                action: action,
+                payload: msg.payload == null ? null : msg.payload
+            }, { silent: true, timeout: 35000 }).then(function (data) {
                 reply(true, data);
             }).catch(function (err) {
-                reply(false, null, (err && err.message) ? err.message : 'Redis 请求失败');
+                reply(false, null, (err && err.message) ? err.message : '插件请求失败');
             });
         },
         pickPluginZip: function () {
@@ -14837,22 +14876,44 @@ new Vue({
                 return;
             }
             var self = this;
-            var fd = new FormData();
-            fd.append('file', file, file.name);
-            this.pluginImporting = true;
-            this.pluginMgrError = '';
-            http.post('/api/desktop/plugins/import', fd, { timeout: 0 })
-                .then(function (info) {
-                    ELEMENT.Message.success((info && info.updated ? '插件已更新：' : '插件已安装：')
-                        + (info && info.name ? info.name : file.name));
-                    self.loadDesktopPlugins(true);
-                })
-                .catch(function (err) {
-                    self.pluginMgrError = (err && err.message) ? err.message : '插件安装失败';
-                })
-                .then(function () {
-                    self.pluginImporting = false;
-                });
+            this.$confirm('只安装可信来源的插件。未验证插件无法证明发布者身份；包含后端 JAR 的插件会以 DeepShell 服务端权限运行，可读写服务器资源。继续安装？',
+                '插件安装风险确认', {
+                    type: 'warning',
+                    confirmButtonText: '继续安装',
+                    cancelButtonText: '取消'
+                }).then(function () {
+                var fd = new FormData();
+                fd.append('file', file, file.name);
+                self.pluginImporting = true;
+                self.pluginMgrError = '';
+                return http.post('/api/desktop/plugins/import', fd, { timeout: 0 })
+                    .then(function (info) {
+                        var name = info && info.name ? info.name : file.name;
+                        var needRestart = !!(info && info.hasBackend);
+                        if (info && info.id) {
+                            self.closePluginWindows(info.id);
+                        }
+                        if (needRestart) {
+                            ELEMENT.Message({
+                                type: 'success',
+                                message: (info && info.updated ? '插件已更新：' : '插件已安装：')
+                                    + name + '，重启 DeepShell 后后端模块生效',
+                                duration: 7000,
+                                showClose: true
+                            });
+                        } else {
+                            ELEMENT.Message.success((info && info.updated ? '插件已更新：' : '插件已安装：') + name);
+                        }
+                        self.loadDesktopPlugins(true);
+                        self.loadBuiltinPlugins(true);
+                    })
+                    .catch(function (err) {
+                        self.pluginMgrError = (err && err.message) ? err.message : '插件安装失败';
+                    })
+                    .then(function () {
+                        self.pluginImporting = false;
+                    });
+            }).catch(function () { /* 用户取消 */ });
         },
         deletePlugin: function (p) {
             if (!p) {
@@ -14864,12 +14925,21 @@ new Vue({
                 confirmButtonText: '卸载',
                 cancelButtonText: '取消'
             }).then(function () {
+                self.closePluginWindows(p.id);
                 return http.delete('/api/desktop/plugins/' + encodeURIComponent(p.id));
             }).then(function () {
-                self.closePluginWindows(p.id);
                 self.loadDesktopPlugins(true);
                 self.loadBuiltinPlugins(true);
-                ELEMENT.Message.success('已卸载 ' + p.name);
+                if (p.hasBackend) {
+                    ELEMENT.Message({
+                        type: 'success',
+                        message: '已卸载 ' + p.name + '，重启 DeepShell 后后端模块停止运行',
+                        duration: 7000,
+                        showClose: true
+                    });
+                } else {
+                    ELEMENT.Message.success('已卸载 ' + p.name);
+                }
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
         closePluginWindows: function (id) {
@@ -14903,6 +14973,10 @@ new Vue({
                 ELEMENT.Message.warning('请先进入 AI 可视化桌面');
                 return null;
             }
+            if (plugin.hasBackend && plugin.backendLoaded === false) {
+                ELEMENT.Message.warning('插件后端尚未加载，请重启 DeepShell 后再打开');
+                return null;
+            }
             var existing = null;
             for (var i = 0; i < this.desktop.windows.length; i++) {
                 var win = this.desktop.windows[i];
@@ -14918,6 +14992,8 @@ new Vue({
                 existing.pluginTitle = plugin.title || plugin.name;
                 existing.pluginVersion = plugin.version || '';
                 existing.pluginIconUrl = plugin.iconUrl || '';
+                existing.pluginVerified = !!plugin.verified;
+                existing.pluginBackend = !!plugin.hasBackend;
                 this.restoreDesktopWindow(existing);
                 return existing;
             }
@@ -14928,6 +15004,8 @@ new Vue({
             w.pluginVersion = plugin.version || '';
             w.pluginIconUrl = plugin.iconUrl || '';
             w.pluginUrl = plugin.entryUrl;
+            w.pluginVerified = !!plugin.verified;
+            w.pluginBackend = !!plugin.hasBackend;
             var area = this.desktopWindowWorkArea();
             var width = Math.min(area.width - 20, Math.max(520, Number(plugin.windowWidth) || 760));
             var height = Math.min(area.height - 20, Math.max(320, Number(plugin.windowHeight) || 520));
