@@ -23,7 +23,7 @@ public class AppInfoController {
         Map<String, String> m = new HashMap<>();
         m.put("name", "DeepShell");
         String v = AppInfoController.class.getPackage().getImplementationVersion();
-        m.put("version", v == null ? "1.2.0" : v);
+        m.put("version", v == null ? "1.3.0" : v);
         m.put("buildTime", resolveBuildTime());
         m.put("java", System.getProperty("java.version"));
         m.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));

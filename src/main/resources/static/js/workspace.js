@@ -4347,7 +4347,7 @@ new Vue({
             authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
             tlsSelfSigned: false, tlsNextEnabled: false
         },
-        appInfo: { version: '1.2.0', java: '', os: '', dataDir: '', buildTime: '' },
+        appInfo: { version: '1.3.0', java: '', os: '', dataDir: '', buildTime: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
@@ -5378,7 +5378,7 @@ new Vue({
             return (this.appInfo && this.appInfo.buildTime) || DESKTOP_APP_RELEASE_FALLBACK;
         },
         desktopAppVersion: function () {
-            return (this.appInfo && this.appInfo.version) || '1.2.0';
+            return (this.appInfo && this.appInfo.version) || '1.3.0';
         },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
