@@ -2,6 +2,7 @@ package com.itdct.deepshell;
 
 import com.itdct.deepshell.common.AppRestartSupport;
 import com.itdct.deepshell.common.DataDir;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -11,6 +12,7 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Properties;
 
+@Slf4j
 @SpringBootApplication
 public class DeepShellApplication {
 
@@ -34,7 +36,10 @@ public class DeepShellApplication {
                 && !hasBindArg(args)) {
             Boolean saved = savedLanEnabled(dataDir);
             if (saved != null) {
-                System.setProperty("server.address", saved ? "0.0.0.0" : "127.0.0.1");
+                String bind = saved ? "0.0.0.0" : "127.0.0.1";
+                System.setProperty("server.address", bind);
+                log.info("监听地址由界面「局域网访问」开关决定：{}（{}），application.yml 中的 server.address 不生效",
+                        bind, dataDir.resolve("network.properties"));
             }
         }
         SpringApplication app = new SpringApplication(DeepShellApplication.class);

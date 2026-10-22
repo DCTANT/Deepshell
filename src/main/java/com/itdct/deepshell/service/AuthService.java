@@ -83,13 +83,18 @@ public class AuthService {
         }
         // 安全底线：监听局域网时不允许无鉴权或默认密码
         if (isLanBinding(bindAddress)) {
+            String lanHint = lanSwitchHint();
             if (!enabled) {
-                throw new IllegalStateException("已开启局域网访问，但登录认证未启用。"
-                        + "请设置 deepshell.auth.enabled=true 并修改 deepshell.auth.password 后重启；"
-                        + "或删除数据目录下的 network.properties 恢复仅本机访问。");
+                throw new IllegalStateException("当前以局域网模式启动（监听 " + bindAddress + "），但登录认证未启用。"
+                        + lanHint
+                        + "如需继续开放局域网：设置 deepshell.auth.enabled=true 并修改 deepshell.auth.password 后重启；"
+                        + "只想本机使用：在界面「局域网访问」中关闭开关后重启，"
+                        + "或删除 " + DataDir.root().resolve("network.properties") + " 后重启，"
+                        + "此时 application.yml 中的 server.address 才会生效。");
             }
             if ("deepshell".equals(password)) {
-                throw new IllegalStateException("已开启局域网访问，但仍在使用默认密码 deepshell。"
+                throw new IllegalStateException("当前以局域网模式启动（监听 " + bindAddress + "），"
+                        + "但仍在使用默认密码 deepshell。" + lanHint
                         + "请修改 deepshell.auth.password 后重启。");
             }
         }
@@ -116,6 +121,16 @@ public class AuthService {
 
     private static boolean isLanBinding(String address) {
         return "0.0.0.0".equals(address) || "::".equals(address) || "[::]".equals(address);
+    }
+
+    /** 解释监听地址为何是局域网：界面开关保存的 network.properties 优先于 application.yml */
+    private static String lanSwitchHint() {
+        Path file = DataDir.root().resolve("network.properties");
+        if (!Files.isRegularFile(file)) {
+            return "";
+        }
+        return "检测到 " + file + " 中保存的界面「局域网访问」开关为开启状态，"
+                + "它会覆盖 application.yml 中的 server.address（改 yml 的地址不会生效）。";
     }
 
     public String getUsername() {
