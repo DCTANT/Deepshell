@@ -454,13 +454,6 @@
                 <div class="tab-menu-item" @click="onMenuCommand('fitTerminal')">
                     <i class="el-icon-full-screen"></i>终端自适应
                 </div>
-                <div class="tab-menu-item" @click="onMenuCommand('toggleTermAutoScroll')">
-                    <i class="el-icon-bottom"></i>
-                    <span class="tab-menu-grow">自动跟随最新输出</span>
-                    <span class="tab-menu-state" :class="{ on: termAutoScrollEnabled }">
-                        {{ termAutoScrollEnabled ? '已开启' : '已关闭' }}
-                    </span>
-                </div>
                 <div class="tab-menu-item" @click="onMenuCommand('toggleTermLogHighlight')">
                     <i class="el-icon-magic-stick"></i>
                     <span class="tab-menu-grow">日志级别高亮</span>
@@ -899,6 +892,9 @@
         <span class="cmd-tools">
             <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
                :class="{ 'cmd-tool-active': tab.aiVisible }" @click="toggleAi"></i>
+            <i class="el-icon-bottom cmd-tool" :title="'自动跟随最新输出（tail -f）：' + ($root.termAutoScrollEnabled ? '已开启，点击关闭' : '已关闭，点击开启')"
+               :class="{ 'cmd-tool-active': $root.termAutoScrollEnabled }"
+               @click="$root.termAutoScrollEnabled = !$root.termAutoScrollEnabled"></i>
             <el-popover v-if="context === 'window'" placement="top-end" width="320" trigger="click"
                         v-model="snippetsVisible" popper-class="cmd-pop">
                 <div class="cmd-hist">
@@ -955,10 +951,6 @@
                     <div class="cmd-opt-row">
                         <span>忽略空白行</span>
                         <el-switch v-model="$root.cmdOpts.ignoreBlank" size="mini"></el-switch>
-                    </div>
-                    <div class="cmd-opt-row">
-                        <span>自动跟随最新输出</span>
-                        <el-switch v-model="$root.termAutoScrollEnabled" size="mini"></el-switch>
                     </div>
                     <div class="cmd-opt-row">
                         <span>日志级别高亮</span>

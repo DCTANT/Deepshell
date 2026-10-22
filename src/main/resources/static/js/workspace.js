@@ -6033,10 +6033,6 @@ new Vue({
                 this.openBgSettings('terminal');
             } else if (cmd === 'fitTerminal') {
                 this.fitActive();
-            } else if (cmd === 'toggleTermAutoScroll') {
-                this.termAutoScrollEnabled = !this.termAutoScrollEnabled;
-                ELEMENT.Message.success(this.termAutoScrollEnabled
-                    ? '已开启自动跟随最新输出' : '已关闭自动跟随最新输出');
             } else if (cmd === 'toggleTermLogHighlight') {
                 this.termLogHighlightEnabled = !this.termLogHighlightEnabled;
                 ELEMENT.Message.success(this.termLogHighlightEnabled
