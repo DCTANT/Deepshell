@@ -3955,6 +3955,7 @@ new Vue({
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
             { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
             { id: 'control', label: '设置', icon: 'el-icon-setting', color: '#54657e' },
+            { id: 'help', label: '帮助手册', icon: 'el-icon-question', color: '#2f8fce' },
             { id: 'connect', label: '连接管理', icon: 'el-icon-connection', color: '#2f8fce' }
         ],
         desktopStartActions: [
@@ -9053,6 +9054,34 @@ new Vue({
             }
             return this.openDesktopWindow(path || this.desk.path || this.desktopHomeDir || '/');
         },
+        /* Alt+Tab / Alt+` 切换桌面窗口：按 z 序循环，最小化窗口会被还原 */
+        cycleDesktopWindows: function (dir) {
+            if (!this.desktop.visible) {
+                return;
+            }
+            var list = this.desktop.windows.slice().sort(function (a, b) {
+                return (a.z || 0) - (b.z || 0);
+            });
+            if (!list.length) {
+                return;
+            }
+            var idx = -1;
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].id === this.desktop.activeWinId) {
+                    idx = i;
+                    break;
+                }
+            }
+            var next;
+            if (idx < 0) {
+                next = dir > 0 ? list[list.length - 1] : list[0];
+            } else {
+                next = list[(idx + (dir > 0 ? 1 : -1) + list.length) % list.length];
+            }
+            if (next) {
+                this.activateDesktopWindow(next.id);
+            }
+        },
         activateDesktopWindow: function (id) {
             var w = this.desktopWindowById(id);
             if (!w) {
@@ -10744,6 +10773,7 @@ new Vue({
             this._surfaceThumbGen = (this._surfaceThumbGen || 0) + 1;
             this._surfaceThumbQueued = {};
             this._surfaceThumbActive = 0;
+            this._videoThumbActive = 0;
             if (this._surfaceThumbCtrls) {
                 this._surfaceThumbCtrls.forEach(function (c) {
                     try { c.abort(); } catch (e) { /* ignore */ }
@@ -10824,7 +10854,18 @@ new Vue({
                 var targetType = isShortcut
                     ? ((sc && sc.targetType) === 'folder' ? 'folder' : 'file')
                     : (e.dir ? 'folder' : 'file');
-                if (targetType !== 'file' || !self.isDesktopImage({ name: targetName, dir: false })) {
+                if (targetType !== 'file') {
+                    return;
+                }
+                var targetRow = {
+                    name: targetName,
+                    dir: false,
+                    size: isShortcut ? 0 : (e.size || 0)
+                };
+                if (!self.isDesktopThumbable(targetRow)) {
+                    return;
+                }
+                if (self.isDesktopVideo(targetRow) && targetRow.size > 500 * 1024 * 1024) {
                     return;
                 }
                 if (e._thumb || e._thumbFailed) {
@@ -10838,7 +10879,8 @@ new Vue({
                     path: isShortcut && sc
                         ? sc.target
                         : self.pathJoin(self.desktop.surface.dir, e.name),
-                    mtime: isShortcut ? 0 : (e.mtime || 0)
+                    mtime: isShortcut ? 0 : (e.mtime || 0),
+                    video: self.isDesktopVideo(targetRow)
                 });
             });
             if (!tasks.length) {
@@ -10852,59 +10894,90 @@ new Vue({
             }
             var pump = function () {
                 while (self._surfaceThumbActive < 4 && tasks.length) {
-                    var task = tasks.shift();
+                    var pick = -1;
+                    for (var pi = 0; pi < tasks.length; pi++) {
+                        if (!tasks[pi].video || !(self._videoThumbActive || 0)) {
+                            pick = pi;
+                            break;
+                        }
+                    }
+                    if (pick < 0) {
+                        break;
+                    }
+                    var task = tasks.splice(pick, 1)[0];
                     if (self._surfaceThumbQueued[task.e.name]) {
                         continue;
                     }
                     self._surfaceThumbQueued[task.e.name] = true;
                     self._surfaceThumbActive++;
-                    var ctrl = (typeof AbortController !== 'undefined')
-                        ? new AbortController() : null;
-                    if (ctrl) {
-                        if (!self._surfaceThumbCtrls) {
-                            self._surfaceThumbCtrls = [];
-                        }
-                        self._surfaceThumbCtrls.push(ctrl);
+                    if (task.video) {
+                        self._videoThumbActive = (self._videoThumbActive || 0) + 1;
                     }
-                    var url = '/api/sftp/thumbnail?sessionId=' + encodeURIComponent(t.sessionId)
-                        + '&path=' + encodeURIComponent(task.path)
-                        + '&v=' + (task.mtime || 0);
-                    fetch(url, {
-                        credentials: 'same-origin',
-                        signal: ctrl ? ctrl.signal : undefined
-                    }).then(function (resp) {
-                        if (!resp.ok) {
-                            throw new Error('HTTP ' + resp.status);
-                        }
-                        var type = resp.headers.get('Content-Type') || '';
-                        if (type.indexOf('image/') !== 0) {
-                            throw new Error('not an image');
-                        }
-                        return resp.blob();
-                    }).then(function (blob) {
-                        if (gen !== (self._surfaceThumbGen || 0)) {
-                            return;
-                        }
-                        self.$set(task.e, '_thumb', URL.createObjectURL(blob));
-                    }).catch(function (err) {
-                        if (gen !== (self._surfaceThumbGen || 0)
-                                || (err && err.name === 'AbortError')) {
-                            return;
-                        }
-                        self.$set(task.e, '_thumbFailed', true);
-                    }).then(function () {
-                        if (ctrl && self._surfaceThumbCtrls) {
-                            var idx = self._surfaceThumbCtrls.indexOf(ctrl);
-                            if (idx >= 0) {
-                                self._surfaceThumbCtrls.splice(idx, 1);
+                    (function (tk) {
+                        var ctrl = (typeof AbortController !== 'undefined')
+                            ? new AbortController() : null;
+                        if (ctrl) {
+                            if (!self._surfaceThumbCtrls) {
+                                self._surfaceThumbCtrls = [];
                             }
+                            self._surfaceThumbCtrls.push(ctrl);
                         }
-                        self._surfaceThumbActive = Math.max(0,
-                            (self._surfaceThumbActive || 0) - 1);
-                        if (gen === (self._surfaceThumbGen || 0)) {
-                            pump();
+                        var url = (tk.video ? '/api/sftp/video' : '/api/sftp/thumbnail')
+                            + '?sessionId=' + encodeURIComponent(t.sessionId)
+                            + '&path=' + encodeURIComponent(tk.path)
+                            + '&v=' + (tk.mtime || 0);
+                        var promise;
+                        if (tk.video) {
+                            promise = new Promise(function (resolve, reject) {
+                                self.captureVideoThumb(url, ctrl, resolve, reject);
+                            });
+                        } else {
+                            promise = fetch(url, {
+                                credentials: 'same-origin',
+                                signal: ctrl ? ctrl.signal : undefined
+                            }).then(function (resp) {
+                                if (!resp.ok) {
+                                    throw new Error('HTTP ' + resp.status);
+                                }
+                                var type = resp.headers.get('Content-Type') || '';
+                                if (type.indexOf('image/') !== 0) {
+                                    throw new Error('not an image');
+                                }
+                                return resp.blob();
+                            }).then(function (blob) {
+                                return URL.createObjectURL(blob);
+                            });
                         }
-                    });
+                        promise.then(function (thumbUrl) {
+                            if (gen !== (self._surfaceThumbGen || 0)) {
+                                try { URL.revokeObjectURL(thumbUrl); } catch (err) { /* ignore */ }
+                                return;
+                            }
+                            self.$set(tk.e, '_thumb', thumbUrl);
+                        }).catch(function (err) {
+                            if (gen !== (self._surfaceThumbGen || 0)
+                                    || (err && err.name === 'AbortError')) {
+                                return;
+                            }
+                            self.$set(tk.e, '_thumbFailed', true);
+                        }).then(function () {
+                            if (ctrl && self._surfaceThumbCtrls) {
+                                var idx = self._surfaceThumbCtrls.indexOf(ctrl);
+                                if (idx >= 0) {
+                                    self._surfaceThumbCtrls.splice(idx, 1);
+                                }
+                            }
+                            self._surfaceThumbActive = Math.max(0,
+                                (self._surfaceThumbActive || 0) - 1);
+                            if (tk.video) {
+                                self._videoThumbActive = Math.max(0,
+                                    (self._videoThumbActive || 0) - 1);
+                            }
+                            if (gen === (self._surfaceThumbGen || 0)) {
+                                pump();
+                            }
+                        });
+                    })(task);
                 }
             };
             pump();
@@ -12199,10 +12272,12 @@ new Vue({
             if (d.viewMode !== 'large' && d.viewMode !== 'medium') {
                 return false;
             }
-            if (!this.isDesktopImage(row)) {
+            var video = this.isDesktopVideo(row);
+            if (!this.isDesktopImage(row) && !video) {
                 return false;
             }
-            if (row.size && row.size > 30 * 1024 * 1024) {
+            // 视频只读取元数据和首帧片段；超大文件仍回退为文件图标，避免拖慢 SFTP
+            if (row.size && row.size > (video ? 500 * 1024 * 1024 : 30 * 1024 * 1024)) {
                 return false;
             }
             return !d.thumbFailed[this.deskEntryPath(d, row)];
@@ -12989,10 +13064,15 @@ new Vue({
             if (!this._thumbQueue) {
                 this._thumbQueue = [];
             }
-            this._thumbQueue.push({ w: d, path: path, mtime: row.mtime || 0 });
+            this._thumbQueue.push({
+                w: d,
+                path: path,
+                mtime: row.mtime || 0,
+                video: this.isDesktopVideo(row)
+            });
             this.pumpDesktopThumbs();
         },
-        /* 限并发：最多 2 个缩略图请求，给目录读取等 SFTP 操作留出通道 */
+        /* 限并发：最多 2 个缩略图请求；视频抓帧额外限制为全局 1 个，避免挤占 SFTP 通道 */
         pumpDesktopThumbs: function () {
             var MAX_THUMB_ACTIVE = 2;
             if (!this._thumbQueue) {
@@ -13002,7 +13082,140 @@ new Vue({
                 this._thumbActive = 0;
             }
             while (this._thumbActive < MAX_THUMB_ACTIVE && this._thumbQueue.length) {
-                this.loadDesktopThumb(this._thumbQueue.shift());
+                var pick = -1;
+                for (var i = 0; i < this._thumbQueue.length; i++) {
+                    if (!this._thumbQueue[i].video || !(this._videoThumbActive || 0)) {
+                        pick = i;
+                        break;
+                    }
+                }
+                if (pick < 0) {
+                    break;
+                }
+                this.loadDesktopThumb(this._thumbQueue.splice(pick, 1)[0]);
+            }
+        },
+        /* 浏览器端抓取视频首帧：只读元数据并 seek 到约 10%，不下载整段视频 */
+        captureVideoThumb: function (url, ctrl, done, fail) {
+            var video = document.createElement('video');
+            var finished = false;
+            var timer = null;
+            var fallbackTimer = null;
+            var onAbort = function () {
+                finishErr({ name: 'AbortError' });
+            };
+            var cleanup = function () {
+                clearTimeout(timer);
+                clearTimeout(fallbackTimer);
+                if (ctrl && ctrl.signal && onAbort) {
+                    try { ctrl.signal.removeEventListener('abort', onAbort); } catch (e) { /* ignore */ }
+                }
+                try { video.pause(); } catch (e) { /* ignore */ }
+                video.removeAttribute('src');
+                try { video.load(); } catch (e) { /* ignore */ }
+                if (video.parentNode) {
+                    video.parentNode.removeChild(video);
+                }
+            };
+            var finishErr = function (err) {
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                cleanup();
+                fail(err || new Error('video thumbnail failed'));
+            };
+            var finishOk = function (blobUrl) {
+                if (finished) {
+                    return;
+                }
+                finished = true;
+                cleanup();
+                done(blobUrl);
+            };
+            var drawFrame = function () {
+                if (finished) {
+                    return;
+                }
+                try {
+                    var vw = video.videoWidth;
+                    var vh = video.videoHeight;
+                    if (!vw || !vh) {
+                        finishErr(new Error('no video frame'));
+                        return;
+                    }
+                    var max = 200;
+                    var scale = Math.min(1, max / Math.max(vw, vh));
+                    var w = Math.max(1, Math.round(vw * scale));
+                    var h = Math.max(1, Math.round(vh * scale));
+                    var canvas = document.createElement('canvas');
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+                    if (!canvas.toBlob) {
+                        finishErr(new Error('canvas toBlob unsupported'));
+                        return;
+                    }
+                    canvas.toBlob(function (blob) {
+                        if (!blob) {
+                            finishErr(new Error('empty video thumbnail'));
+                            return;
+                        }
+                        if (finished) {
+                            return;
+                        }
+                        finishOk(URL.createObjectURL(blob));
+                    }, 'image/jpeg', 0.82);
+                } catch (e) {
+                    finishErr(e);
+                }
+            };
+            if (ctrl && ctrl.signal) {
+                if (ctrl.signal.aborted) {
+                    finishErr({ name: 'AbortError' });
+                    return;
+                }
+                ctrl.signal.addEventListener('abort', onAbort, false);
+            }
+            video.preload = 'metadata';
+            video.muted = true;
+            video.playsInline = true;
+            video.setAttribute('playsinline', '');
+            video.style.position = 'fixed';
+            video.style.left = '-99999px';
+            video.style.top = '0';
+            video.style.width = '2px';
+            video.style.height = '2px';
+            video.style.opacity = '0';
+            video.addEventListener('loadedmetadata', function () {
+                var duration = isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+                var seek = duration > 2 ? Math.min(2, duration * 0.1) : 0.1;
+                try {
+                    video.currentTime = seek;
+                } catch (e) {
+                    finishErr(e);
+                    return;
+                }
+                // 个别格式 seek 不触发 seeked，用已解码的当前帧兜底
+                fallbackTimer = setTimeout(function () {
+                    if (!finished) {
+                        drawFrame();
+                    }
+                }, 1400);
+            });
+            video.addEventListener('seeked', drawFrame);
+            video.addEventListener('error', function () {
+                finishErr(new Error('video decode failed'));
+            });
+            timer = setTimeout(function () {
+                finishErr(new Error('video thumbnail timeout'));
+            }, 15000);
+            document.body.appendChild(video);
+            try {
+                video.src = url;
+                video.load();
+            } catch (e) {
+                finishErr(e);
             }
         },
         loadDesktopThumb: function (item) {
@@ -13026,54 +13239,72 @@ new Vue({
                 this._thumbCtrls.push(ctrl);
             }
             this._thumbActive = (this._thumbActive || 0) + 1;
-            var url = '/api/sftp/thumbnail?sessionId=' + encodeURIComponent(t.sessionId)
+            var isVideo = !!item.video;
+            if (isVideo) {
+                this._videoThumbActive = (this._videoThumbActive || 0) + 1;
+            }
+            var url = (isVideo ? '/api/sftp/video' : '/api/sftp/thumbnail')
+                + '?sessionId=' + encodeURIComponent(t.sessionId)
                 + '&path=' + encodeURIComponent(item.path)
                 + '&v=' + item.mtime;
-            fetch(url, { credentials: 'same-origin', signal: ctrl ? ctrl.signal : undefined })
-                .then(function (resp) {
-                    if (!resp.ok) {
-                        throw new Error('HTTP ' + resp.status);
-                    }
-                    var type = resp.headers.get('Content-Type') || '';
-                    if (type.indexOf('image/') !== 0) {
-                        throw new Error('not an image');
-                    }
-                    return resp.blob();
-                })
-                .then(function (blob) {
-                    if (gen !== (self._thumbGen || 0) || self.desktop.windows.indexOf(d) < 0) {
-                        return;
-                    }
-                    self.$set(d.thumbSrc, item.path, URL.createObjectURL(blob));
-                })
-                .catch(function (e) {
-                    if (gen !== (self._thumbGen || 0) || (e && e.name === 'AbortError')
-                            || self.desktop.windows.indexOf(d) < 0) {
-                        return;
-                    }
-                    self.$set(d.thumbFailed, item.path, true);
-                })
-                .then(function () {
-                    if (ctrl && self._thumbCtrls) {
-                        var idx = self._thumbCtrls.indexOf(ctrl);
-                        if (idx >= 0) {
-                            self._thumbCtrls.splice(idx, 1);
-                        }
-                    }
-                    if (self._thumbQueued) {
-                        self._thumbQueued[item.path] = false;
-                    }
-                    self._thumbActive = Math.max(0, (self._thumbActive || 0) - 1);
-                    if (gen === (self._thumbGen || 0)) {
-                        self.pumpDesktopThumbs();
-                    }
+            var promise;
+            if (isVideo) {
+                promise = new Promise(function (resolve, reject) {
+                    self.captureVideoThumb(url, ctrl, resolve, reject);
                 });
+            } else {
+                promise = fetch(url, { credentials: 'same-origin', signal: ctrl ? ctrl.signal : undefined })
+                    .then(function (resp) {
+                        if (!resp.ok) {
+                            throw new Error('HTTP ' + resp.status);
+                        }
+                        var type = resp.headers.get('Content-Type') || '';
+                        if (type.indexOf('image/') !== 0) {
+                            throw new Error('not an image');
+                        }
+                        return resp.blob();
+                    })
+                    .then(function (blob) {
+                        return URL.createObjectURL(blob);
+                    });
+            }
+            promise.then(function (thumbUrl) {
+                if (gen !== (self._thumbGen || 0) || self.desktop.windows.indexOf(d) < 0) {
+                    try { URL.revokeObjectURL(thumbUrl); } catch (e) { /* ignore */ }
+                    return;
+                }
+                self.$set(d.thumbSrc, item.path, thumbUrl);
+            }).catch(function (e) {
+                if (gen !== (self._thumbGen || 0) || (e && e.name === 'AbortError')
+                        || self.desktop.windows.indexOf(d) < 0) {
+                    return;
+                }
+                self.$set(d.thumbFailed, item.path, true);
+            }).then(function () {
+                if (ctrl && self._thumbCtrls) {
+                    var idx = self._thumbCtrls.indexOf(ctrl);
+                    if (idx >= 0) {
+                        self._thumbCtrls.splice(idx, 1);
+                    }
+                }
+                if (self._thumbQueued) {
+                    self._thumbQueued[item.path] = false;
+                }
+                self._thumbActive = Math.max(0, (self._thumbActive || 0) - 1);
+                if (isVideo) {
+                    self._videoThumbActive = Math.max(0, (self._videoThumbActive || 0) - 1);
+                }
+                if (gen === (self._thumbGen || 0)) {
+                    self.pumpDesktopThumbs();
+                }
+            });
         },
         cancelDesktopThumbQueue: function () {
             this._thumbGen = (this._thumbGen || 0) + 1;
             this._thumbQueue = [];
             this._thumbQueued = {};
             this._thumbActive = 0;
+            this._videoThumbActive = 0;
             if (this._thumbCtrls) {
                 this._thumbCtrls.forEach(function (c) {
                     try { c.abort(); } catch (e) { /* ignore */ }
@@ -14079,6 +14310,9 @@ new Vue({
         isDesktopImage: function (row) {
             return !!row && !row.dir && this.desktopFileKind(row) === 'img';
         },
+        isDesktopThumbable: function (row) {
+            return this.isDesktopImage(row) || this.isDesktopVideo(row);
+        },
         isDesktopVideo: function (row) {
             return !!row && !row.dir && this.desktopFileKind(row) === 'video';
         },
@@ -14989,6 +15223,14 @@ new Vue({
                 return;
             }
             this.touchDesktopActivity();
+            // 窗口切换：Alt+Tab 正/反向；部分系统会占用 Alt+Tab，可用 Alt+` 作为网页内替代
+            if (e.altKey && !e.ctrlKey && !e.metaKey
+                    && (e.key === 'Tab' || e.keyCode === 9)) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.cycleDesktopWindows(e.shiftKey ? -1 : 1);
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && e.shiftKey
                     && String(e.key || '').toLowerCase() === 'k') {
                 e.preventDefault();
@@ -15085,6 +15327,13 @@ new Vue({
                 return;
             }
             if (typing) {
+                return;
+            }
+            if (e.altKey && !e.ctrlKey && !e.metaKey
+                    && (e.key === '`' || e.code === 'Backquote')) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.cycleDesktopWindows(e.shiftKey ? -1 : 1);
                 return;
             }
             // 任务管理器激活时屏蔽桌面文件快捷键，避免误操作资源管理器
@@ -15860,7 +16109,12 @@ new Vue({
                 this.openDesktopConnectionWindow();
                 return;
             }
-            if (id === 'settings' || id === 'help' || id === 'about') {
+            if (id === 'help') {
+                // 帮助手册在桌面内以弹层打开，不退出可视化桌面
+                this.helpVisible = true;
+                return;
+            }
+            if (id === 'settings' || id === 'about') {
                 this.closeAiDesktop();
                 this.$nextTick(function () {
                     if (id === 'settings') {

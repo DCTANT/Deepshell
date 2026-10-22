@@ -211,6 +211,24 @@
     box-shadow: 0 2px 6px rgba(0, 0, 0, .28);
 }
 
+.dsk-icon-video-mark {
+    position: absolute;
+    left: -4px;
+    bottom: -2px;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(12, 18, 28, .84);
+    border: 1px solid rgba(255, 255, 255, .38);
+    color: #fff;
+    font-size: 11px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+    pointer-events: none;
+}
+
 .dsk-icon-shortcut-mark {
     position: absolute;
     right: -5px;

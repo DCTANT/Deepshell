@@ -64,6 +64,8 @@
                     <span v-else class="dsk-file-ico" :class="'fi-' + icon.kind">
                         <span class="dsk-ext" :class="{ long: icon.ext.length > 3 }">{{ icon.ext }}</span>
                     </span>
+                    <i v-if="icon.thumb && icon.kind === 'video'"
+                       class="el-icon-video-play dsk-icon-video-mark" title="视频"></i>
                     <i v-if="icon.type === 'shortcut'" class="el-icon-link dsk-icon-shortcut-mark"></i>
                 </span>
                 <span class="dsk-icon-name">{{ icon.label }}</span>
@@ -1356,10 +1358,11 @@
                                     <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
                                     <path d="M3 20h58v6H3v-6z" fill="#ffe39b"/>
                                 </svg>
-                                <span v-else-if="deskShowThumb(w, row)" class="dsk-thumb">
-                                    <img v-if="deskThumbSrc(w, row)" :src="deskThumbSrc(w, row)" :alt="row.name"
+                                <span v-else-if="deskThumbSrc(w, row)" class="dsk-thumb">
+                                    <img :src="deskThumbSrc(w, row)" :alt="row.name"
                                          decoding="async" draggable="false"
                                          @error="onDeskThumbError(w, row)">
+                                    <i v-if="isDesktopVideo(row)" class="el-icon-video-play dsk-thumb-play"></i>
                                 </span>
                                 <span v-else class="dsk-file-ico" :class="'fi-' + desktopFileKind(row)">
                                     <span class="dsk-ext" :class="{ long: desktopExtLabel(row).length > 3 }">{{ desktopExtLabel(row) }}</span>

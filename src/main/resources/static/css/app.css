@@ -5583,6 +5583,22 @@ body.resizing .term-host {
 .dsk-grid.medium .dsk-thumb img {
     border-radius: 4px;
 }
+
+.dsk-thumb-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 22px;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, .7);
+    pointer-events: none;
+}
+
+.dsk-grid.medium .dsk-thumb-play {
+    font-size: 15px;
+}
 /* ---------- 传输中心（气泡深色，桌面窗口跟随窗口浅色主题） ---------- */
 .xfer-center-btn.active {
     color: #6ea8ff;
