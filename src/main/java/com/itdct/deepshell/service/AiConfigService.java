@@ -16,9 +16,18 @@ public class AiConfigService {
     private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
     private static final String DEFAULT_MODEL = "deepseek-chat";
     /** AI 终端单轮最多连续执行的步数（可在 AI 设置中调整） */
-    public static final int DEFAULT_MAX_STEPS = 30;
+    public static final int DEFAULT_MAX_STEPS = 50;
     public static final int MIN_MAX_STEPS = 1;
     public static final int MAX_MAX_STEPS = 100;
+    /** 上下文窗口（tokens）：用于上下文占用百分比、压缩保留量，按实际模型配置 */
+    public static final int DEFAULT_CONTEXT_WINDOW = 400_000;
+    public static final int MIN_CONTEXT_WINDOW = 4_096;
+    public static final int MAX_CONTEXT_WINDOW = 2_000_000;
+    /** 配置格式版本：用于把旧版本留下的默认值（30 步 / 128K）平滑升级到新默认 */
+    private static final String CONFIG_VERSION = "2";
+    private static final String CONFIG_VERSION_KEY = "config-version";
+    private static final int LEGACY_DEFAULT_MAX_STEPS = 30;
+    private static final int LEGACY_DEFAULT_CONTEXT_WINDOW = 128_000;
 
     private final Path file = DataDir.root().resolve("ai.properties");
 
@@ -55,22 +64,49 @@ public class AiConfigService {
         return load().getProperty("api-key", "").trim();
     }
 
-    /** AI 终端单轮最大步数：未配置时使用默认值，越界自动收敛到 1-100 */
+    /** AI 终端单轮最大步数：未配置时使用默认值；旧默认 30 会平滑升级到 50 */
     public int maxSteps() {
-        String v = load().getProperty("max-steps", "").trim();
+        Properties p = load();
+        String v = p.getProperty("max-steps", "").trim();
         if (v.isEmpty()) {
             return DEFAULT_MAX_STEPS;
         }
         try {
             int n = Integer.parseInt(v);
+            if (isLegacy(p) && n == LEGACY_DEFAULT_MAX_STEPS) {
+                return DEFAULT_MAX_STEPS;
+            }
             return Math.max(MIN_MAX_STEPS, Math.min(MAX_MAX_STEPS, n));
         } catch (NumberFormatException e) {
             return DEFAULT_MAX_STEPS;
         }
     }
 
+    /** 上下文窗口大小：未配置时默认 400000；旧默认 128000 会平滑升级 */
+    public int contextWindow() {
+        Properties p = load();
+        String v = p.getProperty("context-window", "").trim();
+        if (v.isEmpty()) {
+            return DEFAULT_CONTEXT_WINDOW;
+        }
+        try {
+            int n = Integer.parseInt(v);
+            if (isLegacy(p) && n == LEGACY_DEFAULT_CONTEXT_WINDOW) {
+                return DEFAULT_CONTEXT_WINDOW;
+            }
+            return Math.max(MIN_CONTEXT_WINDOW, Math.min(MAX_CONTEXT_WINDOW, n));
+        } catch (NumberFormatException e) {
+            return DEFAULT_CONTEXT_WINDOW;
+        }
+    }
+
+    private static boolean isLegacy(Properties p) {
+        return p.getProperty(CONFIG_VERSION_KEY, "").trim().isEmpty();
+    }
+
     /** apiKey 传 null / 空白表示保持原值 */
-    public synchronized void save(String provider, String baseUrl, String apiKey, String model, Integer maxSteps) {
+    public synchronized void save(String provider, String baseUrl, String apiKey, String model,
+                                  Integer maxSteps, Integer contextWindow) {
         Properties p = load();
         if (provider != null && !provider.trim().isEmpty()) {
             p.setProperty("provider", provider.trim());
@@ -88,6 +124,11 @@ public class AiConfigService {
             int n = Math.max(MIN_MAX_STEPS, Math.min(MAX_MAX_STEPS, maxSteps));
             p.setProperty("max-steps", String.valueOf(n));
         }
+        if (contextWindow != null) {
+            int n = Math.max(MIN_CONTEXT_WINDOW, Math.min(MAX_CONTEXT_WINDOW, contextWindow));
+            p.setProperty("context-window", String.valueOf(n));
+        }
+        p.setProperty(CONFIG_VERSION_KEY, CONFIG_VERSION);
         try {
             Files.createDirectories(file.getParent());
             try (OutputStream out = Files.newOutputStream(file)) {

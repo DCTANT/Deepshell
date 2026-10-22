@@ -5,6 +5,7 @@ import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.service.AiAgentService;
 import com.itdct.deepshell.service.AiCancellationToken;
 import com.itdct.deepshell.service.AiCommandService;
+import com.itdct.deepshell.service.AiCompactionService;
 import com.itdct.deepshell.service.AiConfigService;
 import com.itdct.deepshell.service.AiConversationService;
 import com.itdct.deepshell.service.AiModelCatalogService;
@@ -34,6 +35,7 @@ public class AiController {
     private final AiAgentService agentService;
     private final AiConversationService convService;
     private final AiModelCatalogService catalog;
+    private final AiCompactionService compactionService;
 
     /** runId -> 取消令牌：前端停止时可直接取消服务端生成/命令执行 */
     private final Map<String, AiCancellationToken> activeRuns = new ConcurrentHashMap<>();
@@ -46,12 +48,13 @@ public class AiController {
 
     public AiController(AiConfigService config, AiCommandService commandService,
                         AiAgentService agentService, AiConversationService convService,
-                        AiModelCatalogService catalog) {
+                        AiModelCatalogService catalog, AiCompactionService compactionService) {
         this.config = config;
         this.commandService = commandService;
         this.agentService = agentService;
         this.convService = convService;
         this.catalog = catalog;
+        this.compactionService = compactionService;
     }
 
     @PreDestroy
@@ -67,7 +70,7 @@ public class AiController {
     @PostMapping("/config")
     public R<Map<String, Object>> saveConfig(@RequestBody AiConfigForm form) {
         config.save(form.getProvider(), form.getBaseUrl(), form.getApiKey(), form.getModel(),
-                form.getMaxSteps());
+                form.getMaxSteps(), form.getContextWindow());
         return R.ok(current());
     }
 
@@ -246,6 +249,15 @@ public class AiController {
         return R.ok();
     }
 
+    /** 上下文压缩：只生成摘要，不执行任何命令 */
+    @PostMapping("/compact")
+    public R<AiCompactionService.CompactResult> compact(@RequestBody CompactForm form) {
+        if (form == null) {
+            throw new IllegalArgumentException("缺少对话内容");
+        }
+        return R.ok(compactionService.compact(form.getMessages(), form.getCwd()));
+    }
+
     /* ---------- AI 终端对话（SQLite 持久化） ---------- */
 
     @GetMapping("/convs")
@@ -258,12 +270,20 @@ public class AiController {
         return R.ok(convService.create(form.getConnId()));
     }
 
+    /** 分叉对话：默认复制全部消息；msgIndex >= 0 时只复制到该条消息（含） */
+    @PostMapping("/convs/{id}/fork")
+    public R<AiConversationService.ConvDto> convFork(@PathVariable Long id,
+                                                     @RequestBody(required = false) ConvForkForm form) {
+        return R.ok(convService.fork(id, form == null ? null : form.getMsgIndex()));
+    }
+
     @PutMapping("/convs/{id}")
     public R<AiConversationService.ConvDto> convSave(@PathVariable Long id, @RequestBody ConvSaveForm form) {
         AiConversationService.ConvForm f = new AiConversationService.ConvForm();
         f.title = form.getTitle();
         f.cwd = form.getCwd();
         f.active = form.getActive();
+        f.pinned = form.getPinned();
         f.msgs = form.getMsgs();
         return R.ok(convService.save(id, f));
     }
@@ -322,6 +342,7 @@ public class AiController {
         m.put("model", config.model());
         m.put("hasKey", !config.apiKey().isEmpty());
         m.put("maxSteps", config.maxSteps());
+        m.put("contextWindow", config.contextWindow());
         return m;
     }
 
@@ -332,6 +353,7 @@ public class AiController {
         private String apiKey;
         private String model;
         private Integer maxSteps;
+        private Integer contextWindow;
     }
 
     @Data
@@ -376,6 +398,18 @@ public class AiController {
         private String title;
         private String cwd;
         private Boolean active;
+        private Boolean pinned;
         private JsonNode msgs;
+    }
+
+    @Data
+    public static class ConvForkForm {
+        private Integer msgIndex;
+    }
+
+    @Data
+    public static class CompactForm {
+        private List<AiAgentService.AgentMessage> messages;
+        private String cwd;
     }
 }

@@ -153,6 +153,408 @@ function loadDesktopIdleMinutes() {
     return 0;
 }
 
+/* ---------- AI 可视化桌面：外观主题 ---------- */
+var DESKTOP_APPEARANCE_KEY = 'deepshell.desktopAppearance';
+var DESKTOP_THEME_DEFAULT = 'dark';
+
+var DESKTOP_THEMES = [
+    {
+        id: 'dark', label: '深色', desc: '深海夜色 · 冷蓝光晕',
+        accent: '#4c8dff',
+        wallpaper: 'radial-gradient(1100px 700px at 78% 6%, rgba(64, 122, 255, .30), transparent 60%),'
+            + ' radial-gradient(900px 600px at 6% 96%, rgba(34, 211, 199, .12), transparent 60%),'
+            + ' linear-gradient(140deg, #070c16 0%, #0f1a2c 46%, #0a111d 100%)',
+        windowColor: '#1b2433', windowTransparency: 6,
+        taskbarColor: '#0c1119', taskbarTransparency: 8,
+        iconFg: '#e6eefb', iconShadow: '0 1px 3px rgba(0, 0, 0, .7)',
+        gridLine: 'rgba(130, 175, 255, .05)'
+    },
+    {
+        id: 'light', label: '浅色', desc: '清爽白昼 · 柔和蓝光',
+        accent: '#2f6fd6',
+        wallpaper: 'radial-gradient(1100px 700px at 80% 4%, rgba(96, 165, 250, .30), transparent 60%),'
+            + ' radial-gradient(820px 560px at 4% 94%, rgba(251, 191, 36, .13), transparent 62%),'
+            + ' linear-gradient(135deg, #f8fbff 0%, #e9f1fb 52%, #dfeaf8 100%)',
+        windowColor: '#ffffff', windowTransparency: 6,
+        taskbarColor: '#eef2f7', taskbarTransparency: 8,
+        iconFg: '#233047', iconShadow: '0 1px 2px rgba(255, 255, 255, .85)',
+        gridLine: 'rgba(64, 110, 180, .07)'
+    },
+    {
+        id: 'spring', label: '春日', desc: '嫩芽绿 · 暖阳米色',
+        accent: '#2f9e6b',
+        wallpaper: 'radial-gradient(1000px 660px at 82% 8%, rgba(134, 239, 172, .38), transparent 62%),'
+            + ' radial-gradient(900px 600px at 4% 92%, rgba(253, 186, 116, .20), transparent 60%),'
+            + ' linear-gradient(135deg, #fbfff5 0%, #e8f6e3 50%, #f7f3e4 100%)',
+        windowColor: '#fbfdf7', windowTransparency: 8,
+        taskbarColor: '#e6f2e3', taskbarTransparency: 10,
+        iconFg: '#26402e', iconShadow: '0 1px 2px rgba(255, 255, 255, .8)',
+        gridLine: 'rgba(63, 157, 106, .08)'
+    },
+    {
+        id: 'pink', label: '粉紫', desc: '粉紫渐变 · 柔光梦幻',
+        accent: '#c14fd6',
+        wallpaper: 'radial-gradient(1100px 700px at 78% 4%, rgba(244, 114, 182, .34), transparent 62%),'
+            + ' radial-gradient(900px 620px at 8% 94%, rgba(168, 85, 247, .26), transparent 62%),'
+            + ' linear-gradient(135deg, #fff7fd 0%, #f3e8ff 48%, #fde9f4 100%)',
+        windowColor: '#fdf7ff', windowTransparency: 8,
+        taskbarColor: '#f1e5fa', taskbarTransparency: 10,
+        iconFg: '#43294f', iconShadow: '0 1px 2px rgba(255, 255, 255, .8)',
+        gridLine: 'rgba(192, 90, 214, .08)'
+    },
+    {
+        id: 'cyber', label: '赛博朋克', desc: '霓虹青紫 · 暗夜脉冲',
+        accent: '#00e5ff',
+        wallpaper: 'radial-gradient(900px 640px at 86% 10%, rgba(0, 229, 255, .26), transparent 60%),'
+            + ' radial-gradient(860px 600px at 6% 90%, rgba(255, 0, 200, .24), transparent 62%),'
+            + ' linear-gradient(140deg, #05030a 0%, #12081f 48%, #06020c 100%)',
+        windowColor: '#130f1e', windowTransparency: 10,
+        taskbarColor: '#08050e', taskbarTransparency: 8,
+        iconFg: '#f3e9ff', iconShadow: '0 0 10px rgba(0, 229, 255, .45), 0 1px 3px rgba(0, 0, 0, .85)',
+        gridLine: 'rgba(0, 229, 255, .07)'
+    },
+    {
+        id: 'classic', label: '经典', desc: '原有深蓝桌面 · 明亮窗口',
+        accent: '#3d7eff',
+        wallpaper: 'radial-gradient(1000px 620px at 76% 12%, rgba(61, 126, 255, .28), transparent 62%),'
+            + ' radial-gradient(760px 520px at 10% 92%, rgba(45, 212, 191, .10), transparent 60%),'
+            + ' linear-gradient(135deg, #14171f 0%, #16325c 52%, #1d2331 100%)',
+        windowColor: '#ffffff', windowTransparency: 2,
+        taskbarColor: '#141922', taskbarTransparency: 6,
+        iconFg: '#e1ebfa', iconShadow: '0 1px 2px rgba(0, 0, 0, .55)',
+        gridLine: 'rgba(130, 175, 255, .045)'
+    }
+];
+
+var DESKTOP_ICON_SIZES = [
+    { id: 'small', label: '小', dot: 12 },
+    { id: 'medium', label: '中', dot: 16 },
+    { id: 'large', label: '大', dot: 20 }
+];
+
+/* ---------- AI 可视化桌面：系统应用图标样式 ---------- */
+var DESKTOP_APP_ICON_STYLE_PREFIX = 'deepshell.desktopAppIconStyles.';
+var DESKTOP_APP_ICON_IMAGE_MAX = 600000;
+var DESKTOP_APP_RELEASE_FALLBACK = '2026-10-21';
+
+var DESKTOP_APP_SHAPES = [
+    { id: 'rounded', label: '圆角' },
+    { id: 'circle', label: '圆形' },
+    { id: 'square', label: '方形' }
+];
+
+var DESKTOP_APP_ICON_COLORS = [
+    '#3d7eff', '#22a06b', '#e6a23c', '#f56c6c', '#8b5cf6',
+    '#0ea5a4', '#f59e0b', '#ec4899', '#64748b', '#111827'
+];
+
+var DESKTOP_APP_START_IDS = {
+    ai: 'ai',
+    editor: 'editor',
+    terminal: 'terminal',
+    transfers: 'transfers',
+    explorer: 'file',
+    settings: 'control'
+};
+
+var DESKTOP_APP_DEFAULTS = {
+    explorer: { icon: 'el-icon-folder-opened', color: '#e6a23c' },
+    trash: { icon: 'el-icon-delete', color: '#7b8798' },
+    editor: { icon: 'el-icon-edit-outline', color: '#3d7eff' },
+    terminal: { icon: 'el-icon-monitor', color: '#22a06b' },
+    transfers: { icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+    settings: { icon: 'el-icon-setting', color: '#54657e' },
+    ai: { icon: 'el-icon-chat-dot-round', color: '#3d7eff' }
+};
+
+var DESKTOP_START_ICON_DEFAULTS = {
+    ai: { icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
+    editor: { icon: 'el-icon-edit-outline', color: '#3d7eff' },
+    terminal: { icon: 'el-icon-monitor', color: '#22a06b' },
+    transfers: { icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+    file: { icon: 'el-icon-folder-opened', color: '#e6a23c' },
+    control: { icon: 'el-icon-setting', color: '#54657e' }
+};
+
+var DESKTOP_DEFAULT_ICON_CHOICES = [
+    'el-icon-monitor', 'el-icon-folder-opened', 'el-icon-folder', 'el-icon-folder-add',
+    'el-icon-folder-checked', 'el-icon-folder-delete', 'el-icon-folder-remove',
+    'el-icon-document', 'el-icon-document-add', 'el-icon-document-copy',
+    'el-icon-document-checked', 'el-icon-document-remove', 'el-icon-files', 'el-icon-tickets',
+    'el-icon-notebook-2', 'el-icon-edit', 'el-icon-edit-outline', 'el-icon-setting',
+    'el-icon-s-tools', 'el-icon-s-operation', 'el-icon-s-promotion', 'el-icon-s-grid',
+    'el-icon-s-fold', 'el-icon-s-platform', 'el-icon-cpu', 'el-icon-coin',
+    'el-icon-pie-chart', 'el-icon-data-line', 'el-icon-data-analysis', 'el-icon-data-board',
+    'el-icon-odometer', 'el-icon-connection', 'el-icon-link', 'el-icon-share',
+    'el-icon-upload2', 'el-icon-download', 'el-icon-refresh', 'el-icon-refresh-left',
+    'el-icon-search', 'el-icon-view', 'el-icon-picture', 'el-icon-picture-outline',
+    'el-icon-video-play', 'el-icon-video-camera', 'el-icon-headset', 'el-icon-microphone',
+    'el-icon-magic-stick', 'el-icon-chat-dot-round', 'el-icon-chat-line-round',
+    'el-icon-bell', 'el-icon-message', 'el-icon-star-on', 'el-icon-star-off',
+    'el-icon-delete', 'el-icon-delete-solid', 'el-icon-key', 'el-icon-lock',
+    'el-icon-unlock', 'el-icon-user', 'el-icon-user-solid', 'el-icon-house',
+    'el-icon-office-building', 'el-icon-location', 'el-icon-location-outline',
+    'el-icon-map-location', 'el-icon-time', 'el-icon-alarm-clock', 'el-icon-date',
+    'el-icon-rank', 'el-icon-sort', 'el-icon-price-tag', 'el-icon-goods',
+    'el-icon-printer', 'el-icon-camera'
+];
+
+function desktopAppDefaultStyle(action) {
+    return DESKTOP_APP_DEFAULTS[action] || null;
+}
+
+function desktopAppStylesKey(connId) {
+    return connId == null || connId === ''
+        ? '' : DESKTOP_APP_ICON_STYLE_PREFIX + String(connId);
+}
+
+function desktopValidAppImage(image) {
+    return typeof image === 'string'
+        && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(image)
+        && image.length <= DESKTOP_APP_ICON_IMAGE_MAX;
+}
+
+/* 图标样式与上传图片均按连接隔离 */
+function loadDesktopAppIconStyles(connId) {
+    var out = {};
+    var key = desktopAppStylesKey(connId);
+    if (!key) {
+        return out;
+    }
+    try {
+        var raw = localStorage.getItem(key);
+        var data = raw ? JSON.parse(raw) : null;
+        if (!data || typeof data !== 'object') {
+            return out;
+        }
+        Object.keys(data).forEach(function (action) {
+            var def = DESKTOP_APP_DEFAULTS[action];
+            if (!def) {
+                return;
+            }
+            var s = data[action] || {};
+            var icon = (typeof s.icon === 'string' && /^el-icon-[a-z0-9-]+$/.test(s.icon))
+                ? s.icon : def.icon;
+            var shape = (s.shape === 'circle' || s.shape === 'square') ? s.shape : 'rounded';
+            out[action] = {
+                icon: icon,
+                color: desktopNormalizeHex(s.color, def.color),
+                shape: shape,
+                image: desktopValidAppImage(s.image) ? s.image : ''
+            };
+        });
+    } catch (e) { /* ignore */ }
+    return out;
+}
+
+function saveDesktopAppIconStyles(connId, styles) {
+    var key = desktopAppStylesKey(connId);
+    if (!key) {
+        return;
+    }
+    try {
+        if (!styles || !Object.keys(styles).length) {
+            localStorage.removeItem(key);
+        } else {
+            localStorage.setItem(key, JSON.stringify(styles));
+        }
+    } catch (e) { /* ignore */ }
+}
+
+/* 从 Element 图标样式中读取可用图标；读取失败时使用常用图标兜底 */
+function loadDesktopAppIconChoices() {
+    var set = {};
+    try {
+        for (var i = 0; i < document.styleSheets.length; i++) {
+            var rules;
+            try {
+                rules = document.styleSheets[i].cssRules;
+            } catch (e) {
+                continue;
+            }
+            if (!rules) {
+                continue;
+            }
+            for (var j = 0; j < rules.length; j++) {
+                var selector = rules[j].selectorText;
+                if (!selector) {
+                    continue;
+                }
+                var parts = selector.split(',');
+                for (var k = 0; k < parts.length; k++) {
+                    var m = parts[k].trim().match(/^\.(el-icon-[a-z0-9-]+)::?before$/);
+                    if (m && m[1] !== 'el-icon-loading') {
+                        set[m[1]] = true;
+                    }
+                }
+            }
+        }
+    } catch (e) { /* ignore */ }
+    var out = Object.keys(set);
+    out.sort();
+    return out.length ? out : DESKTOP_DEFAULT_ICON_CHOICES.slice();
+}
+
+function desktopThemeById(id) {
+    for (var i = 0; i < DESKTOP_THEMES.length; i++) {
+        if (DESKTOP_THEMES[i].id === id) {
+            return DESKTOP_THEMES[i];
+        }
+    }
+    return DESKTOP_THEMES[0];
+}
+
+function desktopDefaultAppearance() {
+    var t = desktopThemeById(DESKTOP_THEME_DEFAULT);
+    return {
+        theme: t.id,
+        windowColor: t.windowColor,
+        windowTransparency: t.windowTransparency,
+        taskbarColor: t.taskbarColor,
+        taskbarTransparency: t.taskbarTransparency,
+        iconSize: 'medium'
+    };
+}
+
+function desktopClampNumber(v, min, max, fallback) {
+    var n = typeof v === 'number' ? v : parseFloat(v);
+    if (isNaN(n)) {
+        return fallback;
+    }
+    return Math.min(max, Math.max(min, n));
+}
+
+function desktopNormalizeHex(v, fallback) {
+    if (typeof v !== 'string') {
+        return fallback;
+    }
+    var s = v.trim();
+    if (/^#[0-9a-f]{3}$/i.test(s)) {
+        return ('#' + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2)
+            + s.charAt(3) + s.charAt(3)).toLowerCase();
+    }
+    if (/^#[0-9a-f]{6}$/i.test(s)) {
+        return s.toLowerCase();
+    }
+    return fallback;
+}
+
+function desktopHexToRgb(hex) {
+    var s = String(hex || '').replace('#', '');
+    if (s.length === 3) {
+        s = s.charAt(0) + s.charAt(0) + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2);
+    }
+    if (s.length !== 6) {
+        return [0, 0, 0];
+    }
+    return [
+        parseInt(s.substring(0, 2), 16),
+        parseInt(s.substring(2, 4), 16),
+        parseInt(s.substring(4, 6), 16)
+    ];
+}
+
+function desktopRgbToHex(r, g, b) {
+    var to = function (n) {
+        var s = Math.max(0, Math.min(255, Math.round(n))).toString(16);
+        return s.length < 2 ? '0' + s : s;
+    };
+    return '#' + to(r) + to(g) + to(b);
+}
+
+/* ratio > 0 向白色混合，ratio < 0 向黑色混合 */
+function desktopShadeHex(hex, ratio) {
+    var rgb = desktopHexToRgb(hex);
+    var target = ratio < 0 ? 0 : 255;
+    var p = Math.min(1, Math.abs(ratio));
+    return desktopRgbToHex(
+        rgb[0] + (target - rgb[0]) * p,
+        rgb[1] + (target - rgb[1]) * p,
+        rgb[2] + (target - rgb[2]) * p
+    );
+}
+
+function desktopColorIsDark(hex) {
+    var rgb = desktopHexToRgb(hex);
+    return (rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114) / 255 < 0.55;
+}
+
+function desktopRgba(hex, alpha) {
+    var rgb = desktopHexToRgb(hex);
+    return 'rgba(' + rgb[0] + ', ' + rgb[1] + ', ' + rgb[2] + ', ' + Math.max(0, Math.min(1, alpha)).toFixed(2) + ')';
+}
+
+/* 桌面图标大小：桌面根图标与资源管理器窗口内视图互不影响 */
+function desktopIconMetrics(size) {
+    if (size === 'small') {
+        return {
+            cellW: 80, cellH: 90, boxW: 76, boxH: 90, gap: 5,
+            app: 38, appFont: 20, appRadius: 8,
+            folderW: 46, folderH: 38, fileW: 36, fileH: 44, fileFont: 12,
+            thumb: 40, nameFont: 11, nameLine: 1.3, nameMaxH: 28,
+            padX: 10, padY: 12
+        };
+    }
+    if (size === 'large') {
+        return {
+            cellW: 120, cellH: 128, boxW: 114, boxH: 128, gap: 7,
+            app: 60, appFont: 31, appRadius: 11,
+            folderW: 66, folderH: 54, fileW: 54, fileH: 66, fileFont: 18,
+            thumb: 58, nameFont: 13, nameLine: 1.35, nameMaxH: 36,
+            padX: 14, padY: 18
+        };
+    }
+    return {
+        cellW: 96, cellH: 104, boxW: 92, boxH: 104, gap: 6,
+        app: 48, appFont: 25, appRadius: 9,
+        folderW: 54, folderH: 44, fileW: 44, fileH: 54, fileFont: 15,
+        thumb: 48, nameFont: 12, nameLine: 1.32, nameMaxH: 32,
+        padX: 12, padY: 16
+    };
+}
+
+function loadDesktopAppearance() {
+    var def = desktopDefaultAppearance();
+    try {
+        var raw = localStorage.getItem(DESKTOP_APPEARANCE_KEY);
+        var data = raw ? JSON.parse(raw) : null;
+        if (!data || typeof data !== 'object') {
+            return def;
+        }
+        var theme = desktopThemeById(data.theme);
+        var size = data.iconSize;
+        if (size !== 'small' && size !== 'medium' && size !== 'large') {
+            size = def.iconSize;
+        }
+        return {
+            theme: theme.id,
+            windowColor: desktopNormalizeHex(data.windowColor, theme.windowColor),
+            windowTransparency: desktopClampNumber(data.windowTransparency, 0, 70, theme.windowTransparency),
+            taskbarColor: desktopNormalizeHex(data.taskbarColor, theme.taskbarColor),
+            taskbarTransparency: desktopClampNumber(data.taskbarTransparency, 0, 70, theme.taskbarTransparency),
+            iconSize: size
+        };
+    } catch (e) {
+        return def;
+    }
+}
+
+function saveDesktopAppearance(app) {
+    if (!app) {
+        return;
+    }
+    try {
+        localStorage.setItem(DESKTOP_APPEARANCE_KEY, JSON.stringify({
+            theme: app.theme,
+            windowColor: app.windowColor,
+            windowTransparency: app.windowTransparency,
+            taskbarColor: app.taskbarColor,
+            taskbarTransparency: app.taskbarTransparency,
+            iconSize: app.iconSize
+        }));
+    } catch (e) { /* ignore */ }
+}
+
 /* 任务管理器「启动应用」开关（按浏览器持久化） */
 function loadDesktopStartup() {
     try {
@@ -176,6 +578,8 @@ function createDesktopWindow(id) {
         pluginVersion: '',
         pluginIconUrl: '',
         pluginUrl: '',
+        pluginVerified: false,
+        pluginBackend: false,
         /* 桌面代码编辑器窗口 */
         editorPath: '',
         editorTitle: '',
@@ -246,6 +650,21 @@ function loadOpenAfterConnect() {
     return 'desktop';
 }
 
+/* 终端危险命令确认：默认开启，可在设置中关闭 */
+function loadDangerConfirmEnabled() {
+    try {
+        return localStorage.getItem('deepshell.dangerConfirm') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
+function loadTermLogHighlight() {
+    try {
+        return localStorage.getItem('deepshell.termLogHighlight') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
 /* 本次启动（同一标签页会话）只有首个连接自动进桌面，之后新开连接一律保持终端标签 */
 function consumeFirstConnect() {
     try {
@@ -261,9 +680,15 @@ function consumeFirstConnect() {
 
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
 var AI_CHAT_MAX = 160;              // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
-var AI_MAX_STEPS_DEFAULT = 30;      // 单轮默认最大步数（可在 AI 设置中调整，1-100）
+var AI_MAX_STEPS_DEFAULT = 50;      // 单轮默认最大步数（可在 AI 设置中调整，1-100）
 var AI_MAX_STEPS_LIMIT = 100;
 var AI_HISTORY_MAX = 50;            // 输入框 ↑↓ 历史条数
+var AI_CONTEXT_WINDOW_DEFAULT = 400000; // 上下文窗口默认值（AI 设置中按模型调整）
+var AI_CONTEXT_WINDOW_MIN = 4096;
+var AI_CONTEXT_WINDOW_MAX = 2000000;
+var AI_CONTEXT_RETAIN_RATIO = 0.16; // 压缩时保留最近约 16% 的上下文窗口（与 DSH 默认一致）
+var AI_CONTEXT_THRESHOLD_RATIO = 0.80; // 超过窗口 80% 提示压缩
+var AI_SYSTEM_PROMPT_TOKENS = 1200; // 系统提示词与工具说明的粗略固定开销
 
 /* 读取浏览器里旧存的对话（新格式 deepshell.aiConv / 更早的单对话格式），返回待上传数组或 [] */
 function readStoredAiConvs(connId) {
@@ -382,6 +807,7 @@ function createTerminalState(connId, conn, clientKey) {
         procAuto: true,
         cmdText: '',
         cmdVisible: true,
+        termAutoScrollEnabled: false,
         cmdHistory: loadHistory(connId),
         desktopBg: loadDesktopBgSettings(connId),
         sendTargets: [],
@@ -418,6 +844,230 @@ function escapeAiHtml(s) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+
+/* ---------- 终端危险命令识别 ---------- */
+function dangerousCommandRule(command) {
+    return dangerousCommandRuleDepth(command, 0);
+}
+
+function dangerousCommandRuleDepth(command, depth) {
+    var raw = String(command == null ? '' : command);
+    if (!raw.trim()) {
+        return null;
+    }
+    var norm = raw.replace(/\\\r?\n/g, ' ').replace(/\r\n?/g, '\n');
+    var prefix = '(?:(?:sudo|doas|command|builtin|exec)(?:\\s+-[^\\s]+)*\\s+|env(?:\\s+[A-Za-z_][A-Za-z0-9_]*=\\S+)*\\s+)*';
+    var re = new RegExp('(?:^|[;&|\\n]\\s*|[$#]\\s+)\\s*' + prefix
+        + '((?:[^\\s/]+/)*[A-Za-z][A-Za-z0-9_.-]*)\\b([^;&|\\n]*)', 'g');
+    var match;
+    while ((match = re.exec(norm)) !== null) {
+        var name = String(match[1] || '').split('/').pop().toLowerCase();
+        var args = String(match[2] || '').trim().split(/\s+/).filter(Boolean);
+        var rule = dangerousCommandFromArgs(name, args, depth);
+        if (rule) {
+            return rule;
+        }
+    }
+    if (/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/i.test(norm)) {
+        return { id: 'fork-bomb', label: 'Fork 炸弹，可能耗尽系统进程' };
+    }
+    if (/(?:^|[^0-9A-Za-z_])>\s*\/dev\/(?:sd|vd|nvme|hd|mmcblk|mapper)\w*/i.test(norm)) {
+        return { id: 'device-write', label: '直接写入磁盘设备，可能破坏数据' };
+    }
+    return null;
+}
+
+function dangerousCommandFromArgs(name, args, depth) {
+    var i;
+    if (name === 'rm') {
+        var flags = [];
+        var targets = [];
+        for (i = 0; i < args.length; i++) {
+            var a = args[i];
+            if (a === '--') {
+                continue;
+            }
+            if (a.charAt(0) === '-' && a.length > 1) {
+                flags.push(a);
+            } else {
+                targets.push(a);
+            }
+        }
+        var flagText = flags.join(' ');
+        var recursive = /(^|\s)--recursive(\s|$)/.test(flagText) || /(^|\s)-[A-Za-z]*[rR]/.test(flagText);
+        var force = /(^|\s)--force(\s|$)/.test(flagText) || /(^|\s)-[A-Za-z]*f/.test(flagText);
+        var noPreserve = /--no-preserve-root/.test(flagText);
+        if ((recursive || force || noPreserve)
+                && targets.some(function (t) { return protectedSystemTarget(t); })) {
+            return { id: 'rm-system', label: '递归或强制删除系统关键目录' };
+        }
+        return null;
+    }
+    if (name === 'mkfs' || name.indexOf('mkfs.') === 0) {
+        return { id: 'mkfs', label: '格式化文件系统，会清空分区数据' };
+    }
+    if (name === 'dd') {
+        for (i = 0; i < args.length; i++) {
+            if (/^of=\/dev\/(?:sd|vd|nvme|hd|mmcblk|mapper)/i.test(args[i])) {
+                return { id: 'dd-device', label: '直接写入磁盘设备，可能破坏数据' };
+            }
+        }
+        return null;
+    }
+    if (name === 'shutdown' || name === 'reboot' || name === 'poweroff' || name === 'halt') {
+        return { id: 'power', label: '关机、重启或停机操作' };
+    }
+    if (name === 'init' && /^(0|6)$/.test(args[0] || '')) {
+        return { id: 'init-power', label: '切换运行级别 0/6，会关机或重启' };
+    }
+    if (name === 'systemctl' && args.some(function (x) {
+        return /^(reboot|poweroff|halt|shutdown)$/.test(x);
+    })) {
+        return { id: 'systemctl-power', label: '关机、重启或停机操作' };
+    }
+    if (name === 'wipefs') {
+        return { id: 'wipefs', label: '擦除文件系统签名，可能导致分区不可用' };
+    }
+    if ((name === 'fdisk' || name === 'parted' || name === 'sgdisk')
+            && !args.some(function (x) { return x === '-l' || x === '--list'; })) {
+        return { id: 'partition', label: '磁盘分区编辑操作，可能破坏分区表' };
+    }
+    if (name === 'kill') {
+        var kill9 = args.indexOf('-9') >= 0 || args.indexOf('-KILL') >= 0;
+        var pids = args.filter(function (x) { return /^\d+$/.test(x); });
+        if (kill9 && pids.indexOf('1') >= 0) {
+            return { id: 'kill-init', label: '强制结束 PID 1，可能导致系统崩溃' };
+        }
+        return null;
+    }
+    if (name === 'chmod' || name === 'chown') {
+        var rootTarget = args.some(function (x) { return protectedSystemTarget(x); });
+        if (rootTarget) {
+            return {
+                id: name + '-system',
+                label: name === 'chmod' ? '修改系统关键目录权限' : '修改系统关键目录所有者'
+            };
+        }
+        return null;
+    }
+    if (name === 'find') {
+        var findRoot = args.length && protectedSystemTarget(args[0]);
+        var deleting = args.indexOf('-delete') >= 0
+            || (args.indexOf('-exec') >= 0 && args.indexOf('rm') >= 0);
+        if (findRoot && deleting) {
+            return { id: 'find-delete', label: '批量删除系统关键目录文件' };
+        }
+        return null;
+    }
+    if ((name === 'bash' || name === 'sh' || name === 'zsh' || name === 'dash') && depth < 2) {
+        var ci = args.indexOf('-c');
+        if (ci >= 0) {
+            var inner = args.slice(ci + 1).join(' ').replace(/^['"]|['"]$/g, '');
+            if (inner) {
+                return dangerousCommandRuleDepth(inner, depth + 1);
+            }
+        }
+    }
+    return null;
+}
+
+function protectedSystemTarget(token) {
+    var s = String(token || '').replace(/^['"]|['"]$/g, '').toLowerCase();
+    if (!s) {
+        return false;
+    }
+    if (/^(~|\$home|\$\{home\})(\/\*?)?$/.test(s)) {
+        return true;
+    }
+    if (/^\/(?:\*?)$/.test(s)) {
+        return true;
+    }
+    return /^\/(?:bin|sbin|etc|usr|var|boot|lib|lib64|opt|home|root|dev|sys|proc|run|srv|mnt|media)(?:\/\*?)?$/.test(s);
+}
+
+/* ---------- 终端日志级别高亮 ----------
+ * 只在普通缓冲区生效，按 VSCode 日志习惯给 INFO / WARN / ERROR 等级别着色。
+ * 高亮器会保留原始 ANSI 转义序列，并缓存跨数据块的不完整转义序列。
+ */
+var TERM_LOG_LEVEL_COLORS = {
+    INFO: '92',
+    WARN: '93',
+    WARNING: '93',
+    ERROR: '91',
+    DEBUG: '96',
+    TRACE: '90',
+    FATAL: '95',
+    CRITICAL: '95',
+    NOTICE: '94'
+};
+var TERM_LOG_LEVEL_WORDS = ['INFO', 'WARN', 'WARNING', 'ERROR', 'DEBUG', 'TRACE', 'FATAL', 'CRITICAL', 'NOTICE'];
+var TERM_LOG_LEVEL_RE = /\b(INFO|WARN(?:ING)?|ERROR|DEBUG|TRACE|FATAL|CRITICAL|NOTICE)\b/gi;
+var TERM_ANSI_RE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])/g;
+
+function terminalLogColorizeText(text) {
+    return String(text || '').replace(TERM_LOG_LEVEL_RE, function (level) {
+        var color = TERM_LOG_LEVEL_COLORS[level.toUpperCase()];
+        return color ? ('\x1b[' + color + 'm' + level + '\x1b[39m') : level;
+    });
+}
+
+function terminalLogAnsiCut(text) {
+    var idx = text.lastIndexOf('\x1b');
+    if (idx < 0) {
+        return text.length;
+    }
+    var tail = text.slice(idx);
+    if (/^\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b]*)?$/.test(tail)) {
+        return idx;
+    }
+    if (/^\x1b\[[0-?]*[ -/]*[@-~]/.test(tail)
+            || /^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/.test(tail)
+            || /^\x1b[@-_]/.test(tail)) {
+        return text.length;
+    }
+    return text.length;
+}
+
+function terminalLogLevelPrefix(word) {
+    var w = String(word || '').toUpperCase();
+    if (w.length < 3 || !/^[A-Z]+$/.test(w)) {
+        return false;
+    }
+    for (var i = 0; i < TERM_LOG_LEVEL_WORDS.length; i++) {
+        var level = TERM_LOG_LEVEL_WORDS[i];
+        if (level !== w && level.indexOf(w) === 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* 把新输出追加到待处理缓冲，返回可立即写入的文本和需要继续等待的尾部 */
+function terminalLogHighlightChunk(pending, chunk) {
+    var buf = (pending || '') + (chunk || '');
+    if (!buf) {
+        return { out: '', pending: '' };
+    }
+    var cut = terminalLogAnsiCut(buf);
+    var head = buf.slice(0, cut);
+    var word = head.match(/([A-Za-z]{3,})$/);
+    if (word && terminalLogLevelPrefix(word[1])) {
+        cut -= word[1].length;
+        head = buf.slice(0, cut);
+    }
+    var out = '';
+    var last = 0;
+    var match;
+    TERM_ANSI_RE.lastIndex = 0;
+    while ((match = TERM_ANSI_RE.exec(head)) !== null) {
+        out += terminalLogColorizeText(head.slice(last, match.index));
+        out += match[0];
+        last = match.index + match[0].length;
+    }
+    out += terminalLogColorizeText(head.slice(last));
+    return { out: out, pending: buf.slice(cut) };
+}
+
 
 function aiInlineMarkdown(text) {
     var codes = [];
@@ -571,6 +1221,43 @@ function clipAiSteps(n) {
         return AI_MAX_STEPS_DEFAULT;
     }
     return Math.max(1, Math.min(AI_MAX_STEPS_LIMIT, v));
+}
+
+function clipAiContextWindow(n) {
+    var v = parseInt(n, 10);
+    if (isNaN(v)) {
+        return AI_CONTEXT_WINDOW_DEFAULT;
+    }
+    return Math.max(AI_CONTEXT_WINDOW_MIN, Math.min(AI_CONTEXT_WINDOW_MAX, v));
+}
+
+function formatTokenCount(n) {
+    var v = Math.max(0, Math.round(Number(n) || 0));
+    if (v < 1000) {
+        return String(v);
+    }
+    var scaled = function (x) {
+        return x >= 100 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
+    };
+    return v < 1000000 ? scaled(v / 1000) + 'K' : scaled(v / 1000000) + 'M';
+}
+
+/* 上下文 token 粗估：中文 / 日文 / 韩文约 1.6 字符/token，代码与英文约 4 字符/token */
+function estimateTextTokens(text) {
+    var s = String(text == null ? '' : text);
+    var cjk = 0;
+    var other = 0;
+    for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if ((c >= 0x2E80 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7AF)
+                || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF00 && c <= 0xFFEF)
+                || (c >= 0x3040 && c <= 0x30FF)) {
+            cjk++;
+        } else {
+            other++;
+        }
+    }
+    return Math.ceil(cjk / 1.6 + other / 4);
 }
 
 /* 自动重连延迟（毫秒），超过次数后停止并提示手动重连 */
@@ -731,6 +1418,11 @@ Vue.component('ai-chat-panel', {
                 return [];
             }
             return t.chatConvs.slice().sort(function (a, b) {
+                var pa = a.pinned ? 1 : 0;
+                var pb = b.pinned ? 1 : 0;
+                if (pa !== pb) {
+                    return pb - pa;
+                }
                 return (b.updatedAt || 0) - (a.updatedAt || 0);
             });
         },
@@ -757,27 +1449,67 @@ Vue.component('ai-chat-panel', {
             }
             return '第 ' + Math.min(run.step || 0, this.stepLimit) + '/' + this.stepLimit + ' 步';
         },
-        contextChars: function () {
-            var n = 0;
-            var conv = this.activeConv;
-            ((conv && conv.msgs) || []).forEach(function (m) {
-                n += (m.text || '').length + (m.cmd || '').length + (m.output || '').length
-                    + (m.note || '').length + (m.reasoning || '').length;
-            });
-            var run = this.activeRun;
-            if (run) {
-                n += (run.streamText || '').length + (run.reasonText || '').length;
+        contextWindow: function () {
+            return this.$root.aiContextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+        },
+        lastUsage: function () {
+            return this.$root.aiLastUsage(this.activeConv);
+        },
+        contextEstimateTokens: function () {
+            return this.$root.aiEstimateContextTokens(this.activeConv);
+        },
+        contextTokens: function () {
+            var exact = this.lastUsage && this.lastUsage.promptTokens != null
+                ? Number(this.lastUsage.promptTokens) : 0;
+            return Math.max(this.contextEstimateTokens, exact);
+        },
+        contextPercent: function () {
+            var w = this.contextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+            return Math.max(0, Math.min(100, Math.round(this.contextTokens * 100 / w)));
+        },
+        contextLevel: function () {
+            if (this.contextPercent >= 90) {
+                return 'danger';
             }
-            return n;
+            return this.contextPercent >= AI_CONTEXT_THRESHOLD_RATIO * 100 ? 'warn' : '';
         },
-        contextTokensText: function () {
-            // 中英文混合按约 2.5 字符/token 粗估，仅用于提示上下文规模
-            var t = Math.ceil(this.contextChars / 2.5);
-            return t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(t);
+        contextUsageText: function () {
+            return formatTokenCount(this.contextTokens);
         },
-        queuedText: function () {
+        contextWindowText: function () {
+            return formatTokenCount(this.contextWindow);
+        },
+        cacheHitText: function () {
+            var u = this.lastUsage;
+            if (!u || !u.promptTokens || u.cachedTokens == null) {
+                return '—';
+            }
+            var pct = Number(u.cachedTokens) * 100 / Number(u.promptTokens);
+            return (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + '%';
+        },
+        compacting: function () {
+            return !!(this.activeConv && this.activeConv._compacting);
+        },
+        hasCompact: function () {
+            var msgs = (this.activeConv && this.activeConv.msgs) || [];
+            for (var i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i] && msgs[i].role === 'compact') {
+                    return true;
+                }
+            }
+            return false;
+        },
+        contextTitle: function () {
+            return '上下文估算 ' + this.contextUsageText + ' / ' + this.contextWindowText
+                + '（' + this.contextPercent + '%），点击查看用量与压缩';
+        },
+        queueItems: function () {
             var c = this.activeConv;
-            return (c && c._queued) || '';
+            return (c && c._queue) || [];
+        },
+        canCompact: function () {
+            return !!(this.activeConv && !this.activeBusy && !this.compacting
+                && this.contextPercent > 50);
         },
         slashItems: function () {
             if (!this.slashOpen) {
@@ -889,6 +1621,11 @@ Vue.component('ai-chat-panel', {
                 }
             }
             var plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+                e.preventDefault();
+                this.$root.aiChatSteer(null, this.activeConv);
+                return;
+            }
             if (plain && e.key === 'ArrowUp' && e.target && e.target.selectionStart === 0
                     && this.$root.aiHistoryPrev(this.tab)) {
                 e.preventDefault();
@@ -902,7 +1639,7 @@ Vue.component('ai-chat-panel', {
             }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                this.$root.aiChatSend();
+                this.$root.aiChatSend(this.tab);
             }
         },
         chooseSlash: function (item) {
@@ -922,11 +1659,26 @@ Vue.component('ai-chat-panel', {
         delConv: function (c) {
             this.$root.aiConvDelete(c);
         },
+        togglePin: function (c) {
+            this.$root.aiConvPin(c || this.activeConv);
+        },
+        fork: function (msgIndex) {
+            this.$root.aiConvFork(this.activeConv, msgIndex);
+        },
+        compact: function () {
+            this.$root.aiCompactContext(this.tab, this.activeConv);
+        },
+        fmtTokens: function (n) {
+            return formatTokenCount(n);
+        },
+        usageTitle: function (u) {
+            return this.$root.aiUsageTitle(u);
+        },
         send: function () {
-            this.$root.aiChatSend();
+            this.$root.aiChatSend(this.tab);
         },
         stop: function () {
-            this.$root.aiChatStop();
+            this.$root.aiChatStop(this.tab);
         },
         confirm: function (m, allow) {
             this.$root.aiChatConfirm(m, allow);
@@ -965,23 +1717,27 @@ Vue.component('ai-chat-panel', {
         copyOutput: function (m) {
             this.$root.copyText(m.output || '');
         },
-        cancelQueue: function () {
-            var c = this.activeConv;
-            if (c) {
-                this.$set(c, '_queued', '');
-            }
+        steer: function () {
+            this.$root.aiChatSteer(null, this.activeConv);
+        },
+        removeQueue: function (q) {
+            this.$root.aiQueueRemove(this.activeConv, q);
+        },
+        restoreQueue: function (q) {
+            this.$root.aiQueueRestore(this.activeConv, q);
+            this.resizeInput();
+        },
+        sendQueued: function (q) {
+            this.$root.aiQueueSend(this.activeConv, q);
+        },
+        steerQueued: function (q) {
+            this.$root.aiQueueSteer(this.activeConv, q);
+        },
+        clearQueue: function () {
+            this.$root.aiQueueClear(this.activeConv);
         },
         useExample: function (text) {
             this.tab.chatInput = text;
-            this.resizeInput();
-        },
-        restoreQueue: function () {
-            var c = this.activeConv;
-            if (!c || this.activeBusy || !c._queued) {
-                return;
-            }
-            this.tab.chatInput = c._queued;
-            this.$set(c, '_queued', '');
             this.resizeInput();
         },
         /* 程序化改写输入框内容后同步高度并聚焦（历史 / 排队恢复） */
@@ -1340,11 +2096,18 @@ Vue.component('term-cmd-bar', {
                 ELEMENT.Message.warning('当前终端未连接');
                 return;
             }
-            t.ws.send(JSON.stringify({ type: 'data', data: c.command + '\r' }));
-            if (this.$root.pushHistory) {
-                this.$root.pushHistory(t, c.command);
-            }
+            var self = this;
             this.snippetsVisible = false;
+            var run = function () {
+                if (!t.ws || t.ws.readyState !== 1) {
+                    return;
+                }
+                t.ws.send(JSON.stringify({ type: 'data', data: c.command + '\r' }));
+                if (self.$root.pushHistory) {
+                    self.$root.pushHistory(t, c.command);
+                }
+            };
+            this.$root.confirmDangerousCommand(c.command, run);
         },
         fillSnippet: function (c) {
             this.tab.cmdText = c.command;
@@ -3122,6 +3885,23 @@ new Vue({
         panelTab: 'file',
         panelWidth: 480,
         desktopClipboard: { connId: null, paths: [], names: [], cut: false },
+        /* AI 可视化桌面：外观主题（主题预设 + 自定义颜色/透明度/图标大小） */
+        desktopThemes: DESKTOP_THEMES,
+        desktopIconSizes: DESKTOP_ICON_SIZES,
+        desktopAppearance: loadDesktopAppearance(),
+        desktopAppIconChoices: loadDesktopAppIconChoices(),
+        desktopAppShapes: DESKTOP_APP_SHAPES,
+        desktopAppIconColors: DESKTOP_APP_ICON_COLORS,
+        desktopAppProps: {
+            visible: false,
+            connId: '',
+            key: '',
+            icon: '',
+            color: '#3d7eff',
+            shape: 'rounded',
+            image: '',
+            iconSearch: ''
+        },
         /* AI 可视化桌面 */
         desktopViews: [
             { id: 'large', label: '大图标', icon: 'el-icon-menu' },
@@ -3131,25 +3911,35 @@ new Vue({
         ],
         desktopAppIcons: [
             { key: 'app:explorer', type: 'app', action: 'explorer', label: '资源管理器',
-              icon: 'el-icon-folder-opened', color: '#e6a23c' },
+              icon: 'el-icon-folder-opened', color: '#e6a23c',
+              category: '文件与存储', desc: '浏览、上传、下载和管理远程服务器文件' },
             { key: 'app:trash', type: 'app', action: 'trash', label: '回收站',
-              icon: 'el-icon-delete', color: '#7b8798' },
+              icon: 'el-icon-delete', color: '#7b8798',
+              category: '文件与存储', desc: '查看并恢复已删除的远程文件' },
             { key: 'app:editor', type: 'app', action: 'editor', label: '文本编辑器',
-              icon: 'el-icon-edit-outline', color: '#3d7eff' },
+              icon: 'el-icon-edit-outline', color: '#3d7eff',
+              category: '效率工具', desc: '新建、打开和编辑远程服务器上的文本文件' },
             { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
-              icon: 'el-icon-monitor', color: '#22a06b' },
+              icon: 'el-icon-monitor', color: '#22a06b',
+              category: '终端与连接', desc: '在当前桌面连接上打开新的 SSH 终端窗口' },
             { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
-              icon: 'el-icon-s-promotion', color: '#0ea5a4' },
+              icon: 'el-icon-s-promotion', color: '#0ea5a4',
+              category: '文件与存储', desc: '查看所有会话的上传、下载任务与进度' },
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
-              icon: 'el-icon-setting', color: '#54657e' },
+              icon: 'el-icon-setting', color: '#54657e',
+              category: '系统工具', desc: '调整桌面外观、时钟、网络与系统设置' },
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
-              icon: 'el-icon-chat-dot-round', color: '#3d7eff' }
+              icon: 'el-icon-chat-dot-round', color: '#3d7eff',
+              category: 'AI 助手', desc: '使用 AI 助手执行命令、排查服务器问题' }
         ],
         /* 已安装的桌面应用插件（由后端扫描数据目录） */
         desktopPlugins: [],
+        builtinPlugins: [],
         pluginMgrVisible: false,
         pluginMgrLoading: false,
+        pluginBuiltinLoading: false,
         pluginImporting: false,
+        pluginBuiltinInstalling: '',
         pluginMgrError: '',
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
@@ -3207,9 +3997,11 @@ new Vue({
             { id: 'appearance', label: '外观与桌面', icon: 'el-icon-monitor' },
             { id: 'time', label: '时间与时钟', icon: 'el-icon-time' },
             { id: 'shortcuts', label: '快捷键', icon: 'el-icon-set-up' },
+            { id: 'safety', label: '终端与安全', icon: 'el-icon-lock' },
             { id: 'power', label: '电源与休眠', icon: 'el-icon-switch-button' },
             { id: 'ai', label: 'AI 助手', icon: 'el-icon-magic-stick' },
             { id: 'network', label: '网络与连接', icon: 'el-icon-connection' },
+            { id: 'backup', label: '备份与还原', icon: 'el-icon-folder-opened' },
             { id: 'system', label: '系统信息', icon: 'el-icon-cpu' }
         ],
         desktopResizeDirs: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
@@ -3444,15 +4236,32 @@ new Vue({
         pfForm: emptyPfForm(),
         folderMenu: { visible: false, x: 0, y: 0, row: null },
         topMenuVisible: false,
+        topSubMenu: '',
         topMenuPos: { top: 48, right: 10 },
         connImportVisible: false,
         connExportVisible: false,
         connExportChecked: [],
+        backupVisible: false,
+        backupBusy: false,
+        backupAction: '',
+        backupBusyText: '',
+        backupFile: null,
+        backupFileName: '',
+        backupFileSize: 0,
+        backupResult: null,
+        backupRestored: false,
         fontVisible: false,
         hotkeyVisible: false,
         bgVisible: false,
         helpVisible: false,
         aboutVisible: false,
+        /* DeepShell 后端自身的关闭 / 重启状态 */
+        appLifecycle: {
+            visible: false,
+            mode: 'shutdown',
+            status: 'closing',
+            elapsed: 0
+        },
         lanVisible: false,
         authSetVisible: false,
         authSetSaving: false,
@@ -3479,6 +4288,7 @@ new Vue({
             ['LOGIN_FAILURE', '登录失败'],
             ['LOGOUT', '退出登录'],
             ['AI_COMMAND', 'AI 命令'],
+            ['AI_CONTEXT_COMPACT', 'AI 上下文压缩'],
             ['FILE_UPLOAD', '上传'],
             ['FILE_DOWNLOAD', '下载'],
             ['FILE_DELETE', '删除'],
@@ -3503,11 +4313,15 @@ new Vue({
         aiSetVisible: false,
         aiSetSaving: false,
         aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false,
-            maxSteps: AI_MAX_STEPS_DEFAULT },
+            maxSteps: AI_MAX_STEPS_DEFAULT, contextWindow: AI_CONTEXT_WINDOW_DEFAULT },
         aiMaxSteps: AI_MAX_STEPS_DEFAULT,
+        aiContextWindow: AI_CONTEXT_WINDOW_DEFAULT,
         aiSlashCommands: [
             { id: 'new', label: '/new', desc: '开始一个新对话' },
             { id: 'clear', label: '/clear', desc: '清空当前对话记录' },
+            { id: 'compact', label: '/compact', desc: '压缩较早上下文，保留最近消息' },
+            { id: 'pin', label: '/pin', desc: '置顶 / 取消置顶当前对话' },
+            { id: 'fork', label: '/fork', desc: '复制当前对话并开始分叉' },
             { id: 'auto', label: '/auto', desc: '切换为自动执行' },
             { id: 'manual', label: '/manual', desc: '切换为每步确认' },
             { id: 'desktop', label: '/desktop', desc: '打开 AI 可视化桌面' },
@@ -3533,13 +4347,15 @@ new Vue({
             authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
             tlsSelfSigned: false, tlsNextEnabled: false
         },
-        appInfo: { version: '1.2.0', java: '', os: '', dataDir: '' },
+        appInfo: { version: '1.3.0', java: '', os: '', dataDir: '', buildTime: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
         bgTarget: 'terminal',
         bgDraft: { url: '', opacity: 0.35, blur: 0 },
         openAfterConnect: loadOpenAfterConnect(),
+        dangerConfirmEnabled: loadDangerConfirmEnabled(),
+        termLogHighlightEnabled: loadTermLogHighlight(),
         chatExamples: ['看看哪个目录占用空间最大', '这台服务器上都装了什么服务，分别监听哪些端口',
             '最近的登录记录里有没有异常 IP'],
         fontCandidates: ['Consolas', 'JetBrains Mono', 'Courier New', 'monospace',
@@ -3552,8 +4368,38 @@ new Vue({
                 try { localStorage.setItem('deepshell.hotkey', JSON.stringify(v)); } catch (e) { /* ignore */ }
             }
         },
+        desktopAppearance: {
+            deep: true,
+            handler: function (v) {
+                var self = this;
+                if (this._deskAppearanceSaveTimer) {
+                    clearTimeout(this._deskAppearanceSaveTimer);
+                }
+                this._deskAppearanceSaveTimer = setTimeout(function () {
+                    self._deskAppearanceSaveTimer = null;
+                    saveDesktopAppearance(v);
+                }, 180);
+            }
+        },
+        desktopAppStyleConnId: function (nv, ov) {
+            if (nv !== ov) {
+                this.applyDesktopAppIconStylesForConn(nv);
+            }
+        },
         openAfterConnect: function (v) {
             try { localStorage.setItem('deepshell.openAfterConnect', v); } catch (e) { /* ignore */ }
+        },
+        dangerConfirmEnabled: function (v) {
+            try { localStorage.setItem('deepshell.dangerConfirm', v ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        termLogHighlightEnabled: function (v) {
+            try { localStorage.setItem('deepshell.termLogHighlight', v ? '1' : '0'); } catch (e) { /* ignore */ }
+            this.resetAllTermLogStreams(!v);
+        },
+        topMenuVisible: function (v) {
+            if (!v) {
+                this.topSubMenu = '';
+            }
         },
         cmdOpts: {
             deep: true,
@@ -3666,6 +4512,34 @@ new Vue({
         }
     },
     computed: {
+        appLifecycleTitle: function () {
+            var s = this.appLifecycle;
+            if (s.mode === 'shutdown') {
+                return s.status === 'closing' ? '正在关闭 DeepShell 后端' : 'DeepShell 后端服务已关闭';
+            }
+            if (s.status === 'timeout') {
+                return '等待 DeepShell 重启超时';
+            }
+            if (s.status === 'restored') {
+                return 'DeepShell 已重启，正在刷新页面';
+            }
+            return '正在重启 DeepShell 后端';
+        },
+        appLifecycleSub: function () {
+            var s = this.appLifecycle;
+            if (s.mode === 'shutdown') {
+                return s.status === 'closing'
+                    ? '正在停止终端、文件传输与 AI 服务，请稍候…'
+                    : '终端、文件传输与 AI 服务均已停止。重新启动 DeepShell 后，点击下方按钮刷新页面。';
+            }
+            if (s.status === 'timeout') {
+                return '已等待 ' + s.elapsed + ' 秒仍未检测到服务恢复，请确认 DeepShell 后端是否启动成功，然后刷新页面。';
+            }
+            if (s.status === 'restored') {
+                return '服务已恢复，页面即将自动刷新。';
+            }
+            return '服务退出后会自动重新启动，已等待 ' + s.elapsed + ' 秒，恢复后页面将自动刷新…';
+        },
         /* 当前选中的 AI 厂商预设（弹窗中展示默认地址 / Key 获取地址） */
         aiCurrentPreset: function () {
             var id = this.aiSetForm.provider;
@@ -4384,6 +5258,128 @@ new Vue({
             var t = this.desktopTab;
             return (t && t.desktopBg) || { url: '', opacity: 0.35, blur: 0 };
         },
+        desktopAppearanceTheme: function () {
+            return desktopThemeById(this.desktopAppearance.theme);
+        },
+        desktopAppearanceScheme: function () {
+            return desktopColorIsDark(this.desktopAppearance.windowColor) ? 'dark' : 'light';
+        },
+        desktopAppearanceCustomized: function () {
+            var app = this.desktopAppearance;
+            var t = this.desktopAppearanceTheme;
+            return String(app.windowColor).toLowerCase() !== t.windowColor
+                || Number(app.windowTransparency) !== Number(t.windowTransparency)
+                || String(app.taskbarColor).toLowerCase() !== t.taskbarColor
+                || Number(app.taskbarTransparency) !== Number(t.taskbarTransparency);
+        },
+        desktopThemeStyle: function () {
+            var app = this.desktopAppearance || desktopDefaultAppearance();
+            var theme = this.desktopAppearanceTheme;
+            var winDark = desktopColorIsDark(app.windowColor);
+            var taskDark = desktopColorIsDark(app.taskbarColor);
+            var winAlpha = 1 - desktopClampNumber(app.windowTransparency, 0, 70, 6) / 100;
+            var taskAlpha = 1 - desktopClampNumber(app.taskbarTransparency, 0, 70, 8) / 100;
+            var panelAlpha = Math.max(winAlpha, 0.94);
+            var accent = theme.accent;
+            var fg = winDark ? '#e9f0fa' : '#253142';
+            var fgDim = winDark ? 'rgba(224, 234, 248, .64)' : 'rgba(37, 49, 66, .60)';
+            var line = winDark ? 'rgba(255, 255, 255, .11)' : 'rgba(18, 34, 61, .12)';
+            var subtle = winDark ? 'rgba(255, 255, 255, .045)' : 'rgba(18, 34, 61, .035)';
+            var hover = winDark ? 'rgba(255, 255, 255, .075)' : 'rgba(47, 111, 214, .075)';
+            var taskFg = taskDark ? '#e7eefb' : '#26313f';
+            var taskFgDim = taskDark ? 'rgba(226, 236, 250, .62)' : 'rgba(38, 49, 63, .58)';
+            var m = desktopIconMetrics(app.iconSize);
+            return {
+                '--dsk-wallpaper': theme.wallpaper,
+                '--dsk-grid-line': theme.gridLine,
+                '--dsk-desktop-fg': theme.iconFg,
+                '--dsk-desktop-fg-shadow': theme.iconShadow,
+                '--dsk-accent': accent,
+                '--dsk-accent-soft': desktopRgba(accent, winDark ? .20 : .12),
+                '--dsk-win-bg': desktopRgba(app.windowColor, winAlpha),
+                '--dsk-win-border': winDark ? 'rgba(148, 180, 224, .30)' : 'rgba(112, 152, 210, .50)',
+                '--dsk-win-fg': fg,
+                '--dsk-win-fg-dim': fgDim,
+                '--dsk-win-line': line,
+                '--dsk-win-subtle': subtle,
+                '--dsk-win-hover': hover,
+                '--dsk-win-selected': desktopRgba(accent, winDark ? .30 : .16),
+                '--dsk-win-title-bg': winDark ? 'rgba(255, 255, 255, .055)' : 'rgba(15, 32, 58, .045)',
+                '--dsk-win-btn-fg': winDark ? 'rgba(232, 240, 251, .76)' : '#3d4e66',
+                '--dsk-win-btn-hover': winDark ? 'rgba(255, 255, 255, .10)' : 'rgba(15, 32, 58, .08)',
+                '--dsk-win-shadow': winDark
+                    ? '0 18px 46px rgba(0, 0, 0, .50), 0 2px 8px rgba(0, 0, 0, .35)'
+                    : '0 18px 46px rgba(15, 30, 55, .28), 0 2px 8px rgba(15, 30, 55, .10)',
+                '--dsk-panel-bg': desktopRgba(app.windowColor, panelAlpha),
+                '--dsk-panel-fg': fg,
+                '--dsk-panel-fg-dim': fgDim,
+                '--dsk-panel-line': line,
+                '--dsk-panel-subtle': subtle,
+                '--dsk-panel-hover': hover,
+                '--dsk-panel-head-1': desktopShadeHex(accent, -0.56),
+                '--dsk-panel-head-2': desktopShadeHex(accent, -0.74),
+                '--dsk-panel-accent': accent,
+                '--dsk-panel-shadow': winDark
+                    ? '0 18px 48px rgba(0, 0, 0, .55)'
+                    : '0 18px 48px rgba(15, 30, 55, .24)',
+                '--dsk-card-bg': winDark ? 'rgba(255, 255, 255, .04)' : 'rgba(255, 255, 255, .55)',
+                '--dsk-field-bg': winDark ? 'rgba(255, 255, 255, .06)' : 'rgba(255, 255, 255, .72)',
+                '--dsk-taskbar-bg': desktopRgba(app.taskbarColor, taskAlpha),
+                '--dsk-taskbar-border': taskDark ? 'rgba(0, 0, 0, .45)' : 'rgba(15, 32, 58, .10)',
+                '--dsk-taskbar-fg': taskFg,
+                '--dsk-taskbar-fg-dim': taskFgDim,
+                '--dsk-taskbar-hover': taskDark ? 'rgba(255, 255, 255, .09)' : 'rgba(15, 32, 58, .07)',
+                '--dsk-taskbar-active': taskDark ? 'rgba(255, 255, 255, .14)' : 'rgba(15, 32, 58, .11)',
+                '--dsk-taskbar-line': taskDark ? 'rgba(255, 255, 255, .12)' : 'rgba(15, 32, 58, .12)',
+                '--dsk-icon-cell-w': m.cellW + 'px',
+                '--dsk-icon-cell-h': m.cellH + 'px',
+                '--dsk-icon-box-w': m.boxW + 'px',
+                '--dsk-icon-box-h': m.boxH + 'px',
+                '--dsk-icon-gap': m.gap + 'px',
+                '--dsk-icon-app': m.app + 'px',
+                '--dsk-icon-app-font': m.appFont + 'px',
+                '--dsk-icon-radius': m.appRadius + 'px',
+                '--dsk-icon-folder-w': m.folderW + 'px',
+                '--dsk-icon-folder-h': m.folderH + 'px',
+                '--dsk-icon-file-w': m.fileW + 'px',
+                '--dsk-icon-file-h': m.fileH + 'px',
+                '--dsk-icon-file-font': m.fileFont + 'px',
+                '--dsk-icon-thumb': m.thumb + 'px',
+                '--dsk-icon-name-font': m.nameFont + 'px',
+                '--dsk-icon-name-line': m.nameLine,
+                '--dsk-icon-name-max-h': m.nameMaxH + 'px',
+                '--dsk-icon-pad-x': m.padX + 'px',
+                '--dsk-icon-pad-y': m.padY + 'px'
+            };
+        },
+        desktopAppStyleConnId: function () {
+            var t = this.desktopTab;
+            return t && t.connId != null ? String(t.connId) : '';
+        },
+        desktopAppPropsApp: function () {
+            var key = this.desktopAppProps.key;
+            for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                if (this.desktopAppIcons[i].key === key) {
+                    return this.desktopAppIcons[i];
+                }
+            }
+            return null;
+        },
+        desktopAppPropsIcons: function () {
+            var q = String(this.desktopAppProps.iconSearch || '').trim().toLowerCase();
+            if (!q) {
+                return this.desktopAppIconChoices;
+            }
+            return this.desktopAppIconChoices.filter(function (ic) {
+                return ic.toLowerCase().indexOf(q) >= 0;
+            });
+        },
+        desktopAppReleaseTime: function () {
+            return (this.appInfo && this.appInfo.buildTime) || DESKTOP_APP_RELEASE_FALLBACK;
+        },
+        desktopAppVersion: function () {
+            return (this.appInfo && this.appInfo.version) || '1.3.0';
+        },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
             if (!t || t.connId == null) {
@@ -4473,6 +5469,11 @@ new Vue({
                     plugin: p,
                     desc: p.description || ''
                 };
+            });
+        },
+        builtinAvailablePlugins: function () {
+            return (this.builtinPlugins || []).filter(function (p) {
+                return !p.installed || p.updateAvailable;
             });
         },
         desktopStartAppMatches: function () {
@@ -4630,6 +5631,11 @@ new Vue({
                 return [];
             }
             return t.chatConvs.slice().sort(function (a, b) {
+                var pa = a.pinned ? 1 : 0;
+                var pb = b.pinned ? 1 : 0;
+                if (pa !== pb) {
+                    return pb - pa;
+                }
                 return (b.updatedAt || 0) - (a.updatedAt || 0);
             });
         },
@@ -5128,6 +6134,7 @@ new Vue({
         toggleTopMenu: function () {
             if (this.topMenuVisible) {
                 this.topMenuVisible = false;
+                this.topSubMenu = '';
                 return;
             }
             var el = this.$refs.menuBtn;
@@ -5138,20 +6145,85 @@ new Vue({
                     right: Math.max(8, Math.round(window.innerWidth - r.right - 2))
                 };
             }
+            this.topSubMenu = '';
             this.topMenuVisible = true;
         },
         onMenuCommand: function (cmd) {
             this.topMenuVisible = false;
-            if (cmd === 'connImport') {
+            this.topSubMenu = '';
+            var t = this.activeTab;
+            if (cmd === 'openConnection') {
+                this.openConnectDialog();
+            } else if (cmd === 'newConnection') {
+                this.openNewConnDialog();
+            } else if (cmd === 'connImport') {
                 this.connImportVisible = true;
             } else if (cmd === 'connExport') {
                 this.openConnExport();
+            } else if (cmd === 'reconnectActive') {
+                if (t) {
+                    this.reconnectTab(t);
+                } else {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                }
+            } else if (cmd === 'disconnectActive') {
+                if (t) {
+                    this.disconnectTab(t);
+                } else {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                }
+            } else if (cmd === 'portfwd') {
+                if (t) {
+                    this.openPortForwards(t);
+                } else {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                }
+            } else if (cmd === 'sysinfo') {
+                if (!t || !t.sessionId) {
+                    ELEMENT.Message.warning('当前标签尚未连接，无法获取系统信息');
+                } else {
+                    this.sysInfoTitle = t.title;
+                    this.sysInfoSessionId = t.sessionId;
+                    this.sysInfo = null;
+                    this.sysInfoError = '';
+                    this.sysInfoVisible = true;
+                }
             } else if (cmd === 'font') {
                 this.fontVisible = true;
             } else if (cmd === 'hotkey') {
                 this.hotkeyVisible = true;
             } else if (cmd === 'bg') {
                 this.openBgSettings('terminal');
+            } else if (cmd === 'fitTerminal') {
+                this.fitActive();
+            } else if (cmd === 'toggleTermLogHighlight') {
+                this.termLogHighlightEnabled = !this.termLogHighlightEnabled;
+                ELEMENT.Message.success(this.termLogHighlightEnabled
+                    ? '已开启日志级别高亮' : '已关闭日志级别高亮');
+            } else if (cmd === 'openAiPanel') {
+                if (!t) {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                } else {
+                    this.panelVisible = true;
+                    this.panelTab = 'ai';
+                    this.ensurePanelWide();
+                    var self = this;
+                    this.$nextTick(function () {
+                        self.fitActive();
+                        self.scrollAiChat();
+                    });
+                }
+            } else if (cmd === 'openFilePanel') {
+                if (!t) {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                } else {
+                    this.panelVisible = true;
+                    this.panelTab = 'file';
+                }
+            } else if (cmd === 'toggleDangerConfirm') {
+                this.dangerConfirmEnabled = !this.dangerConfirmEnabled;
+                ELEMENT.Message.success(this.dangerConfirmEnabled
+                    ? '已开启危险命令确认' : '已关闭危险命令确认');
             } else if (cmd === 'help') {
                 this.helpVisible = true;
             } else if (cmd === 'about') {
@@ -5167,6 +6239,14 @@ new Vue({
             } else if (cmd === 'ai') {
                 this.loadAiConfig();
                 this.aiSetVisible = true;
+            } else if (cmd === 'desktop') {
+                this.openDesktopInNewTab(t);
+            } else if (cmd === 'backup') {
+                this.openBackupDialog();
+            } else if (cmd === 'appRestart') {
+                this.askAppLifecycle('restart');
+            } else if (cmd === 'appShutdown') {
+                this.askAppLifecycle('shutdown');
             }
         },
         /* ---------- AI 设置（厂商预设 + 模型列表实时获取） ---------- */
@@ -5190,6 +6270,7 @@ new Vue({
             return http.get('/api/ai/config').then(function (d) {
                 if (d) {
                     self.aiMaxSteps = clipAiSteps(d.maxSteps);
+                    self.aiContextWindow = clipAiContextWindow(d.contextWindow);
                 }
             }).catch(function () { /* 未配置或接口不可用时用默认值 */ });
         },
@@ -5206,6 +6287,8 @@ new Vue({
                 self.aiSetForm.hasKey = !!d.hasKey;
                 self.aiMaxSteps = clipAiSteps(d.maxSteps);
                 self.aiSetForm.maxSteps = self.aiMaxSteps;
+                self.aiContextWindow = clipAiContextWindow(d.contextWindow);
+                self.aiSetForm.contextWindow = self.aiContextWindow;
                 self.aiSetForm.apiKey = '';
                 var ready = self.aiProviders.length ? Promise.resolve() : self.loadAiProviders();
                 ready.then(function () {
@@ -5305,12 +6388,14 @@ new Vue({
             }
             this.aiSetSaving = true;
             var maxSteps = clipAiSteps(this.aiSetForm.maxSteps);
+            var contextWindow = clipAiContextWindow(this.aiSetForm.contextWindow);
             http.post('/api/ai/config', {
                 provider: this.aiSetForm.provider,
                 baseUrl: baseUrl,
                 model: model,
                 apiKey: this.aiSetForm.apiKey,
-                maxSteps: maxSteps
+                maxSteps: maxSteps,
+                contextWindow: contextWindow
             }).then(function (d) {
                 ELEMENT.Message.success('AI 设置已保存');
                 if (d) {
@@ -5320,6 +6405,11 @@ new Vue({
                     self.aiSetForm.hasKey = !!d.hasKey;
                     self.aiMaxSteps = clipAiSteps(d.maxSteps);
                     self.aiSetForm.maxSteps = self.aiMaxSteps;
+                    self.aiContextWindow = clipAiContextWindow(d.contextWindow);
+                    self.aiSetForm.contextWindow = self.aiContextWindow;
+                } else {
+                    self.aiContextWindow = contextWindow;
+                    self.aiSetForm.contextWindow = contextWindow;
                 }
                 self.aiSetForm.apiKey = '';
                 self.aiSetVisible = false;
@@ -5433,6 +6523,10 @@ new Vue({
                 return;
             }
             if (id === 'clear') {
+                if (conv._compacting) {
+                    ELEMENT.Message.warning('正在压缩上下文，请稍后再清空');
+                    return;
+                }
                 if (conv._run && conv._run.busy) {
                     ELEMENT.Message.warning('该对话正在执行中，请先停止再清空');
                     return;
@@ -5455,12 +6549,24 @@ new Vue({
                 ELEMENT.Message.success(id === 'auto' ? '已切换为自动执行' : '已切换为每步确认');
                 return;
             }
+            if (id === 'compact') {
+                this.aiCompactContext(t, conv);
+                return;
+            }
+            if (id === 'pin') {
+                this.aiConvPin(conv);
+                return;
+            }
+            if (id === 'fork') {
+                this.aiConvFork(conv, -1);
+                return;
+            }
             if (id === 'desktop') {
                 this.openDesktopInNewTab(t);
                 return;
             }
             if (id === 'stop') {
-                this.aiChatStop();
+                this.aiChatStop(t);
                 return;
             }
             if (id === 'help') {
@@ -5510,16 +6616,351 @@ new Vue({
             if (!conv.msgs) {
                 this.$set(conv, 'msgs', []);
             }
+            if (conv.pinned == null) {
+                this.$set(conv, 'pinned', false);
+            }
+            if (conv._compacting == null) {
+                this.$set(conv, '_compacting', false);
+            }
             if (!conv._hist) {
                 this.$set(conv, '_hist', []);
             }
             if (conv._histIdx == null) {
                 this.$set(conv, '_histIdx', -1);
             }
-            if (conv._queued == null) {
-                this.$set(conv, '_queued', '');
+            if (!conv._queue) {
+                this.$set(conv, '_queue', []);
             }
             return conv;
+        },
+        /* 最近一次真实模型用量：压缩后，旧消息带的用量不能再算作当前上下文 */
+        aiLastUsage: function (conv) {
+            var msgs = (conv && conv.msgs) || [];
+            var compactAt = 0;
+            for (var c = msgs.length - 1; c >= 0; c--) {
+                if (msgs[c] && msgs[c].role === 'compact') {
+                    compactAt = Number(msgs[c].at) || 0;
+                    break;
+                }
+            }
+            for (var i = msgs.length - 1; i >= 0; i--) {
+                var m = msgs[i];
+                if (!m || m.role === 'compact') {
+                    continue;
+                }
+                if (m.usage && (m.usage.promptTokens != null || m.usage.totalTokens != null)) {
+                    // 压缩前保留的最近消息仍带着旧 usage，必须用时间戳排除
+                    if (compactAt && !(Number(m.usageAt) >= compactAt)) {
+                        continue;
+                    }
+                    return m.usage;
+                }
+            }
+            return null;
+        },
+        aiUsageTitle: function (usage) {
+            if (!usage) {
+                return '';
+            }
+            var parts = [];
+            if (usage.promptTokens != null) {
+                parts.push('输入 ' + formatTokenCount(usage.promptTokens));
+            }
+            if (usage.completionTokens != null) {
+                parts.push('输出 ' + formatTokenCount(usage.completionTokens));
+            }
+            if (usage.cachedTokens != null && usage.promptTokens) {
+                var pct = Number(usage.cachedTokens) * 100 / Number(usage.promptTokens);
+                parts.push('缓存命中 ' + (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + '%');
+            }
+            if (usage.reasoningTokens) {
+                parts.push('思考 ' + formatTokenCount(usage.reasoningTokens));
+            }
+            if (usage.estimated) {
+                parts.push('字符估算');
+            }
+            return parts.join(' · ');
+        },
+        aiMsgChars: function (m) {
+            if (!m) {
+                return 0;
+            }
+            return (m.text || '').length + (m.cmd || '').length + (m.output || '').length
+                + (m.note || '').length + (m.reasoning || '').length + 24;
+        },
+        aiHistoryEntries: function (msgs) {
+            var self = this;
+            var out = [];
+            (msgs || []).forEach(function (m) {
+                if (!m) {
+                    return;
+                }
+                if (m.role === 'compact') {
+                    out.push({
+                        role: 'user',
+                        content: '[较早对话的自动压缩摘要]\n请将以下摘要视为已经发生并确认的背景，'
+                            + '不要复述，也不要向用户提及压缩本身，直接继续最近的消息。\n\n' + (m.text || '')
+                    });
+                } else if (m.role === 'user') {
+                    out.push({ role: 'user', content: m.text || '' });
+                } else if (m.role === 'ai' && m.cmd) {
+                    out.push({
+                        role: 'assistant',
+                        content: JSON.stringify({ cmd: m.cmd, note: m.note || '' })
+                    });
+                    if (m.state === 'done') {
+                        out.push({ role: 'user', content: self.aiToolResult(m) });
+                    } else if (m.state === 'skipped') {
+                        out.push({
+                            role: 'user',
+                            content: '（用户跳过了这条命令）请不要重复执行它，换一种方式或先向用户说明。'
+                        });
+                    }
+                } else if (m.role === 'ai' && m.text) {
+                    out.push({ role: 'assistant', content: m.text });
+                }
+            });
+            return out;
+        },
+        aiEstimateContextTokensForMsgs: function (msgs) {
+            var entries = this.aiHistoryEntries(msgs);
+            var tokens = AI_SYSTEM_PROMPT_TOKENS;
+            entries.forEach(function (e) {
+                tokens += estimateTextTokens(e.content) + 4;
+            });
+            return tokens;
+        },
+        aiEstimateContextTokens: function (conv) {
+            return this.aiEstimateContextTokensForMsgs((conv && conv.msgs) || []);
+        },
+        /* 当前上下文占用：取最近真实 Prompt 用量与对话估算的较大值，供压缩阈值与提示复用 */
+        aiContextStats: function (conv) {
+            var estimate = this.aiEstimateContextTokens(conv);
+            var u = this.aiLastUsage(conv);
+            var exact = u && u.promptTokens != null ? Number(u.promptTokens) : 0;
+            var tokens = Math.max(estimate, exact);
+            var windowSize = this.aiContextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+            var percent = windowSize > 0
+                ? Math.max(0, Math.min(100, Math.round(tokens * 100 / windowSize))) : 0;
+            return { tokens: tokens, window: windowSize, percent: percent };
+        },
+        /* 选择较早消息用于压缩：保留最近约 35%（且不超过窗口 16%），优先在用户消息边界切分 */
+        aiBuildCompactPlan: function (conv) {
+            var msgs = (conv && conv.msgs) || [];
+            if (msgs.length < 4) {
+                return null;
+            }
+            var totalChars = 0;
+            var lastCompact = -1;
+            for (var i = 0; i < msgs.length; i++) {
+                totalChars += this.aiMsgChars(msgs[i]);
+                if (msgs[i].role === 'compact') {
+                    lastCompact = i;
+                }
+            }
+            if (totalChars < 3000) {
+                return null;
+            }
+            var windowSize = this.aiContextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+            var retainTokens = Math.max(2000, Math.min(24000, Math.round(windowSize * AI_CONTEXT_RETAIN_RATIO)));
+            // 手动压缩可以比自动压缩更积极：保留最近约 35%，同时不超过窗口 16%，最低保留 3000 字符
+            var retainChars = Math.max(3000, Math.min(totalChars * 0.35, retainTokens * 4));
+            var from = msgs.length;
+            var recentChars = 0;
+            var guard = 0;
+            for (var j = msgs.length - 1; j >= 0; j--) {
+                recentChars += this.aiMsgChars(msgs[j]);
+                from = j;
+                guard++;
+                if ((recentChars >= retainChars && guard >= 6) || guard >= 40) {
+                    break;
+                }
+            }
+            if (from <= 0) {
+                return null;
+            }
+            // 尽量让最近一段从用户消息开始，避免留下孤立的 AI 回复
+            while (from > 0 && msgs[from] && msgs[from].role !== 'user') {
+                from--;
+            }
+            if (from <= 0) {
+                return null;
+            }
+            // 旧压缩摘要必须一起进入新摘要，避免同时残留多张压缩卡
+            if (lastCompact >= 0 && from <= lastCompact) {
+                from = lastCompact + 1;
+                while (from < msgs.length - 1 && msgs[from] && msgs[from].role !== 'user') {
+                    from++;
+                }
+            }
+            if (from >= msgs.length) {
+                from = msgs.length - 1;
+            }
+            if (from <= 0 || from >= msgs.length) {
+                return null;
+            }
+            var compacted = msgs.slice(0, from);
+            if (compacted.length < 2) {
+                return null;
+            }
+            var compactedChars = 0;
+            compacted.forEach(function (m) {
+                compactedChars += (m.text || '').length + (m.cmd || '').length
+                    + (m.output || '').length + (m.note || '').length;
+            });
+            if (compactedChars < 800) {
+                return null;
+            }
+            var history = this.aiHistoryEntries(compacted);
+            if (history.length < 2) {
+                return null;
+            }
+            var recent = msgs.slice(from);
+            var beforeTokens = this.aiEstimateContextTokens(conv);
+            var afterTokens = this.aiEstimateContextTokensForMsgs(recent) + 1600;
+            return {
+                start: from,
+                compactCount: compacted.length,
+                keepCount: recent.length,
+                beforeTokens: beforeTokens,
+                afterTokens: Math.min(beforeTokens, afterTokens),
+                compactedChars: compactedChars,
+                history: history
+            };
+        },
+        /* 压缩较早上下文：调用模型生成结构化检查点，替换旧消息，保留最近消息 */
+        aiCompactContext: function (t, conv) {
+            if (!conv) {
+                return;
+            }
+            if (conv._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍候');
+                return;
+            }
+            var stats = this.aiContextStats(conv);
+            if (stats.percent <= 50) {
+                ELEMENT.Message.info('上下文使用未超过 50%，暂不需要压缩');
+                return;
+            }
+            var run = this.aiConvRun(conv);
+            if (run && run.busy) {
+                ELEMENT.Message.warning('AI 正在执行中，请先停止或等待完成');
+                return;
+            }
+            var plan = this.aiBuildCompactPlan(conv);
+            if (!plan) {
+                ELEMENT.Message.info('对话还不够长，没有可压缩的较早消息');
+                return;
+            }
+            var self = this;
+            var msg = '将较早的 ' + plan.compactCount + ' 条消息压缩成一份摘要，保留最近 '
+                + plan.keepCount + ' 条消息。\n\n估算上下文：≈' + formatTokenCount(plan.beforeTokens)
+                + ' → ≈' + formatTokenCount(plan.afterTokens) + ' tokens。\n\n'
+                + '压缩会调用一次模型生成摘要，可能产生少量费用；原对话的最近消息不受影响。';
+            this.$confirm(msg, '压缩上下文', {
+                type: 'warning',
+                confirmButtonText: '开始压缩',
+                cancelButtonText: '取消'
+            }).then(function () {
+                self.$set(conv, '_compacting', true);
+                return http.post('/api/ai/compact', {
+                    messages: plan.history,
+                    cwd: conv.cwd || ''
+                }, { silent: true });
+            }).then(function (res) {
+                if (!res || !res.summary) {
+                    throw new Error('模型未返回有效摘要');
+                }
+                var recent = conv.msgs.slice(plan.start);
+                var summaryTokens = estimateTextTokens(res.summary) + 4;
+                var afterTokens = self.aiEstimateContextTokensForMsgs(recent) + summaryTokens;
+                var compactMsg = {
+                    role: 'compact',
+                    text: res.summary,
+                    beforeMessages: plan.compactCount,
+                    keepMessages: recent.length,
+                    beforeTokens: plan.beforeTokens,
+                    afterTokens: afterTokens,
+                    at: Date.now(),
+                    open: false,
+                    usage: res.usage || null
+                };
+                conv.msgs = [compactMsg].concat(recent);
+                conv.updatedAt = Date.now();
+                self.$set(conv, '_compacting', false);
+                if (t && t.chatConvId === conv.id) {
+                    t.chatMsgs = conv.msgs;
+                    self.scrollAiChat(true);
+                }
+                self.saveConv(t, conv);
+                ELEMENT.Message.success('已压缩 ' + plan.compactCount + ' 条消息，估算上下文减少约 '
+                    + formatTokenCount(Math.max(0, plan.beforeTokens - afterTokens)) + ' tokens');
+            }).catch(function (e) {
+                self.$set(conv, '_compacting', false);
+                if (e && e.message && e.message !== 'cancel') {
+                    if (!(e.response && e.response.status === 401)) {
+                        ELEMENT.Message.error(e.message);
+                    }
+                }
+            });
+        },
+        aiConvPin: function (c) {
+            if (!c || c.id == null) {
+                return;
+            }
+            var self = this;
+            var next = !c.pinned;
+            http.put('/api/ai/convs/' + c.id, { pinned: next }).then(function (d) {
+                self.$set(c, 'pinned', d && d.pinned != null ? !!d.pinned : next);
+                ELEMENT.Message.success(next ? '对话已置顶' : '已取消置顶');
+            }).catch(function () { /* 拦截器已提示 */ });
+        },
+        aiConvFork: function (conv, msgIndex) {
+            if (!conv || conv.id == null) {
+                return;
+            }
+            if (conv._compacting || (conv._run && conv._run.busy)) {
+                ELEMENT.Message.warning('对话正在执行或压缩，请稍后再分叉');
+                return;
+            }
+            var msgs = conv.msgs || [];
+            if (!msgs.length) {
+                ELEMENT.Message.info('当前对话为空，无法分叉');
+                return;
+            }
+            var count = msgIndex == null || msgIndex < 0
+                ? msgs.length : Math.min(msgs.length, msgIndex + 1);
+            var self = this;
+            this.$confirm('将从「' + conv.title + '」复制前 ' + count + ' 条消息为一个新对话，原对话保持不变。',
+                '分叉对话', { type: 'info', confirmButtonText: '创建分叉', cancelButtonText: '取消' })
+                .then(function () {
+                    return http.post('/api/ai/convs/' + conv.id + '/fork', {
+                        msgIndex: msgIndex == null ? -1 : msgIndex
+                    });
+                })
+                .then(function (nc) {
+                    if (!nc) {
+                        return;
+                    }
+                    var t = self.activeTab;
+                    if (!t || !(t.chatConvs || []).some(function (x) { return x.id === conv.id; })) {
+                        t = self.tabs.find(function (tab) {
+                            return (tab.chatConvs || []).some(function (x) { return x.id === conv.id; });
+                        }) || t;
+                    }
+                    if (!t) {
+                        return;
+                    }
+                    self.aiEnsureConvState(nc);
+                    t.chatConvs.forEach(function (x) { x.active = false; });
+                    t.chatConvs.push(nc);
+                    t.chatConvId = nc.id;
+                    t.chatMsgs = nc.msgs || [];
+                    t.chatInput = '';
+                    self.scrollAiChat(true);
+                    ELEMENT.Message.success('已创建分叉对话「' + nc.title + '」');
+                })
+                .catch(function () { /* 取消或拦截器已提示 */ });
         },
         aiConvRun: function (conv) {
             return conv && conv._run ? conv._run : null;
@@ -5635,6 +7076,11 @@ new Vue({
             if (!t || t.chatLoading) {
                 return;
             }
+            var current = this.aiActiveConv(t);
+            if (current && current._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍候');
+                return;
+            }
             this.aiConvCreateRemote(t).catch(function () { /* 拦截器已提示 */ });
         },
         aiConvSwitch: function (c) {
@@ -5646,10 +7092,8 @@ new Vue({
             t.chatConvId = c.id;
             t.chatMsgs = c.msgs || [];
             t.chatInput = c.input || '';
-            // 之前排队但未发出的消息，回到该对话时变成输入框草稿
-            if (c._queued && !(c._run && c._run.busy)) {
-                t.chatInput = c._queued;
-                this.$set(c, '_queued', '');
+            if (c._queue && c._queue.length && !(c._run && c._run.busy)) {
+                ELEMENT.Message.info('该对话有 ' + c._queue.length + ' 条排队消息，可在输入框上方发送');
             }
             // 服务端记住当前对话（纯切换不刷新时间，失败不影响使用）
             http.put('/api/ai/convs/' + c.id, { active: true }).catch(function () { /* ignore */ });
@@ -5658,6 +7102,10 @@ new Vue({
         aiConvDelete: function (c) {
             var t = this.activeTab;
             if (!t || !c) {
+                return;
+            }
+            if (c._compacting) {
+                ELEMENT.Message.warning('该对话正在压缩上下文，请稍后再删除');
                 return;
             }
             if (c._run && c._run.busy) {
@@ -5689,8 +7137,8 @@ new Vue({
                 })
                 .catch(function () { /* 取消或失败（已提示） */ });
         },
-        aiChatSend: function () {
-            var t = this.activeTab;
+        aiChatSend: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -5710,28 +7158,45 @@ new Vue({
             this.aiEnsureConvState(conv);
             var run = conv._run;
             var text = (t.chatInput || '').trim();
+            if (conv._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍候再发送');
+                return;
+            }
             if (run.busy) {
                 // 忙碌时按 Enter 不打断当前任务，而是排队到本轮结束自动发送
                 if (!text) {
                     return;
                 }
-                this.$set(conv, '_queued', text);
+                this.aiEnqueue(conv, text);
                 conv.input = '';
                 t.chatInput = '';
-                ELEMENT.Message.success('已排队，本轮结束后自动发送');
+                ELEMENT.Message.success('已排队（' + conv._queue.length + ' 条），本轮结束后自动发送');
                 return;
             }
             if (!text) {
                 return;
             }
-            conv.msgs.push({ role: 'user', text: text });
+            t.chatInput = '';
+            this.aiChatStartRun(t, conv, text, false);
+        },
+        /* 真正开始一轮对话：追加用户消息、重置运行态并进入 AI 循环 */
+        aiChatStartRun: function (t, conv, text, steer) {
+            if (!t || !conv || !text) {
+                return;
+            }
+            this.aiEnsureConvState(conv);
+            var run = conv._run;
+            var userMsg = { role: 'user', text: text };
+            if (steer) {
+                userMsg.steer = true;
+            }
+            conv.msgs.push(userMsg);
             if (!conv.title || conv.title === '新对话') {
                 conv.title = text.slice(0, 20);
             }
             this.aiPushHistory(conv, text);
             conv.updatedAt = Date.now();
             conv.input = '';
-            t.chatInput = '';
             run.stop = false;
             run.step = 0;
             run.phase = '';
@@ -5746,8 +7211,156 @@ new Vue({
             this.scrollAiChat(true);
             this.aiChatLoop(t, conv, run, run.seq);
         },
-        aiChatStop: function () {
+        /* 插话：中断当前生成/命令，立即以新要求开始下一轮；不进入排队 */
+        aiChatSteer: function (text, conv) {
+            var t;
+            if (conv) {
+                t = this.aiTabOfConv(conv);
+            } else {
+                t = this.activeTab;
+                conv = this.aiActiveConv(t);
+            }
+            if (!t || !conv) {
+                return;
+            }
+            this.aiEnsureConvState(conv);
+            var fromInput = text == null;
+            var value = (fromInput ? (t.chatInput || '') : text).trim();
+            if (!value) {
+                ELEMENT.Message.info('请输入要插话的内容');
+                return;
+            }
+            if (conv._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍后再插话');
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var run = conv._run;
+            if (!run.busy) {
+                if (fromInput) {
+                    t.chatInput = value;
+                    this.aiChatSend(t);
+                } else {
+                    if ((t.chatInput || '').trim() === value) {
+                        t.chatInput = '';
+                    }
+                    this.aiChatStartRun(t, conv, value, false);
+                }
+                return;
+            }
+            // 先让旧一轮的异步回调全部失效，再通知服务端取消模型/命令
+            run.stop = true;
+            run.seq = (run.seq || 0) + 1;
+            if (run.requestId) {
+                var runId = run.requestId;
+                run.requestId = '';
+                http.post('/api/ai/agent/cancel', { runId: runId }).catch(function () { /* ignore */ });
+            }
+            var abortStream = run.abortController;
+            run.abortController = null;
+            if (abortStream) {
+                try { abortStream.abort(); } catch (e) { /* ignore */ }
+            }
+            var abortExec = run.execController;
+            run.execController = null;
+            if (abortExec) {
+                try { abortExec.abort(); } catch (e) { /* ignore */ }
+            }
+            run.busy = false;
+            run.stop = false;
+            run.phase = '';
+            run.streamText = '';
+            run.reasonText = '';
+            (conv.msgs || []).forEach(function (m) {
+                if (m.role === 'ai' && m.cmd && (m.state === 'confirm' || m.state === 'running')) {
+                    m.state = 'skipped';
+                    m.error = '已插话，本轮已中断';
+                }
+            });
+            if (fromInput) {
+                t.chatInput = '';
+            } else if ((t.chatInput || '').trim() === value) {
+                t.chatInput = '';
+            }
+            this.aiChatStartRun(t, conv, value, true);
+            ELEMENT.Message.success('已插话，上一轮已中断');
+        },
+        aiTabOfConv: function (conv) {
             var t = this.activeTab;
+            if (!conv) {
+                return t;
+            }
+            if (t && (t.chatConvs || []).some(function (x) { return x.id === conv.id; })) {
+                return t;
+            }
+            return this.tabs.find(function (tab) {
+                return (tab.chatConvs || []).some(function (x) { return x.id === conv.id; });
+            }) || t;
+        },
+        aiEnqueue: function (conv, text) {
+            if (!conv || !text) {
+                return null;
+            }
+            this.aiEnsureConvState(conv);
+            var item = {
+                id: 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+                text: text
+            };
+            conv._queue.push(item);
+            return item;
+        },
+        aiQueueRemove: function (conv, item) {
+            if (!conv || !conv._queue || !item) {
+                return;
+            }
+            var i = conv._queue.indexOf(item);
+            if (i >= 0) {
+                conv._queue.splice(i, 1);
+            }
+        },
+        aiQueueRestore: function (conv, item) {
+            if (!conv || !item) {
+                return;
+            }
+            var t = this.aiTabOfConv(conv);
+            this.aiQueueRemove(conv, item);
+            if (t) {
+                t.chatInput = item.text;
+            }
+            ELEMENT.Message.info('已放回输入框，可编辑后重新发送');
+        },
+        aiQueueSend: function (conv, item) {
+            if (!conv || !item) {
+                return;
+            }
+            if (conv._run && conv._run.busy) {
+                this.aiQueueSteer(conv, item);
+                return;
+            }
+            var t = this.aiTabOfConv(conv);
+            this.aiQueueRemove(conv, item);
+            if (t) {
+                t.chatInput = item.text;
+                this.aiChatSend(t);
+            }
+        },
+        aiQueueSteer: function (conv, item) {
+            if (!conv || !item) {
+                return;
+            }
+            this.aiQueueRemove(conv, item);
+            this.aiChatSteer(item.text, conv);
+        },
+        aiQueueClear: function (conv) {
+            if (conv) {
+                this.$set(conv, '_queue', []);
+            }
+        },
+        aiChatStop: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -5838,7 +7451,8 @@ new Vue({
                 }
                 if (r.kind === 'reply') {
                     conv.msgs.push({ role: 'ai', text: r.text || '（无内容）',
-                        reasoning: reasoning, reasonOpen: false });
+                        reasoning: reasoning, reasonOpen: false, usage: r.usage || null,
+                        usageAt: r.usage ? Date.now() : null });
                     self.aiChatFinish(t, conv, '');
                     return;
                 }
@@ -5846,7 +7460,8 @@ new Vue({
                 var m = {
                     role: 'ai', cmd: r.command, note: r.note || '', danger: r.danger || '',
                     state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: '',
-                    reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0
+                    reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0,
+                    usage: r.usage || null, usageAt: r.usage ? Date.now() : null
                 };
                 if (r.needConfirm) {
                     m.state = 'confirm';
@@ -6207,46 +7822,28 @@ new Vue({
             if (t && conv && t.chatConvId === conv.id) {
                 this.scrollAiChat();
             }
-            // 本轮正常结束后自动发送排队消息；停止 / 失败 / 达上限时保留，交给用户决定
-            if (conv && !note && conv._queued && t && t.chatConvId === conv.id
+            // 本轮正常结束后自动发送队首消息；输入框里新打的草稿会追加到队尾，不覆盖
+            if (conv && !note && conv._queue && conv._queue.length && t && t.chatConvId === conv.id
                     && t.sessionId && run && !run.busy) {
-                var queued = conv._queued;
-                this.$set(conv, '_queued', '');
-                t.chatInput = queued;
+                var draft = (t.chatInput || '').trim();
+                if (draft) {
+                    this.aiEnqueue(conv, draft);
+                    t.chatInput = '';
+                }
+                var queued = conv._queue.shift();
+                t.chatInput = queued.text;
                 var self = this;
                 this.$nextTick(function () {
-                    if (t.chatConvId === conv.id && t.chatInput === queued
+                    if (t.chatConvId === conv.id && t.chatInput === queued.text
                             && conv._run && !conv._run.busy) {
-                        self.aiChatSend();
+                        self.aiChatSend(t);
                     }
                 });
             }
         },
         /* 把某个对话拼成发给模型的消息序列（assistant=模型的 JSON 命令 / 回复，user=命令执行结果） */
         aiBuildHistory: function (conv) {
-            var self = this;
-            var out = [];
-            ((conv && conv.msgs) || []).forEach(function (m) {
-                if (m.role === 'user') {
-                    out.push({ role: 'user', content: m.text || '' });
-                } else if (m.role === 'ai' && m.cmd) {
-                    out.push({
-                        role: 'assistant',
-                        content: JSON.stringify({ cmd: m.cmd, note: m.note || '' })
-                    });
-                    if (m.state === 'done') {
-                        out.push({ role: 'user', content: self.aiToolResult(m) });
-                    } else if (m.state === 'skipped') {
-                        out.push({
-                            role: 'user',
-                            content: '（用户跳过了这条命令）请不要重复执行它，换一种方式或先向用户说明。'
-                        });
-                    }
-                } else if (m.role === 'ai' && m.text) {
-                    out.push({ role: 'assistant', content: m.text });
-                }
-            });
-            return out;
+            return this.aiHistoryEntries((conv && conv.msgs) || []);
         },
         aiToolResult: function (m) {
             var lines = ['[命令执行结果]', '$ ' + m.cmd, '退出码: ' + (m.rc == null ? '未知' : m.rc)];
@@ -6447,6 +8044,7 @@ new Vue({
             this.desktop.taskbarMenu.visible = false;
             this.desktop.trayMenu.visible = false;
             this.desktop.startOpen = false;
+            this.desktopAppProps.visible = false;
             this.desktop.startSearch = '';
             this.desktop.startResults = [];
             this.desktop.startSearched = false;
@@ -6489,17 +8087,19 @@ new Vue({
         },
         desktopWindowIcon: function (w) {
             var type = (w && w.type) || 'explorer';
-            if (type === 'ai') {
-                return 'el-icon-chat-dot-round';
-            }
-            if (type === 'transfer') {
-                return 'el-icon-s-promotion';
+            var appAction = ({
+                explorer: 'explorer',
+                trash: 'trash',
+                editor: 'editor',
+                terminal: 'terminal',
+                transfer: 'transfers',
+                ai: 'ai'
+            })[type];
+            if (appAction) {
+                return this.desktopAppIconByAction(appAction, 'el-icon-folder-opened');
             }
             if (type === 'disk') {
                 return 'el-icon-pie-chart';
-            }
-            if (type === 'terminal') {
-                return 'el-icon-monitor';
             }
             if (type === 'taskmgr') {
                 return 'el-icon-cpu';
@@ -6524,12 +8124,6 @@ new Vue({
             }
             if (type === 'plugin') {
                 return 'el-icon-s-grid';
-            }
-            if (type === 'editor') {
-                return 'el-icon-edit-outline';
-            }
-            if (type === 'trash') {
-                return 'el-icon-delete';
             }
             return 'el-icon-folder-opened';
         },
@@ -6649,7 +8243,9 @@ new Vue({
             }
             if (w && w.type === 'plugin') {
                 var ver = w.pluginVersion ? ' · v' + w.pluginVersion : '';
-                return '桌面插件' + ver + ' · 沙箱运行';
+                var trust = w.pluginVerified ? ' · 官方签名' : ' · 未验证';
+                var backend = w.pluginBackend ? ' · 后端模块' : '';
+                return '桌面插件' + ver + trust + backend + ' · 沙箱运行';
             }
             if (w && w.type === 'editor') {
                 return '文本编辑器 · ' + (w.editorSubtitle || w.editorPath || '未命名');
@@ -10139,7 +11735,7 @@ new Vue({
             this.desktop.iconMenu = {
                 visible: true,
                 x: Math.max(8, Math.min(ev.clientX, window.innerWidth - 240)),
-                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 130)),
+                y: Math.max(8, Math.min(ev.clientY, window.innerHeight - 220)),
                 key: item.key
             };
         },
@@ -10160,9 +11756,316 @@ new Vue({
                 this.openDesktopIcon(item);
             } else if (action === 'emptyTrash') {
                 this.emptyDesktopTrash();
+            } else if (action === 'props') {
+                this.openDesktopAppProperties(item);
             } else if (action === 'hide') {
                 this.setDesktopAppHidden(key, true);
             }
+        },
+        /* ---------- 系统应用属性与图标样式 ---------- */
+        desktopShapeRadius: function (shape) {
+            if (shape === 'circle') {
+                return '50%';
+            }
+            if (shape === 'square') {
+                return '3px';
+            }
+            return '';
+        },
+        desktopShapeLabel: function (shape) {
+            for (var i = 0; i < DESKTOP_APP_SHAPES.length; i++) {
+                if (DESKTOP_APP_SHAPES[i].id === shape) {
+                    return DESKTOP_APP_SHAPES[i].label;
+                }
+            }
+            return '圆角';
+        },
+        desktopAppIconImage: function (app) {
+            return app && app.image ? app.image : '';
+        },
+        desktopAppIconStyle: function (app) {
+            var color = (app && app.color) || '#54657e';
+            var rgb = desktopHexToRgb(color);
+            var light = (rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114) / 255;
+            var style = {
+                background: color,
+                color: light > 0.78 ? '#243044' : '#ffffff'
+            };
+            var radius = this.desktopShapeRadius(app && app.shape);
+            if (radius) {
+                style.borderRadius = radius;
+            }
+            return style;
+        },
+        desktopAppIconByAction: function (action, fallback) {
+            for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                if (this.desktopAppIcons[i].action === action) {
+                    return this.desktopAppIcons[i].icon;
+                }
+            }
+            return fallback || 'el-icon-s-grid';
+        },
+        desktopAppImageByAction: function (action) {
+            for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                if (this.desktopAppIcons[i].action === action) {
+                    return this.desktopAppIcons[i].image || '';
+                }
+            }
+            return '';
+        },
+        desktopWindowIconImage: function (w) {
+            var type = (w && w.type) || 'explorer';
+            var action = ({
+                explorer: 'explorer',
+                trash: 'trash',
+                editor: 'editor',
+                terminal: 'terminal',
+                transfer: 'transfers',
+                ai: 'ai'
+            })[type];
+            return action ? this.desktopAppImageByAction(action) : '';
+        },
+        openDesktopAppProperties: function (item) {
+            if (typeof item === 'string') {
+                for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                    if (this.desktopAppIcons[i].key === item) {
+                        item = this.desktopAppIcons[i];
+                        break;
+                    }
+                }
+            }
+            if (!item) {
+                return;
+            }
+            this.desktop.iconMenu.visible = false;
+            this.desktop.startOpen = false;
+            this.desktop.menu.visible = false;
+            this.desktop.calendarOpen = false;
+            this.desktop.taskbarMenu.visible = false;
+            this.closeDesktopSubMenus();
+            this.desktopAppProps = {
+                visible: true,
+                connId: this.desktopAppStyleConnId,
+                key: item.key,
+                icon: item.icon,
+                color: item.color,
+                shape: item.shape || 'rounded',
+                image: item.image || '',
+                iconSearch: ''
+            };
+            var self = this;
+            this.$nextTick(function () {
+                self.scrollDesktopAppIconIntoView();
+            });
+        },
+        scrollDesktopAppIconIntoView: function () {
+            var grid = this.$refs.appIconGrid;
+            if (!grid) {
+                return;
+            }
+            var active = grid.querySelector('.dsk-icon-choice.active');
+            if (!active) {
+                return;
+            }
+            var gr = grid.getBoundingClientRect();
+            var ar = active.getBoundingClientRect();
+            if (ar.top < gr.top || ar.bottom > gr.bottom) {
+                grid.scrollTop += ar.top - gr.top - 8;
+            }
+        },
+        closeDesktopAppProperties: function () {
+            this.desktopAppProps.visible = false;
+        },
+        resetDesktopAppIconForm: function () {
+            var app = this.desktopAppPropsApp;
+            if (!app) {
+                return;
+            }
+            var def = desktopAppDefaultStyle(app.action);
+            if (!def) {
+                return;
+            }
+            this.desktopAppProps.icon = def.icon;
+            this.desktopAppProps.color = def.color;
+            this.desktopAppProps.shape = 'rounded';
+            this.desktopAppProps.image = '';
+        },
+        pickDesktopAppIconFile: function () {
+            if (this.$refs.appIconFileInput) {
+                this.$refs.appIconFileInput.click();
+            }
+        },
+        onDesktopAppIconFile: function (ev) {
+            var input = ev && ev.target;
+            var file = input && input.files && input.files[0];
+            if (input) {
+                input.value = '';
+            }
+            if (!file) {
+                return;
+            }
+            if (!/^image\/(?:png|jpe?g|webp)$/i.test(file.type || '')) {
+                ELEMENT.Message.warning('仅支持 PNG / JPG / WebP 图片');
+                return;
+            }
+            if (file.size > 8 * 1024 * 1024) {
+                ELEMENT.Message.warning('图片不能超过 8 MB');
+                return;
+            }
+            var self = this;
+            var reader = new FileReader();
+            reader.onload = function () {
+                var img = new Image();
+                img.onload = function () {
+                    try {
+                        var size = 192;
+                        var canvas = document.createElement('canvas');
+                        canvas.width = size;
+                        canvas.height = size;
+                        var ctx = canvas.getContext('2d');
+                        ctx.clearRect(0, 0, size, size);
+                        var scale = Math.max(size / img.width, size / img.height);
+                        var dw = Math.max(1, Math.round(img.width * scale));
+                        var dh = Math.max(1, Math.round(img.height * scale));
+                        ctx.drawImage(img, Math.round((size - dw) / 2), Math.round((size - dh) / 2), dw, dh);
+                        var data = canvas.toDataURL('image/png');
+                        if (!desktopValidAppImage(data)) {
+                            ELEMENT.Message.warning('图片处理后体积过大，请换一张更简单的图片');
+                            return;
+                        }
+                        self.desktopAppProps.image = data;
+                    } catch (e) {
+                        ELEMENT.Message.warning('图片处理失败，请换一张图片重试');
+                    }
+                };
+                img.onerror = function () {
+                    ELEMENT.Message.warning('无法读取图片，请更换文件');
+                };
+                img.src = reader.result;
+            };
+            reader.onerror = function () {
+                ELEMENT.Message.warning('图片读取失败，请重新选择');
+            };
+            reader.readAsDataURL(file);
+        },
+        resetDesktopAppIconState: function () {
+            var self = this;
+            this.desktopAppIcons.forEach(function (a) {
+                var def = desktopAppDefaultStyle(a.action);
+                if (!def) {
+                    return;
+                }
+                a.icon = def.icon;
+                a.color = def.color;
+                self.$set(a, 'shape', 'rounded');
+                self.$set(a, 'image', '');
+            });
+            this.desktopStartApps.forEach(function (a) {
+                var def = DESKTOP_START_ICON_DEFAULTS[a.id];
+                if (!def) {
+                    return;
+                }
+                a.icon = def.icon;
+                a.color = def.color;
+                self.$set(a, 'shape', 'rounded');
+                self.$set(a, 'image', '');
+            });
+        },
+        applyDesktopAppIconStyle: function (action, style) {
+            if (!action || !style) {
+                return;
+            }
+            var self = this;
+            var image = desktopValidAppImage(style.image) ? style.image : '';
+            this.desktopAppIcons.forEach(function (a) {
+                if (a.action !== action) {
+                    return;
+                }
+                a.icon = style.icon;
+                a.color = style.color;
+                self.$set(a, 'shape', style.shape || 'rounded');
+                self.$set(a, 'image', image);
+            });
+            var startId = DESKTOP_APP_START_IDS[action];
+            if (!startId) {
+                return;
+            }
+            this.desktopStartApps.forEach(function (a) {
+                if (a.id !== startId) {
+                    return;
+                }
+                a.icon = style.icon;
+                a.color = style.color;
+                self.$set(a, 'shape', style.shape || 'rounded');
+                self.$set(a, 'image', image);
+            });
+        },
+        applyDesktopAppIconStylesForConn: function (connId) {
+            var self = this;
+            this.resetDesktopAppIconState();
+            var styles = loadDesktopAppIconStyles(connId);
+            Object.keys(styles).forEach(function (action) {
+                self.applyDesktopAppIconStyle(action, styles[action]);
+            });
+        },
+        saveDesktopAppIconStyle: function () {
+            var app = this.desktopAppPropsApp;
+            var form = this.desktopAppProps;
+            if (!app) {
+                this.closeDesktopAppProperties();
+                return;
+            }
+            var connId = form.connId || this.desktopAppStyleConnId;
+            if (!connId) {
+                ELEMENT.Message.warning('当前没有可用的连接，无法保存图标样式');
+                return;
+            }
+            var def = desktopAppDefaultStyle(app.action) || { icon: app.icon, color: app.color };
+            var icon = (typeof form.icon === 'string' && /^el-icon-[a-z0-9-]+$/.test(form.icon))
+                ? form.icon : def.icon;
+            var color = desktopNormalizeHex(form.color, def.color);
+            var shape = (form.shape === 'circle' || form.shape === 'square') ? form.shape : 'rounded';
+            if (form.image && !desktopValidAppImage(form.image)) {
+                ELEMENT.Message.warning('当前图片数据无效，请重新上传');
+                return;
+            }
+            var image = form.image || '';
+            var styles = loadDesktopAppIconStyles(connId);
+            var style = { icon: icon, color: color, shape: shape, image: image };
+            if (icon === def.icon && color === def.color && shape === 'rounded' && !image) {
+                delete styles[app.action];
+            } else {
+                styles[app.action] = style;
+            }
+            saveDesktopAppIconStyles(connId, styles);
+            if (styles[app.action]) {
+                this.applyDesktopAppIconStyle(app.action, styles[app.action]);
+            } else {
+                this.applyDesktopAppIconStyle(app.action, {
+                    icon: def.icon,
+                    color: def.color,
+                    shape: 'rounded',
+                    image: ''
+                });
+            }
+            this.desktopAppProps.visible = false;
+            ELEMENT.Message.success('已更新当前连接的「' + app.label + '」图标样式');
+        },
+        resetAllDesktopAppIconStyles: function () {
+            var self = this;
+            var connId = this.desktopAppStyleConnId;
+            if (!connId) {
+                ELEMENT.Message.warning('当前没有可用的连接');
+                return;
+            }
+            this.$confirm('恢复当前连接所有系统应用的默认图标、颜色、形状和图片？', '恢复默认图标样式',
+                { type: 'warning', confirmButtonText: '恢复默认', cancelButtonText: '取消' })
+                .then(function () {
+                    saveDesktopAppIconStyles(connId, {});
+                    self.resetDesktopAppIconState();
+                    ELEMENT.Message.success('已恢复当前连接的默认应用图标');
+                })
+                .catch(function () { /* 取消 */ });
         },
         openDesktopSurfaceMenu: function (ev, item) {
             if (!item || !item.entry) {
@@ -13097,6 +15000,13 @@ new Vue({
                 }
                 return;
             }
+            if (this.desktopAppProps.visible) {
+                if (e.key === 'Escape') {
+                    this.closeDesktopAppProperties();
+                    e.preventDefault();
+                }
+                return;
+            }
             if (e.key === 'Escape' && this._marquee) {
                 this.cancelDesktopMarquee();
                 e.preventDefault();
@@ -13489,7 +15399,7 @@ new Vue({
         loadDesktopPlugins: function (showError) {
             var self = this;
             this.pluginMgrLoading = true;
-            http.get('/api/desktop/plugins', { silent: !showError }).then(function (list) {
+            return http.get('/api/desktop/plugins', { silent: !showError }).then(function (list) {
                 self.desktopPlugins = Array.isArray(list) ? list : [];
                 self.pluginMgrLoading = false;
                 self.pluginMgrError = '';
@@ -13500,6 +15410,65 @@ new Vue({
                 }
             });
         },
+        loadBuiltinPlugins: function (showError) {
+            var self = this;
+            this.pluginBuiltinLoading = true;
+            return http.get('/api/desktop/plugins/builtin', { silent: !showError }).then(function (list) {
+                self.builtinPlugins = Array.isArray(list) ? list : [];
+                self.pluginBuiltinLoading = false;
+            }).catch(function () {
+                self.pluginBuiltinLoading = false;
+            });
+        },
+        installBuiltinPlugin: function (p) {
+            if (!p || this.pluginBuiltinInstalling) {
+                return;
+            }
+            var self = this;
+            var updated = !!p.installed;
+            this.pluginBuiltinInstalling = p.key;
+            this.pluginMgrError = '';
+            if (p.id) {
+                this.closePluginWindows(p.id);
+            }
+            http.post('/api/desktop/plugins/builtin/' + encodeURIComponent(p.key) + '/install')
+                .then(function (info) {
+                    var name = info && info.name ? info.name : p.name;
+                    var needRestart = !!(info && info.hasBackend);
+                    var action = updated ? '已更新 ' : '已安装 ';
+                    if (needRestart) {
+                        if (info && info.id) {
+                            self.closePluginWindows(info.id);
+                        }
+                        ELEMENT.Message({
+                            type: 'success',
+                            message: action + name + '，重启 DeepShell 后后端模块生效',
+                            duration: 7000,
+                            showClose: true
+                        });
+                    } else {
+                        ELEMENT.Message({
+                            type: 'success',
+                            message: action + name,
+                            duration: 3000,
+                            showClose: true
+                        });
+                    }
+                    return self.loadDesktopPlugins(true).then(function () {
+                        return self.loadBuiltinPlugins(true);
+                    }).then(function () {
+                        if (info && !needRestart) {
+                            self.openDesktopPlugin(info);
+                        }
+                    });
+                })
+                .catch(function (err) {
+                    self.pluginMgrError = (err && err.message) ? err.message : '内置插件安装失败';
+                })
+                .then(function () {
+                    self.pluginBuiltinInstalling = '';
+                });
+        },
         openPluginManager: function () {
             this.desktop.startOpen = false;
             this.desktop.powerOpen = false;
@@ -13507,6 +15476,76 @@ new Vue({
             this.pluginMgrVisible = true;
             this.pluginMgrError = '';
             this.loadDesktopPlugins(true);
+            this.loadBuiltinPlugins(true);
+        },
+        /* 桌面插件的受限后端调用桥：iframe 不接触 Cookie，只能调用自己插件的运行时模块 */
+        onPluginBridgeMessage: function (ev) {
+            var msg = ev && ev.data;
+            if (!msg || msg.source !== 'deepshell-plugin' || msg.type !== 'plugin.invoke') {
+                return;
+            }
+            var requestId = msg.requestId;
+            if (!requestId) {
+                return;
+            }
+            var sourceWin = null;
+            var pluginId = '';
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                var w = this.desktop.windows[i];
+                if (w.type !== 'plugin' || !w.pluginId) {
+                    continue;
+                }
+                var ref = this.$refs['plugin-frame-' + w.id];
+                var frame = Array.isArray(ref) ? ref[0] : ref;
+                if (frame && frame.contentWindow === ev.source) {
+                    sourceWin = frame.contentWindow;
+                    pluginId = w.pluginId;
+                    break;
+                }
+            }
+            if (!sourceWin) {
+                return;
+            }
+            var reply = function (ok, data, error) {
+                try {
+                    sourceWin.postMessage({
+                        source: 'deepshell-host',
+                        type: 'plugin.invoke.result',
+                        requestId: requestId,
+                        ok: !!ok,
+                        data: data,
+                        error: error || ''
+                    }, '*');
+                } catch (e) { /* 窗口已关闭 */ }
+            };
+            var plugin = null;
+            for (var j = 0; j < this.desktopPlugins.length; j++) {
+                if (this.desktopPlugins[j].id === pluginId) {
+                    plugin = this.desktopPlugins[j];
+                    break;
+                }
+            }
+            if (!plugin || !plugin.hasBackend) {
+                reply(false, null, '该插件未声明后端模块');
+                return;
+            }
+            if (plugin.backendLoaded === false) {
+                reply(false, null, '插件后端尚未加载，请重启 DeepShell 后重试');
+                return;
+            }
+            var action = String(msg.action || '');
+            if (!action || action.length > 128) {
+                reply(false, null, '插件 action 不合法');
+                return;
+            }
+            http.post('/api/desktop/plugins/runtime/' + encodeURIComponent(pluginId) + '/invoke', {
+                action: action,
+                payload: msg.payload == null ? null : msg.payload
+            }, { silent: true, timeout: 35000 }).then(function (data) {
+                reply(true, data);
+            }).catch(function (err) {
+                reply(false, null, (err && err.message) ? err.message : '插件请求失败');
+            });
         },
         pickPluginZip: function () {
             var el = this.$refs.pluginZipInput;
@@ -13527,22 +15566,44 @@ new Vue({
                 return;
             }
             var self = this;
-            var fd = new FormData();
-            fd.append('file', file, file.name);
-            this.pluginImporting = true;
-            this.pluginMgrError = '';
-            http.post('/api/desktop/plugins/import', fd, { timeout: 0 })
-                .then(function (info) {
-                    ELEMENT.Message.success((info && info.updated ? '插件已更新：' : '插件已安装：')
-                        + (info && info.name ? info.name : file.name));
-                    self.loadDesktopPlugins(true);
-                })
-                .catch(function (err) {
-                    self.pluginMgrError = (err && err.message) ? err.message : '插件安装失败';
-                })
-                .then(function () {
-                    self.pluginImporting = false;
-                });
+            this.$confirm('只安装可信来源的插件。未验证插件无法证明发布者身份；包含后端 JAR 的插件会以 DeepShell 服务端权限运行，可读写服务器资源。继续安装？',
+                '插件安装风险确认', {
+                    type: 'warning',
+                    confirmButtonText: '继续安装',
+                    cancelButtonText: '取消'
+                }).then(function () {
+                var fd = new FormData();
+                fd.append('file', file, file.name);
+                self.pluginImporting = true;
+                self.pluginMgrError = '';
+                return http.post('/api/desktop/plugins/import', fd, { timeout: 0 })
+                    .then(function (info) {
+                        var name = info && info.name ? info.name : file.name;
+                        var needRestart = !!(info && info.hasBackend);
+                        if (info && info.id) {
+                            self.closePluginWindows(info.id);
+                        }
+                        if (needRestart) {
+                            ELEMENT.Message({
+                                type: 'success',
+                                message: (info && info.updated ? '插件已更新：' : '插件已安装：')
+                                    + name + '，重启 DeepShell 后后端模块生效',
+                                duration: 7000,
+                                showClose: true
+                            });
+                        } else {
+                            ELEMENT.Message.success((info && info.updated ? '插件已更新：' : '插件已安装：') + name);
+                        }
+                        self.loadDesktopPlugins(true);
+                        self.loadBuiltinPlugins(true);
+                    })
+                    .catch(function (err) {
+                        self.pluginMgrError = (err && err.message) ? err.message : '插件安装失败';
+                    })
+                    .then(function () {
+                        self.pluginImporting = false;
+                    });
+            }).catch(function () { /* 用户取消 */ });
         },
         deletePlugin: function (p) {
             if (!p) {
@@ -13554,11 +15615,21 @@ new Vue({
                 confirmButtonText: '卸载',
                 cancelButtonText: '取消'
             }).then(function () {
+                self.closePluginWindows(p.id);
                 return http.delete('/api/desktop/plugins/' + encodeURIComponent(p.id));
             }).then(function () {
-                self.closePluginWindows(p.id);
                 self.loadDesktopPlugins(true);
-                ELEMENT.Message.success('已卸载 ' + p.name);
+                self.loadBuiltinPlugins(true);
+                if (p.hasBackend) {
+                    ELEMENT.Message({
+                        type: 'success',
+                        message: '已卸载 ' + p.name + '，后端模块已停止运行',
+                        duration: 5000,
+                        showClose: true
+                    });
+                } else {
+                    ELEMENT.Message.success('已卸载 ' + p.name);
+                }
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
         closePluginWindows: function (id) {
@@ -13592,6 +15663,10 @@ new Vue({
                 ELEMENT.Message.warning('请先进入 AI 可视化桌面');
                 return null;
             }
+            if (plugin.hasBackend && plugin.backendLoaded === false) {
+                ELEMENT.Message.warning('插件后端尚未加载，请重启 DeepShell 后再打开');
+                return null;
+            }
             var existing = null;
             for (var i = 0; i < this.desktop.windows.length; i++) {
                 var win = this.desktop.windows[i];
@@ -13607,6 +15682,8 @@ new Vue({
                 existing.pluginTitle = plugin.title || plugin.name;
                 existing.pluginVersion = plugin.version || '';
                 existing.pluginIconUrl = plugin.iconUrl || '';
+                existing.pluginVerified = !!plugin.verified;
+                existing.pluginBackend = !!plugin.hasBackend;
                 this.restoreDesktopWindow(existing);
                 return existing;
             }
@@ -13617,6 +15694,8 @@ new Vue({
             w.pluginVersion = plugin.version || '';
             w.pluginIconUrl = plugin.iconUrl || '';
             w.pluginUrl = plugin.entryUrl;
+            w.pluginVerified = !!plugin.verified;
+            w.pluginBackend = !!plugin.hasBackend;
             var area = this.desktopWindowWorkArea();
             var width = Math.min(area.width - 20, Math.max(520, Number(plugin.windowWidth) || 760));
             var height = Math.min(area.height - 20, Math.max(320, Number(plugin.windowHeight) || 520));
@@ -13810,6 +15889,7 @@ new Vue({
             this.desktop.startOpen = false;
             this.desktop.menu.visible = false;
             this.desktop.calendarOpen = false;
+            this.desktopAppProps.visible = false;
             this.closeDesktopSubMenus();
             this.desktop.settingsVisible = true;
             this.desktop.settingsSection = 'appearance';
@@ -13825,6 +15905,32 @@ new Vue({
                     self.$refs.desktopRoot.focus();
                 }
             });
+        },
+        applyDesktopTheme: function (id) {
+            var t = desktopThemeById(id);
+            var a = this.desktopAppearance;
+            a.theme = t.id;
+            a.windowColor = t.windowColor;
+            a.windowTransparency = t.windowTransparency;
+            a.taskbarColor = t.taskbarColor;
+            a.taskbarTransparency = t.taskbarTransparency;
+        },
+        setDesktopIconSize: function (size) {
+            if (size !== 'small' && size !== 'medium' && size !== 'large') {
+                return;
+            }
+            this.desktopAppearance.iconSize = size;
+        },
+        resetDesktopAppearance: function () {
+            var def = desktopDefaultAppearance();
+            var a = this.desktopAppearance;
+            a.theme = def.theme;
+            a.windowColor = def.windowColor;
+            a.windowTransparency = def.windowTransparency;
+            a.taskbarColor = def.taskbarColor;
+            a.taskbarTransparency = def.taskbarTransparency;
+            a.iconSize = def.iconSize;
+            ELEMENT.Message.success('已恢复默认外观主题');
         },
         resetDesktopSettings: function () {
             var self = this;
@@ -13952,6 +16058,171 @@ new Vue({
                     });
                 }
             }).catch(function () { /* 取消或失败（已由拦截器提示） */ });
+        },
+        /* ---------- DeepShell 后端关闭 / 重启（与远端服务器的关机 / 重启无关） ---------- */
+        askAppLifecycle: function (mode) {
+            var self = this;
+            this.topMenuVisible = false;
+            this.topSubMenu = '';
+            this.desktop.startOpen = false;
+            this.desktop.powerOpen = false;
+            if (this.appLifecycle.visible) {
+                return;
+            }
+            var restarting = mode === 'restart';
+            var label = restarting ? '重启' : '关闭';
+            var detail = restarting
+                ? 'DeepShell 后端会立即退出并自动重新启动。正在执行的终端命令、文件传输和 AI 任务都会中断。'
+                : 'DeepShell 后端会立即退出。正在执行的终端命令、文件传输和 AI 任务都会中断，'
+                    + '需要手动重新启动 DeepShell 才能继续使用。';
+            this.$confirm(detail + '确定' + label + ' DeepShell 吗？', label + ' DeepShell', {
+                type: 'warning',
+                confirmButtonText: '确定' + label,
+                cancelButtonText: '取消'
+            }).then(function () {
+                self.performAppLifecycle(mode);
+            }).catch(function () { /* 取消 */ });
+        },
+        performAppLifecycle: function (mode) {
+            var self = this;
+            var restarting = mode === 'restart';
+            this.stopAppLifecycleTimer();
+            this.appLifecycle = {
+                visible: true,
+                mode: mode,
+                status: restarting ? 'working' : 'closing',
+                elapsed: 0
+            };
+            this._appLifecycleTick = setInterval(function () {
+                self.appLifecycle.elapsed += 1;
+            }, 1000);
+
+            if (!restarting) {
+                // 关闭：服务可能来不及返回响应就退出，因此响应、网络错误和超时都按「已关闭」处理；
+                // 只有后端明确返回业务错误时才认为关闭失败并撤掉遮罩
+                axios.post('/api/app-lifecycle/shutdown', {}, { timeout: 8000 }).then(function (resp) {
+                    var d = resp && resp.data;
+                    if (d && d.code !== 0) {
+                        self.cancelAppLifecycle(d.msg || '关闭 DeepShell 失败');
+                        return;
+                    }
+                    self.markAppShutdownDone();
+                }).catch(function (err) {
+                    if (err && err.response) {
+                        self.cancelAppLifecycle('关闭 DeepShell 失败');
+                    } else {
+                        self.markAppShutdownDone();
+                    }
+                });
+                setTimeout(function () {
+                    if (self.appLifecycle.visible && self.appLifecycle.mode === 'shutdown'
+                            && self.appLifecycle.status === 'closing') {
+                        self.markAppShutdownDone();
+                    }
+                }, 2500);
+                return;
+            }
+
+            // 重启：先记下当前进程的启动时间，再请求重启，之后轮询等待新进程就绪
+            var baseline = '';
+            axios.get('/api/app-info', { timeout: 5000 }).then(function (resp) {
+                var d = resp && resp.data;
+                if (d && d.code === 0 && d.data) {
+                    baseline = String(d.data.startedAt || '');
+                }
+            }).catch(function () { /* 服务可能已开始退出 */ }).then(function () {
+                self._appLifecycleBaseline = baseline;
+                return axios.post('/api/app-lifecycle/restart', {}, { timeout: 8000 });
+            }).then(function (resp) {
+                var d = resp && resp.data;
+                if (d && d.code !== 0) {
+                    self.cancelAppLifecycle(d.msg || '重启 DeepShell 失败');
+                    return;
+                }
+                self.pollAppLifecycle();
+            }).catch(function (err) {
+                if (err && err.response) {
+                    self.cancelAppLifecycle('重启 DeepShell 失败');
+                    return;
+                }
+                self.pollAppLifecycle(); // 请求发出后服务已退出，继续等待新进程
+            });
+        },
+        cancelAppLifecycle: function (message) {
+            this.stopAppLifecycleTimer();
+            this.appLifecycle.visible = false;
+            if (message) {
+                ELEMENT.Message.error(message);
+            }
+        },
+        markAppShutdownDone: function () {
+            if (this.appLifecycle.mode !== 'shutdown') {
+                return;
+            }
+            this.stopAppLifecycleTimer();
+            this.appLifecycle.status = 'closed';
+        },
+        pollAppLifecycle: function () {
+            var self = this;
+            var baseline = this._appLifecycleBaseline || '';
+            var sawDown = false;
+            var began = Date.now();
+
+            function schedule(delay) {
+                setTimeout(probe, delay);
+            }
+            function probe() {
+                if (!self.appLifecycle.visible || self.appLifecycle.mode !== 'restart'
+                        || self.appLifecycle.status !== 'working') {
+                    return;
+                }
+                if (Date.now() - began > 120000) {
+                    self.stopAppLifecycleTimer();
+                    self.appLifecycle.status = 'timeout';
+                    return;
+                }
+                axios.get('/api/app-info', { timeout: 3000, params: { _t: Date.now() } })
+                    .then(function (resp) {
+                        var d = resp && resp.data;
+                        if (!d || d.code !== 0 || !d.data) {
+                            throw new Error('not ready');
+                        }
+                        var startedAt = String(d.data.startedAt || '');
+                        if (baseline && startedAt) {
+                            if (startedAt !== baseline) {
+                                self.finishAppRestart();
+                                return;
+                            }
+                            schedule(sawDown ? 700 : 900);
+                            return;
+                        }
+                        // 拿不到启动时间时，至少观察到一次服务不可用后才认为响应来自新进程
+                        if (sawDown || Date.now() - began > 3000) {
+                            self.finishAppRestart();
+                            return;
+                        }
+                        schedule(700);
+                    })
+                    .catch(function () {
+                        sawDown = true;
+                        schedule(700);
+                    });
+            }
+            schedule(1200);
+        },
+        finishAppRestart: function () {
+            this.stopAppLifecycleTimer();
+            this.appLifecycle.status = 'restored';
+            setTimeout(function () { location.reload(); }, 600);
+        },
+        stopAppLifecycleTimer: function () {
+            if (this._appLifecycleTick) {
+                clearInterval(this._appLifecycleTick);
+                this._appLifecycleTick = null;
+            }
+        },
+        reloadPage: function () {
+            location.reload();
         },
         openDesktopSysInfo: function () {
             this.desktop.startOpen = false;
@@ -14446,6 +16717,249 @@ new Vue({
             this.connExportVisible = false;
             ELEMENT.Message.success('已导出 ' + ids.length + ' 个连接');
         },
+        /* ---------- 系统备份与还原 ---------- */
+        openBackupDialog: function () {
+            this.topMenuVisible = false;
+            this.topSubMenu = '';
+            this.backupVisible = true;
+            this.backupResult = null;
+            this.backupRestored = false;
+            this.backupFile = null;
+            this.backupFileName = '';
+            this.backupFileSize = 0;
+            var self = this;
+            this.$nextTick(function () {
+                if (self.$refs.backupFileInput) {
+                    self.$refs.backupFileInput.value = '';
+                }
+            });
+        },
+        pickBackupFile: function () {
+            var el = this.$refs.backupFileInput;
+            if (el) {
+                el.value = '';
+                el.click();
+            }
+        },
+        onBackupFilePick: function (ev) {
+            var input = ev.target;
+            var file = input.files && input.files[0];
+            input.value = '';
+            if (!file) {
+                return;
+            }
+            if (!/\.zip$/i.test(file.name)) {
+                ELEMENT.Message.warning('请选择 DeepShell 备份 ZIP 文件');
+                return;
+            }
+            this.backupFile = file;
+            this.backupFileName = file.name;
+            this.backupFileSize = file.size || 0;
+        },
+        formatBackupSize: function (bytes) {
+            var size = Number(bytes) || 0;
+            if (size < 1024) {
+                return size + ' B';
+            }
+            if (size < 1024 * 1024) {
+                return (size / 1024).toFixed(1) + ' KB';
+            }
+            if (size < 1024 * 1024 * 1024) {
+                return (size / 1024 / 1024).toFixed(1) + ' MB';
+            }
+            return (size / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        },
+        backupCountItems: function (counts) {
+            var defs = [
+                ['connections', '连接'], ['folders', '文件夹'], ['quickCommands', '快捷命令'],
+                ['commonDirs', '常用目录'], ['portForwards', '端口转发'], ['knownHosts', '已知主机'],
+                ['desktopLayouts', '桌面布局'], ['aiConversations', 'AI 对话'], ['sshKeys', 'SSH 私钥'],
+                ['plugins', '插件'], ['backgrounds', '背景图'], ['pluginDataFiles', '插件数据文件']
+            ];
+            var data = counts || {};
+            return defs.map(function (d) {
+                return { label: d[1], value: Number(data[d[0]] || 0) };
+            });
+        },
+        backupErrorText: function (err) {
+            if (err && err.response && err.response.data) {
+                var data = err.response.data;
+                if (typeof data.text === 'function') {
+                    return data.text().then(function (text) {
+                        try {
+                            var json = JSON.parse(text);
+                            return json.msg || json.message || '操作失败';
+                        } catch (e) {
+                            return text ? text.slice(0, 300) : '操作失败';
+                        }
+                    }).catch(function () {
+                        return '操作失败';
+                    });
+                }
+                if (typeof data === 'string') {
+                    return Promise.resolve(data.slice(0, 300));
+                }
+            }
+            return Promise.resolve((err && err.message) ? err.message : '操作失败');
+        },
+        showBackupError: function (err) {
+            this.backupErrorText(err).then(function (msg) {
+                ELEMENT.Message.error(msg, { duration: 7000, showClose: true });
+            });
+        },
+        backupWarnings: function (resp) {
+            var header = resp && resp.headers && (resp.headers['x-backup-warnings']
+                || resp.headers['X-Backup-Warnings']);
+            if (!header) {
+                return [];
+            }
+            try {
+                var bin = atob(header.replace(/-/g, '+').replace(/_/g, '/'));
+                var bytes = new Uint8Array(bin.length);
+                for (var i = 0; i < bin.length; i++) {
+                    bytes[i] = bin.charCodeAt(i);
+                }
+                return new TextDecoder('utf-8').decode(bytes).split('\n').filter(function (s) {
+                    return !!s;
+                });
+            } catch (e) {
+                return [];
+            }
+        },
+        exportSystemBackup: function () {
+            if (this.backupBusy) {
+                return;
+            }
+            var self = this;
+            var items = {};
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+                    if (key && key.indexOf('deepshell.') === 0) {
+                        items[key] = localStorage.getItem(key);
+                    }
+                }
+            } catch (e) { /* localStorage 不可用时仍导出服务端配置 */ }
+            this.backupBusy = true;
+            this.backupAction = 'export';
+            this.backupBusyText = '正在收集配置并打包，请稍候…';
+            axios.post('/api/backup/export', {
+                browser: { origin: location.origin, items: items }
+            }, { responseType: 'blob', timeout: 0 }).then(function (resp) {
+                var blob = resp.data;
+                if (blob && blob.type && blob.type.indexOf('json') >= 0) {
+                    return blob.text().then(function (text) {
+                        var json = null;
+                        try { json = JSON.parse(text); } catch (e) { /* ignore */ }
+                        throw new Error((json && json.msg) ? json.msg : '导出失败');
+                    });
+                }
+                var name = 'deepshell-backup.zip';
+                var cd = (resp.headers && (resp.headers['content-disposition']
+                    || resp.headers['Content-Disposition'])) || '';
+                var matched = /filename="?([^";]+)"?/i.exec(cd);
+                if (matched && matched[1]) {
+                    name = matched[1].replace(/"/g, '');
+                }
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+                var warnings = self.backupWarnings(resp);
+                if (warnings.length) {
+                    ELEMENT.Message.warning('备份已导出，但部分文件未包含：'
+                        + warnings.slice(0, 3).join('；'), { duration: 9000, showClose: true });
+                } else {
+                    ELEMENT.Message.success('备份已导出：' + name, { duration: 5000, showClose: true });
+                }
+            }).catch(function (err) {
+                self.showBackupError(err);
+            }).then(function () {
+                self.backupBusy = false;
+                self.backupAction = '';
+            });
+        },
+        importSystemBackup: function () {
+            if (!this.backupFile || this.backupBusy) {
+                return;
+            }
+            var self = this;
+            this.$confirm('还原会覆盖当前所有连接与密码、快捷命令、AI 对话、桌面外观、背景图、插件与插件数据，'
+                + '且无法撤销；备份中的插件后端会以本机权限运行。确定继续？', '覆盖并还原', {
+                type: 'warning',
+                confirmButtonText: '覆盖并还原',
+                cancelButtonText: '取消'
+            }).then(function () {
+                var fd = new FormData();
+                fd.append('file', self.backupFile, self.backupFileName || 'backup.zip');
+                self.backupBusy = true;
+                self.backupAction = 'import';
+                self.backupBusyText = '正在校验备份并还原，请勿关闭页面…';
+                self.backupResult = null;
+                return axios.post('/api/backup/import', fd, { timeout: 0 }).then(function (resp) {
+                    var body = resp.data;
+                    if (!body || body.code !== 0) {
+                        throw new Error((body && body.msg) ? body.msg : '还原失败');
+                    }
+                    var result = body.data || {};
+                    var failed = self.applyBackupBrowserSettings(result.browser);
+                    if (failed > 0) {
+                        result.warnings = result.warnings || [];
+                        result.warnings.push(failed + ' 项浏览器设置因存储空间不足未能恢复');
+                    }
+                    self.backupResult = result;
+                    self.backupRestored = true;
+                    self.backupFile = null;
+                    self.backupFileName = '';
+                    self.backupFileSize = 0;
+                    ELEMENT.Message.success('还原完成，请刷新页面加载新配置');
+                });
+            }).catch(function (err) {
+                if (err === 'cancel' || err === 'close') {
+                    return;
+                }
+                self.showBackupError(err);
+            }).then(function () {
+                self.backupBusy = false;
+                self.backupAction = '';
+            });
+        },
+        applyBackupBrowserSettings: function (browser) {
+            if (!browser || !browser.items) {
+                return 0;
+            }
+            var items = browser.items;
+            var keys = [];
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+                    if (key && key.indexOf('deepshell.') === 0) {
+                        keys.push(key);
+                    }
+                }
+                keys.forEach(function (key) {
+                    localStorage.removeItem(key);
+                });
+            } catch (e) {
+                return 0;
+            }
+            var failed = 0;
+            Object.keys(items).forEach(function (key) {
+                if (key.indexOf('deepshell.') !== 0) {
+                    return;
+                }
+                try {
+                    localStorage.setItem(key, items[key]);
+                } catch (e) {
+                    failed++;
+                }
+            });
+            return failed;
+        },
         buildTermTheme: function () {
             var th = {};
             for (var k in TERM_THEME) {
@@ -14549,6 +17063,77 @@ new Vue({
             this.applyBgDraft();
             ELEMENT.Message.success('已清除背景');
         },
+        allTerminalTabs: function () {
+            var out = (this.tabs || []).slice();
+            (this.desktop.windows || []).forEach(function (w) {
+                if (w.type === 'terminal' && w.termTab) {
+                    out.push(w.termTab);
+                }
+            });
+            return out;
+        },
+        toggleTermAutoScroll: function (tab) {
+            if (!tab) {
+                return;
+            }
+            tab.termAutoScrollEnabled = !tab.termAutoScrollEnabled;
+            if (tab.termAutoScrollEnabled && tab.term) {
+                try { tab.term.scrollToBottom(); } catch (e) { /* ignore */ }
+            }
+        },
+        resetTermLogStream: function (tab, flush) {
+            if (!tab) {
+                return;
+            }
+            if (flush && tab._termLogPending && tab.term) {
+                try { tab.term.write(tab._termLogPending); } catch (e) { /* ignore */ }
+            }
+            tab._termLogPending = '';
+            try {
+                tab._termLogDecoder = (typeof TextDecoder !== 'undefined')
+                    ? new TextDecoder('utf-8') : null;
+            } catch (e) {
+                tab._termLogDecoder = null;
+            }
+        },
+        resetAllTermLogStreams: function (flush) {
+            var self = this;
+            this.allTerminalTabs().forEach(function (t) {
+                self.resetTermLogStream(t, flush);
+            });
+        },
+        writeTermOutput: function (tab, term, data) {
+            if (!term || data == null) {
+                return;
+            }
+            var isBuffer = (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer);
+            var isBytes = isBuffer
+                || (typeof Uint8Array !== 'undefined' && data instanceof Uint8Array);
+            var bytes = isBytes ? (isBuffer ? new Uint8Array(data) : data) : null;
+            if (!this.termLogHighlightEnabled || !bytes || !tab || !tab._termLogDecoder) {
+                term.write(bytes || data);
+                return;
+            }
+            try {
+                var active = term.buffer && term.buffer.active;
+                if (active && active.type === 'alternate') {
+                    tab._termLogPending = '';
+                    term.write(bytes);
+                    return;
+                }
+                var text = tab._termLogDecoder.decode(bytes, { stream: true });
+                if (!text) {
+                    return;
+                }
+                var result = terminalLogHighlightChunk(tab._termLogPending, text);
+                tab._termLogPending = result.pending;
+                if (result.out) {
+                    term.write(result.out);
+                }
+            } catch (e) {
+                try { term.write(bytes); } catch (err) { /* ignore */ }
+            }
+        },
         initTerminal: function (tab, el) {
             var self = this;
             if (!el) {
@@ -14586,11 +17171,73 @@ new Vue({
             try { fit.fit(); } catch (e) { /* 容器未就绪时忽略 */ }
             tab.term = term;
             tab.fit = fit;
+            tab._dangerInput = '';
+            tab._dangerInputUnknown = false;
+            tab._termLogPending = '';
+            try {
+                tab._termLogDecoder = (typeof TextDecoder !== 'undefined')
+                    ? new TextDecoder('utf-8') : null;
+            } catch (e) {
+                tab._termLogDecoder = null;
+            }
+            if (typeof term.onWriteParsed === 'function') {
+                term.onWriteParsed(function () {
+                    if (tab.termAutoScrollEnabled) {
+                        try { term.scrollToBottom(); } catch (e) { /* ignore */ }
+                    }
+                });
+            }
 
             term.onData(function (data) {
-                if (tab.ws && tab.ws.readyState === 1) {
-                    tab.ws.send(JSON.stringify({ type: 'data', data: data }));
+                var sendData = function () {
+                    if (tab.ws && tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({ type: 'data', data: data }));
+                    }
+                };
+                if (data.indexOf('\r') < 0 && data.indexOf('\n') < 0) {
+                    self.trackTerminalDangerInput(tab, data);
+                    sendData();
+                    return;
                 }
+                var typed = tab._dangerInputUnknown ? ''
+                    : ((tab._dangerInput || '') + data);
+                tab._dangerInput = '';
+                tab._dangerInputUnknown = false;
+                var line = self.terminalCommandLine(tab);
+                if (line === null) {
+                    // vim / less 等全屏程序直接放行，避免把界面内容误判为命令
+                    sendData();
+                    return;
+                }
+                var hit = null;
+                if (typed.trim()) {
+                    var typedRule = dangerousCommandRule(typed);
+                    if (typedRule) {
+                        hit = {
+                            rule: typedRule,
+                            display: typed.replace(/[\r\n]+$/, '').trim()
+                        };
+                    }
+                }
+                if (!hit && line && line.trim()) {
+                    var lineRule = dangerousCommandRule(line.replace(/[$#]\s+/g, '\n'));
+                    if (lineRule) {
+                        var stripped = line.replace(/^.*?[$#]\s+/, '').trim();
+                        hit = { rule: lineRule, display: stripped || line.trim() };
+                    }
+                }
+                if (!hit) {
+                    var plainData = String(data).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
+                    var dataRule = dangerousCommandRule(plainData);
+                    if (dataRule) {
+                        hit = { rule: dataRule, display: plainData.replace(/[\r\n]+/g, ' ').trim() };
+                    }
+                }
+                if (!hit) {
+                    sendData();
+                    return;
+                }
+                self.confirmDangerousCommand(hit.display || data, sendData, hit.rule);
             });
             term.onResize(function (size) {
                 if (tab.ws && tab.ws.readyState === 1) {
@@ -14642,6 +17289,7 @@ new Vue({
                             if (msg.reattached) {
                                 // 服务端会紧接着发来最近输出快照，先清屏避免重复
                                 try { term.reset(); } catch (e) { /* ignore */ }
+                                self.resetTermLogStream(tab, false);
                                 dirReady = tab.sftpHome
                                     ? self.loadDir(tab.sftpPath || tab.sftpHome, tab)
                                     : self.loadHome(tab);
@@ -14678,7 +17326,7 @@ new Vue({
                         self.onTermCwd(tab, msg.path);
                     }
                 } else {
-                    term.write(new Uint8Array(ev.data));
+                    self.writeTermOutput(tab, term, ev.data);
                 }
             };
             ws.onclose = function () {
@@ -17975,6 +20623,109 @@ new Vue({
             } catch (e) { /* ignore */ }
             ELEMENT.Message.success('历史已清空');
         },
+        trackTerminalDangerInput: function (tab, data) {
+            var s = tab._dangerInput || '';
+            var unknown = !!tab._dangerInputUnknown;
+            var str = String(data || '');
+            for (var i = 0; i < str.length; i++) {
+                var ch = str.charAt(i);
+                var code = ch.charCodeAt(0);
+                if (ch === '\x7f') {
+                    s = s.slice(0, -1);
+                } else if (ch === '\x15') {
+                    s = '';
+                    unknown = false;
+                } else if (ch === '\x17') {
+                    s = s.replace(/\s*\S+\s*$/, '');
+                } else if (ch === '\x03') {
+                    s = '';
+                    unknown = false;
+                } else if (ch === '\t' || ch === '\x1b') {
+                    unknown = true;
+                } else if (code >= 32 && code !== 127) {
+                    s += ch;
+                }
+            }
+            tab._dangerInput = s;
+            tab._dangerInputUnknown = unknown;
+        },
+        terminalCommandLine: function (tab) {
+            try {
+                var term = tab && tab.term;
+                if (!term) {
+                    return '';
+                }
+                var buf = term.buffer && term.buffer.active;
+                if (!buf) {
+                    return '';
+                }
+                if (buf.type === 'alternate') {
+                    return null;
+                }
+                var y = buf.baseY + buf.cursorY;
+                var line = buf.getLine(y);
+                if (!line) {
+                    return '';
+                }
+                var text = line.translateToString(true);
+                var guard = 0;
+                while (y > 0 && guard < 40) {
+                    var prev = buf.getLine(y - 1);
+                    if (!prev || !prev.isWrapped) {
+                        break;
+                    }
+                    text = prev.translateToString(true) + text;
+                    y--;
+                    guard++;
+                }
+                return text;
+            } catch (e) {
+                return '';
+            }
+        },
+        confirmDangerousCommand: function (command, proceed, forcedRule) {
+            if (!this.dangerConfirmEnabled) {
+                if (this._dangerPromptOpen) {
+                    return false;
+                }
+                proceed();
+                return true;
+            }
+            var rule = forcedRule || dangerousCommandRule(command);
+            if (!rule) {
+                if (this._dangerPromptOpen) {
+                    return false;
+                }
+                proceed();
+                return true;
+            }
+            if (this._dangerPromptOpen) {
+                return false;
+            }
+            var self = this;
+            this._dangerPromptOpen = true;
+            var cmd = escapeAiHtml(String(command || '').trim());
+            var html = '<div class="danger-cmd-content">'
+                + '<p>检测到高风险操作：<b>' + escapeAiHtml(rule.label) + '</b></p>'
+                + '<pre>' + cmd + '</pre>'
+                + '<p class="danger-cmd-tip">只有点击「仍然执行」后，命令才会发送到终端；取消则不会执行。</p>'
+                + '</div>';
+            this.$confirm(html, '危险命令确认', {
+                type: 'warning',
+                dangerouslyUseHTMLString: true,
+                confirmButtonText: '仍然执行',
+                cancelButtonText: '取消',
+                closeOnClickModal: false,
+                customClass: 'danger-cmd-confirm',
+                confirmButtonClass: 'el-button--danger'
+            }).then(function () {
+                self._dangerPromptOpen = false;
+                proceed();
+            }).catch(function () {
+                self._dangerPromptOpen = false;
+            });
+            return false;
+        },
         sendCmd: function (tab) {
             var t = tab || this.activeTab;
             if (!t || !t.sessionId) {
@@ -17999,15 +20750,20 @@ new Vue({
                 return;
             }
             var data = JSON.stringify({ type: 'data', data: payload });
-            targets.forEach(function (x) {
-                x.ws.send(data);
+            var self = this;
+            this.confirmDangerousCommand(text, function () {
+                targets.forEach(function (x) {
+                    if (x.ws && x.ws.readyState === 1) {
+                        x.ws.send(data);
+                    }
+                });
+                self.pushHistory(t, text);
+                if (self.cmdOpts.clearAfterSend) {
+                    t.cmdText = '';
+                }
+                t._comp = null;
+                self.focusCmdInput(t);
             });
-            this.pushHistory(t, text);
-            if (this.cmdOpts.clearAfterSend) {
-                t.cmdText = '';
-            }
-            t._comp = null;
-            this.focusCmdInput(t);
         },
         toggleTarget: function (key, checked, tab) {
             var t = tab || this.activeTab;
@@ -18349,14 +21105,24 @@ new Vue({
                     : '没有已连接的终端会话');
                 return;
             }
+            var self = this;
             var payload = JSON.stringify({ type: 'data', data: text });
             var active = this.uiTab;
-            targets.forEach(function (x) {
-                x.ws.send(payload);
-            });
-            if (!this.desktop.visible && active && targets.indexOf(active) >= 0 && active.term) {
-                active.term.focus();
+            var doSend = function () {
+                targets.forEach(function (x) {
+                    if (x.ws && x.ws.readyState === 1) {
+                        x.ws.send(payload);
+                    }
+                });
+                if (!self.desktop.visible && active && targets.indexOf(active) >= 0 && active.term) {
+                    active.term.focus();
+                }
+            };
+            if (/[\r\n]/.test(text) && dangerousCommandRule(text)) {
+                this.confirmDangerousCommand(text, doSend);
+                return;
             }
+            doSend();
         },
         toggleSnippetTarget: function (key, checked) {
             var i = this.snippetTargets.indexOf(key);
@@ -18379,10 +21145,21 @@ new Vue({
                 ELEMENT.Message.warning('当前没有已连接的终端会话');
                 return;
             }
-            t.ws.send(JSON.stringify({ type: 'data', data: text }));
-            if (t.term) {
-                t.term.focus();
+            var self = this;
+            var doSend = function () {
+                if (!t.ws || t.ws.readyState !== 1) {
+                    return;
+                }
+                t.ws.send(JSON.stringify({ type: 'data', data: text }));
+                if (t.term) {
+                    t.term.focus();
+                }
+            };
+            if (/[\r\n]/.test(text) && dangerousCommandRule(text)) {
+                this.confirmDangerousCommand(text, doSend);
+                return;
             }
+            doSend();
         },
         loadSnippets: function () {
             var self = this;
@@ -18458,6 +21235,9 @@ new Vue({
                 .catch(function () { /* 已取消或已由拦截器提示 */ });
         }
     },
+    created: function () {
+        this.applyDesktopAppIconStylesForConn(this.desktopAppStyleConnId);
+    },
     mounted: function () {
         var self = this;
         try {
@@ -18495,6 +21275,8 @@ new Vue({
         self.loadSnippets();
         self.loadAppInfo();
         self.loadDesktopPlugins(false);
+        self.loadBuiltinPlugins(false);
+        window.addEventListener('message', self.onPluginBridgeMessage);
         self.loadLocalDownloadStatus();
         self.loadAuthStatus();
         self.loadAiRuntimeConfig();

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis 管理器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-icon" src="icon.svg" alt="">
+            <div class="brand-text">
+                <b>Redis 管理器</b>
+                <span>DEEPSHELL DESKTOP</span>
+            </div>
+        </div>
+
+        <div id="connBox" class="conn-box">
+            <div class="conn-empty">尚未连接 Redis</div>
+        </div>
+
+        <div class="side-title">数据库 <span id="dbTotal"></span></div>
+        <div id="dbList" class="db-list"></div>
+        <div class="side-spacer"></div>
+        <button id="btnOpenConnectSide" class="btn btn-ghost side-connect">连接 Redis</button>
+        <button id="btnDisconnect" class="btn btn-ghost side-disconnect hidden">断开连接</button>
+        <div class="side-foot"><span class="desktop-dot"></span> 仅 AI 可视化桌面可用</div>
+    </aside>
+
+    <main class="main">
+        <section id="welcome" class="welcome">
+            <div class="welcome-grid"></div>
+            <div class="welcome-card">
+                <div class="welcome-icon"><img src="icon.svg" alt="Redis 管理器"></div>
+                <span class="eyebrow">DEEPSHELL · DESKTOP APP</span>
+                <h1>Redis 管理器</h1>
+                <p>连接 Redis，像浏览文件一样搜索键、查看与编辑数据、执行命令。连接由 DeepShell 本机代理建立，插件本身不直接接触网络。</p>
+                <button id="btnOpenConnect" class="btn btn-primary btn-lg">连接 Redis</button>
+                <div class="welcome-feats">
+                    <span>SCAN 键搜索</span><span>类型化编辑</span><span>TTL 管理</span><span>命令控制台</span>
+                </div>
+            </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+            <header class="topbar">
+                <div class="search-wrap">
+                    <svg class="ico search-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.2 4.2"></path></svg>
+                    <input id="searchInput" class="search-input" placeholder="搜索键，支持 Redis 模式，如 user:*、cache:?" autocomplete="off" spellcheck="false">
+                    <button id="btnSearch" class="btn btn-primary btn-sm">扫描</button>
+                </div>
+                <div class="top-actions">
+                    <span id="keyCount" class="count-pill">0 键</span>
+                    <button id="btnRefreshKeys" class="icon-btn" title="刷新键">
+                        <svg class="ico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+                    </button>
+                </div>
+            </header>
+
+            <div class="filter-row">
+                <div id="typeFilters" class="type-filters"></div>
+                <span id="scanHint" class="scan-hint"></span>
+            </div>
+
+            <div class="content">
+                <section class="keys-pane">
+                    <div class="pane-head">
+                        <b>键空间</b>
+                        <span class="pane-head-right">
+                            <span id="keyPaneCount"></span>
+                            <button id="btnViewMode" class="view-mode" title="在列表与树形之间切换">树形</button>
+                        </span>
+                    </div>
+                    <div id="keyList" class="key-list"></div>
+                    <div id="keyEmpty" class="empty-block hidden">没有找到键<br><small>试试修改扫描模式，或切换数据库</small></div>
+                    <button id="btnMoreKeys" class="load-more hidden">加载更多</button>
+                </section>
+
+                <section class="detail-pane">
+                    <div id="detailEmpty" class="detail-empty">
+                        <div class="empty-ring">&gt;_</div>
+                        <b>选择一个键</b>
+                        <span>左侧列表展示当前数据库中的键，点击后查看内容。</span>
+                    </div>
+
+                    <div id="detail" class="detail hidden">
+                        <header class="detail-head">
+                            <div class="key-title-wrap">
+                                <span id="detailType" class="type-badge">string</span>
+                                <h2 id="detailKey">key</h2>
+                                <span id="detailSize" class="muted"></span>
+                            </div>
+                            <div class="detail-actions">
+                                <button id="btnRefreshKey" class="icon-btn" title="刷新当前键">
+                                    <svg class="ico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+                                </button>
+                                <button id="btnRenameKey" class="icon-btn" title="重命名">
+                                    <svg class="ico" viewBox="0 0 24 24"><path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20z"></path><path d="M13.5 6.5l4 4"></path></svg>
+                                </button>
+                                <button id="btnDeleteKey" class="icon-btn danger" title="删除键">
+                                    <svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6.5 7l1 13h9l1-13"></path><path d="M10 11v5M14 11v5"></path></svg>
+                                </button>
+                            </div>
+                        </header>
+
+                        <div class="ttl-row">
+                            <span class="ttl-label">TTL</span>
+                            <input id="ttlInput" class="input ttl-input" type="number" min="1" placeholder="秒">
+                            <button id="btnSaveTtl" class="btn btn-ghost btn-xs">设置</button>
+                            <button id="btnPersistTtl" class="btn btn-ghost btn-xs">永久</button>
+                            <span id="ttlText" class="muted"></span>
+                            <span class="spacer"></span>
+                            <span id="detailUpdated" class="muted"></span>
+                        </div>
+
+                        <nav class="tabs">
+                            <button class="tab active" data-tab="value">值</button>
+                            <button class="tab" data-tab="console">命令控制台</button>
+                            <button class="tab" data-tab="server">服务器信息</button>
+                        </nav>
+
+                        <div id="tabValue" class="tab-body value-body"></div>
+
+                        <div id="tabConsole" class="tab-body console-body hidden">
+                            <div class="console-toolbar"><span>命令控制台</span><button id="btnClearConsole" class="btn btn-ghost btn-xs">清空输出</button></div>
+                            <div id="consoleOut" class="console-out"></div>
+                            <div class="console-input-row">
+                                <span class="prompt">&gt;</span>
+                                <input id="consoleInput" class="input console-input" placeholder="输入 Redis 命令，Enter 执行；↑↓ 查看历史" autocomplete="off" spellcheck="false">
+                                <button id="btnRunCommand" class="btn btn-primary btn-sm">执行</button>
+                            </div>
+                            <div class="console-hint">FLUSHDB / FLUSHALL / SHUTDOWN 等危险命令会二次确认</div>
+                        </div>
+
+                        <div id="tabServer" class="tab-body server-body hidden"></div>
+                    </div>
+                </section>
+            </div>
+
+            <footer class="statusbar">
+                <span id="statusConn">未连接</span>
+                <span class="dot-sep"></span>
+                <span id="statusDb">DB 0</span>
+                <span class="spacer"></span>
+                <span id="statusMeta"></span>
+            </footer>
+        </section>
+    </main>
+</div>
+
+<div id="connectModal" class="modal hidden">
+    <div class="modal-card">
+        <header><b>连接 Redis</b><button class="modal-x" data-close="connectModal" title="关闭">×</button></header>
+        <form id="connectForm">
+            <div class="form-grid">
+                <label class="field wide"><span>连接名称（可选）</span><input id="fName" class="input" placeholder="本地 Redis"></label>
+                <label class="field wide"><span>主机</span><input id="fHost" class="input" value="127.0.0.1" required></label>
+                <label class="field"><span>端口</span><input id="fPort" class="input" type="number" value="6379" min="1" max="65535" required></label>
+                <label class="field"><span>数据库</span><input id="fDb" class="input" type="number" value="0" min="0" max="255"></label>
+                <label class="field"><span>用户名（ACL，可选）</span><input id="fUser" class="input" autocomplete="off"></label>
+                <label class="field"><span>密码（可选）</span><input id="fPassword" class="input" type="password" autocomplete="off"></label>
+                <label class="field"><span>连接超时</span><select id="fTimeout" class="input"><option value="3000">3 秒</option><option value="5000" selected>5 秒</option><option value="10000">10 秒</option></select></label>
+            </div>
+            <div id="connectError" class="form-error hidden"></div>
+            <div class="modal-foot">
+                <span class="modal-note">连接由 DeepShell 服务端建立，密码不会保存在浏览器。</span>
+                <button type="button" class="btn btn-ghost" data-close="connectModal">取消</button>
+                <button type="submit" id="btnConnect" class="btn btn-primary">连接</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="renameModal" class="modal hidden">
+    <div class="modal-card small">
+        <header><b>重命名键</b><button class="modal-x" data-close="renameModal" title="关闭">×</button></header>
+        <form id="renameForm">
+            <label class="field"><span>新的键名</span><input id="renameInput" class="input" required></label>
+            <div class="modal-foot">
+                <span class="modal-note">若目标键已存在，将被覆盖。</span>
+                <button type="button" class="btn btn-ghost" data-close="renameModal">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="confirmModal" class="modal hidden">
+    <div class="modal-card small">
+        <header><b id="confirmTitle">确认</b><button class="modal-x" data-close="confirmModal" title="关闭">×</button></header>
+        <p id="confirmMessage" class="confirm-message"></p>
+        <div class="modal-foot">
+            <button type="button" class="btn btn-ghost" data-close="confirmModal">取消</button>
+            <button type="button" id="btnConfirmOk" class="btn btn-danger">确认</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>

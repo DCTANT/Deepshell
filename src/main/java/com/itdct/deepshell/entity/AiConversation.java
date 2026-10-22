@@ -31,6 +31,15 @@ public class AiConversation {
     /** 该连接下当前选中的对话（每个连接最多一个 true） */
     private Boolean active = false;
 
+    /** 置顶：列表中优先展示，且不会被每连接数量上限淘汰 */
+    private Boolean pinned = false;
+
+    /** 分叉来源对话 id（普通对话为 null） */
+    private Long parentId;
+
+    /** 分叉时复制到第几条消息（消息条数，便于展示与被追溯） */
+    private Integer forkPoint;
+
     /** 消息数组 JSON 文本 */
     @Column(columnDefinition = "TEXT")
     private String msgsJson;

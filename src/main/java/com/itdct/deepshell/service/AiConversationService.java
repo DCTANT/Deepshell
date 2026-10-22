@@ -8,10 +8,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.itdct.deepshell.entity.AiConversation;
 import com.itdct.deepshell.repo.AiConversationRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -22,7 +25,7 @@ import java.util.stream.Collectors;
 public class AiConversationService {
 
     public static final int MAX_CONVS_PER_CONN = 15;
-    /** 单轮 30 步约产生 60 条消息，保留多轮长任务的完整现场 */
+    /** 单轮 50 步约产生 100 条消息，保留多轮长任务的完整现场 */
     public static final int MAX_MSGS = 160;
     public static final int MAX_CHARS = 4000;
     /** 命令输出与思考过程单独放宽，避免长输出在刷新后只剩开头 */
@@ -43,6 +46,9 @@ public class AiConversationService {
         public String title;
         public String cwd;
         public boolean active;
+        public boolean pinned;
+        public Long parentId;
+        public Integer forkPoint;
         public Long createdAt;
         public Long updatedAt;
         public JsonNode msgs;
@@ -52,27 +58,32 @@ public class AiConversationService {
         public String title;
         public String cwd;
         public Boolean active;
+        public Boolean pinned;
         public JsonNode msgs;
     }
 
     public List<ConvDto> list(Long connId) {
         return repo.findByConnectionId(connId).stream()
-                .sorted(Comparator.comparingLong((AiConversation c) -> orZero(c.getUpdatedAt())).reversed()
+                .sorted(Comparator.comparing((AiConversation c) -> !Boolean.TRUE.equals(c.getPinned()))
+                        .thenComparing(Comparator.comparingLong(
+                                (AiConversation c) -> orZero(c.getUpdatedAt())).reversed())
                         .thenComparing(AiConversation::getId, Comparator.reverseOrder()))
                 .map(this::toDto)
                 .collect(Collectors.toList());
     }
 
+    @Transactional
     public ConvDto create(Long connId) {
         if (connId == null) {
             throw new IllegalArgumentException("缺少连接 ID");
         }
-        enforceCap(connId);
+        enforceCap(connId, null);
         deactivateAll(connId);
         AiConversation c = new AiConversation();
         c.setConnectionId(connId);
         c.setTitle("新对话");
         c.setActive(true);
+        c.setPinned(false);
         c.setMsgsJson("[]");
         long now = System.currentTimeMillis();
         c.setCreatedAt(now);
@@ -80,10 +91,42 @@ public class AiConversationService {
         return toDto(repo.save(c));
     }
 
+    /** 从指定对话分叉：默认复制全部消息，也可只复制到某条消息（msgIndex 从 0 起） */
+    @Transactional
+    public ConvDto fork(Long id, Integer msgIndex) {
+        AiConversation src = get(id);
+        ArrayNode all = readMsgs(src);
+        if (all.size() == 0) {
+            throw new IllegalArgumentException("当前对话为空，无法分叉");
+        }
+        int count = msgIndex == null || msgIndex < 0
+                ? all.size() : Math.min(all.size(), msgIndex + 1);
+        ArrayNode copy = JsonNodeFactory.instance.arrayNode();
+        for (int i = 0; i < count; i++) {
+            copy.add(all.get(i).deepCopy());
+        }
+        enforceCap(src.getConnectionId(), src.getId());
+        deactivateAll(src.getConnectionId());
+
+        AiConversation c = new AiConversation();
+        c.setConnectionId(src.getConnectionId());
+        c.setTitle(forkTitle(src.getTitle()));
+        c.setCwd(src.getCwd());
+        c.setActive(true);
+        c.setPinned(false);
+        c.setParentId(src.getId());
+        c.setForkPoint(count);
+        c.setMsgsJson(clampMsgs(copy).toString());
+        long now = System.currentTimeMillis();
+        c.setCreatedAt(now);
+        c.setUpdatedAt(now);
+        return toDto(repo.save(c));
+    }
+
     /** 只更新传入的字段；active=true 时把同连接其他对话置为非选中；纯切换不刷新 updatedAt */
+    @Transactional
     public ConvDto save(Long id, ConvForm form) {
-        AiConversation c = repo.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("对话不存在: " + id));
+        AiConversation c = get(id);
         boolean touch = false;
         if (form.title != null) {
             c.setTitle(clip(form.title, MAX_TITLE));
@@ -96,6 +139,9 @@ public class AiConversationService {
         if (form.msgs != null) {
             c.setMsgsJson(clampMsgs(form.msgs).toString());
             touch = true;
+        }
+        if (form.pinned != null) {
+            c.setPinned(form.pinned);
         }
         if (Boolean.TRUE.equals(form.active)) {
             deactivateAll(c.getConnectionId());
@@ -118,12 +164,13 @@ public class AiConversationService {
         repo.deleteAll(repo.findByConnectionId(connId));
     }
 
-    private void enforceCap(Long connId) {
+    private void enforceCap(Long connId, Long protectId) {
         List<AiConversation> rows = new ArrayList<>(repo.findByConnectionId(connId));
         while (rows.size() >= MAX_CONVS_PER_CONN) {
             AiConversation victim = null;
             for (AiConversation r : rows) {
-                if (Boolean.TRUE.equals(r.getActive())) {
+                if (Boolean.TRUE.equals(r.getActive()) || Boolean.TRUE.equals(r.getPinned())
+                        || (protectId != null && protectId.equals(r.getId()))) {
                     continue;
                 }
                 if (victim == null || orZero(r.getUpdatedAt()) < orZero(victim.getUpdatedAt())) {
@@ -136,6 +183,33 @@ public class AiConversationService {
             repo.delete(victim);
             rows.remove(victim);
         }
+    }
+
+    private AiConversation get(Long id) {
+        return repo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("对话不存在: " + id));
+    }
+
+    private ArrayNode readMsgs(AiConversation c) {
+        try {
+            JsonNode n = mapper.readTree(c.getMsgsJson() == null || c.getMsgsJson().isEmpty()
+                    ? "[]" : c.getMsgsJson());
+            return n != null && n.isArray() ? (ArrayNode) n : JsonNodeFactory.instance.arrayNode();
+        } catch (Exception e) {
+            return JsonNodeFactory.instance.arrayNode();
+        }
+    }
+
+    /** 分叉标题递增：X · 分叉 → X · 分叉2；普通标题追加「 · 分叉」 */
+    static String forkTitle(String sourceTitle) {
+        String base = sourceTitle == null || sourceTitle.trim().isEmpty() ? "新对话" : sourceTitle.trim();
+        Matcher m = Pattern.compile("^(.*) · 分叉(\\d*)$").matcher(base);
+        if (m.matches()) {
+            String stem = m.group(1);
+            int n = m.group(2).isEmpty() ? 1 : Integer.parseInt(m.group(2));
+            return clip(stem + " · 分叉" + (n + 1), MAX_TITLE);
+        }
+        return clip(base + " · 分叉", MAX_TITLE);
     }
 
     private void deactivateAll(Long connId) {
@@ -153,6 +227,9 @@ public class AiConversationService {
         d.title = c.getTitle();
         d.cwd = c.getCwd();
         d.active = Boolean.TRUE.equals(c.getActive());
+        d.pinned = Boolean.TRUE.equals(c.getPinned());
+        d.parentId = c.getParentId();
+        d.forkPoint = c.getForkPoint();
         d.createdAt = c.getCreatedAt();
         d.updatedAt = c.getUpdatedAt();
         try {

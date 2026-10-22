@@ -23,9 +23,14 @@ public class CryptoService {
     private static final int IV_LEN = 12;
     private static final int TAG_BITS = 128;
 
-    private final SecretKeySpec key;
+    private volatile SecretKeySpec key;
 
     public CryptoService() throws Exception {
+        reloadKey();
+    }
+
+    /** 从数据目录重新读取密钥（恢复系统备份后调用） */
+    public synchronized void reloadKey() throws Exception {
         Path dir = DataDir.root();
         Files.createDirectories(dir);
         Path keyFile = dir.resolve("secret.key");

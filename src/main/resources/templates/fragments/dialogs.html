@@ -1,0 +1,1360 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<body>
+<th:block th:fragment="dialogs">
+    <el-dialog title="打开连接" :visible.sync="connectDialogVisible" width="580px" custom-class="conn-dlg">
+        <div class="conn-dlg-head">
+            <el-radio-group v-model="connFilter" size="mini">
+                <el-radio-button label="all">全部</el-radio-button>
+                <el-radio-button label="fav">收藏</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="connKeyword" size="mini" prefix-icon="el-icon-search" clearable
+                      placeholder="搜索名称 / 主机 / 用户名" class="conn-dlg-search"></el-input>
+            <span class="conn-dlg-actions" v-if="connFilter === 'all' && folders.length">
+                <el-button size="mini" type="text" @click="expandAllFolders(true)">展开全部</el-button>
+                <el-button size="mini" type="text" @click="expandAllFolders(false)">收起全部</el-button>
+            </span>
+        </div>
+        <div class="conn-dlg-list">
+            <template v-for="row in connRows">
+                <div v-if="row._rowType === 'section'" :key="row.key" class="conn-sec">
+                    <i :class="row.icon"></i> {{ row.label }}
+                </div>
+                <div v-else-if="row._rowType === 'sep'" :key="row.key" class="conn-sep"></div>
+                <div v-else-if="row._rowType === 'folder'" :key="row.key" class="conn-row is-folder"
+                     :class="{ 'drop-target': connDragOverId === row.id }"
+                     :style="{ paddingLeft: (8 + row.depth * 18) + 'px' }" @click="toggleFolder(row.id)"
+                     @contextmenu.prevent="onFolderContextMenu($event, row)"
+                     @dragover.prevent="onFolderDragOver(row)" @dragleave="onFolderDragLeave(row)"
+                     @drop.prevent="onConnDrop(row)">
+                    <i class="conn-row-arrow"
+                       :class="connExpanded[row.id] ? 'el-icon-arrow-down' : 'el-icon-arrow-right'"></i>
+                    <i class="el-icon-folder conn-row-icon"></i>
+                    <span class="conn-row-name">{{ row.name }}</span>
+                    <span class="conn-row-folder-ops">
+                        <i class="el-icon-edit" title="重命名文件夹" @click.stop="renameFolderQuick(row)"></i>
+                        <i class="el-icon-delete" title="删除文件夹（内容上移到上一级）"
+                           @click.stop="removeFolderQuick(row)"></i>
+                    </span>
+                    <span class="conn-row-count">{{ row._count }} 项</span>
+                </div>
+                <div v-else :key="row.key" class="conn-row" :draggable="!row.noDrag"
+                     :class="{ 'drop-before': connDropKey === row.key && connDropPos === 'before',
+                               'drop-after': connDropKey === row.key && connDropPos === 'after' }"
+                     :style="{ paddingLeft: (8 + row.depth * 18 + 12) + 'px' }" @click="openTab(row.id, null, true)"
+                     @contextmenu.prevent="openConnMenu(row)"
+                     @dragover.prevent="onConnRowDragOver($event, row)" @dragleave="onConnRowDragLeave(row)"
+                     @drop.prevent="onConnRowDrop($event, row)"
+                     @dragstart="onConnDragStart($event, row)" @dragend="onConnDragEnd">
+                    <i class="el-icon-monitor conn-row-icon"></i>
+                    <span class="conn-row-name">{{ row.name }}</span>
+                    <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
+                    <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                    <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
+                    <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
+                                :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">
+                        <div class="conn-set">
+                            <div class="conn-set-row">
+                                <span><i class="el-icon-top"></i> 置顶显示</span>
+                                <el-switch :value="row.pinned" size="mini"
+                                           @change="setConnFlag(row.id, 'pinned', $event)"></el-switch>
+                            </div>
+                            <div class="conn-set-row">
+                                <span><i class="el-icon-star-on"></i> 收藏</span>
+                                <el-switch :value="row.favorite" size="mini"
+                                           @change="setConnFlag(row.id, 'favorite', $event)"></el-switch>
+                            </div>
+                            <div class="conn-set-row conn-set-action" @click="editConnFromDialog(row.id)">
+                                <span><i class="el-icon-edit"></i> 编辑连接</span>
+                                <i class="el-icon-arrow-right"></i>
+                            </div>
+                            <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
+                                <span><i class="el-icon-document-copy"></i> 复制连接</span>
+                            </div>
+                            <div class="conn-set-row conn-set-action conn-set-danger"
+                                 @click="removeConnFromDialog(row.id)">
+                                <span><i class="el-icon-delete"></i> 删除连接</span>
+                            </div>
+                            <div class="conn-set-hint">置顶后显示在列表顶部，收藏可用顶部「收藏」筛选</div>
+                        </div>
+                        <i slot="reference" class="el-icon-setting conn-set-btn" title="连接设置"
+                           @click.stop></i>
+                    </el-popover>
+                </div>
+            </template>
+            <div v-if="!connRows.length" class="panel-tip">
+                {{ connFilter === 'fav'
+                    ? '暂无收藏的连接（点击连接右侧 ⚙ 可收藏）'
+                    : (connKeyword ? '没有匹配的连接' : '暂无连接，点击下方「新建连接」直接创建') }}
+            </div>
+        </div>
+        <div class="conn-dlg-tip" v-if="connFilter === 'all' && folders.length">
+            <i class="el-icon-rank"></i> 拖动连接可调整同级顺序，拖到文件夹上可移动
+        </div>
+        <div slot="footer">
+            <el-button size="small" icon="el-icon-upload2" @click="connImportVisible = true">连接导入</el-button>
+            <el-button size="small" icon="el-icon-folder-add" @click="newFolderQuick(null)">新建文件夹</el-button>
+            <el-button size="small" type="primary" icon="el-icon-plus" @click="openNewConnDialog">新建连接</el-button>
+        </div>
+    </el-dialog>
+
+    <conn-form-dialog ref="connForm" @saved="onConnSaved"></conn-form-dialog>
+
+    <!-- 连接导入 -->
+    <el-dialog title="连接导入" :visible.sync="connImportVisible" width="460px" append-to-body>
+        <div class="set-row">
+            <el-upload :show-file-list="false" :auto-upload="false" :multiple="true"
+                       :on-change="onImportFilesChange" action="#" accept=".json"
+                       style="display:inline-block">
+                <el-button size="small" type="primary" icon="el-icon-upload2">选择文件导入</el-button>
+            </el-upload>
+            <span class="set-hint">支持一次框选多个文件，导入后立即出现在连接列表</span>
+        </div>
+        <div class="set-hint" style="margin-top:10px;line-height:1.9">
+            · 支持 FinalShell 连接文件（finalshell_connections_*.json 或安装目录 conn 文件夹下的连接文件）<br>
+            · 兼容本工具「连接导出」生成的文件（含密码，导入后可直接连接）
+        </div>
+    </el-dialog>
+
+    <!-- 连接导出 -->
+    <el-dialog title="连接导出" :visible.sync="connExportVisible" width="520px" append-to-body>
+        <div class="export-head">
+            <span class="set-hint">勾选要导出的连接（含加密密码）</span>
+            <span class="export-actions">
+                <el-button size="mini" type="text" @click="toggleAllExport(true)">全选</el-button>
+                <el-button size="mini" type="text" @click="toggleAllExport(false)">全不选</el-button>
+            </span>
+        </div>
+        <div class="export-list">
+            <el-checkbox-group v-model="connExportChecked" v-if="connections.length">
+                <el-checkbox v-for="c in connections" :key="c.id" :label="c.id" class="export-item">
+                    {{ connExportLabel(c) }}
+                </el-checkbox>
+            </el-checkbox-group>
+            <div v-else class="panel-tip">暂无连接</div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="connExportVisible = false">取消</el-button>
+            <el-button size="small" type="primary" icon="el-icon-download"
+                       :disabled="!connExportChecked.length" @click="exportConnsSelected">
+                导出选中（{{ connExportChecked.length }}）
+            </el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 系统备份与还原 -->
+    <el-dialog title="系统备份与还原" :visible.sync="backupVisible" width="620px" append-to-body
+               custom-class="backup-dialog"
+               :show-close="!backupBusy && !backupRestored"
+               :close-on-click-modal="!backupBusy && !backupRestored"
+               :close-on-press-escape="!backupBusy && !backupRestored">
+        <div class="backup-scope">
+            <i class="el-icon-folder-opened"></i>
+            <span>完整备份连接与密码、文件夹、快捷命令、常用目录、端口转发、AI 设置与对话、桌面外观 / 颜色 / 图标 / 字体、
+                背景图片、已安装插件与插件数据。</span>
+        </div>
+        <div class="backup-warn">
+            <i class="el-icon-warning-outline"></i>
+            备份包含连接密码、AI API Key、SSH 私钥等敏感信息，请妥善保管，不要发送给他人。
+        </div>
+
+        <div class="backup-section">
+            <div class="backup-section-head">
+                <div class="backup-section-info">
+                    <b>导出备份</b>
+                    <span>生成 ZIP 文件，可在新安装的 DeepShell 中完整还原</span>
+                </div>
+                <el-button size="small" type="primary" icon="el-icon-download"
+                           :loading="backupBusy && backupAction === 'export'"
+                           :disabled="backupBusy" @click="exportSystemBackup">
+                    导出 ZIP
+                </el-button>
+            </div>
+        </div>
+
+        <div class="backup-section">
+            <div class="backup-section-head">
+                <div class="backup-section-info">
+                    <b>还原备份</b>
+                    <span>导入后覆盖当前全部配置；浏览器外观设置会同步写入当前浏览器</span>
+                </div>
+                <div class="backup-actions">
+                    <input ref="backupFileInput" type="file" accept=".zip,application/zip"
+                           class="backup-file-input" @change="onBackupFilePick">
+                    <el-button size="small" icon="el-icon-upload2" :disabled="backupBusy"
+                               @click="pickBackupFile">选择 ZIP</el-button>
+                    <el-button size="small" type="danger" plain :disabled="!backupFile || backupBusy"
+                               @click="importSystemBackup">开始还原</el-button>
+                </div>
+            </div>
+            <div class="backup-file" v-if="backupFile">
+                <i class="el-icon-document"></i>
+                <span>{{ backupFileName }}</span>
+                <em>{{ formatBackupSize(backupFileSize) }}</em>
+            </div>
+        </div>
+
+        <div class="backup-busy" v-if="backupBusy">
+            <i class="el-icon-loading"></i>
+            <span>{{ backupBusyText }}</span>
+        </div>
+
+        <div class="backup-result" v-if="backupResult">
+            <div class="backup-result-head">
+                <i class="el-icon-circle-check"></i>
+                <b>还原完成</b>
+                <span>刷新页面后使用还原的配置</span>
+            </div>
+            <div class="backup-result-grid">
+                <div v-for="c in backupCountItems(backupResult.counts)" :key="c.label">
+                    <b>{{ c.value }}</b><span>{{ c.label }}</span>
+                </div>
+            </div>
+            <div class="backup-result-warn" v-if="backupResult.warnings && backupResult.warnings.length">
+                <div v-for="(w, i) in backupResult.warnings" :key="'bw' + i">
+                    <i class="el-icon-warning-outline"></i>{{ w }}
+                </div>
+            </div>
+            <div class="backup-result-tip" v-if="backupResult.restartRequired">
+                局域网访问设置已还原，需要重启 DeepShell 后生效。
+            </div>
+        </div>
+
+        <div class="backup-tip">
+            · 只导入自己导出或可信来源的备份；备份中的插件后端会以 DeepShell 本机权限运行。<br>
+            · 还原会保留当前实例的登录配置、HTTPS 证书与审计日志；其余配置以上一次备份为准。<br>
+            · 桌面外观、字体、图标样式与窗口布局等浏览器设置仅对当前浏览器生效。<br>
+            · 还原期间会断开当前所有 SSH 会话，插件后端会自动重新加载。
+        </div>
+        <span slot="footer">
+            <el-button v-if="!backupRestored" size="small" :disabled="backupBusy"
+                       @click="backupVisible = false">关闭</el-button>
+            <el-button v-else size="small" type="primary" icon="el-icon-refresh-right"
+                       @click="reloadPage">刷新页面</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- 字体设置 -->
+    <el-dialog title="字体设置（终端）" :visible.sync="fontVisible" width="470px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">字体</span>
+            <el-select v-model="fontSettings.family" size="small" filterable allow-create
+                       default-first-option style="flex:1" @change="applyFont">
+                <el-option v-for="f in fontCandidates" :key="f" :label="f" :value="f"></el-option>
+            </el-select>
+        </div>
+        <div class="set-row">
+            <span class="set-label">字号</span>
+            <el-slider v-model="fontSettings.size" :min="10" :max="24" :step="0.5"
+                       style="flex:1" @change="applyFont"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ fontSettings.size }}px</span>
+        </div>
+        <div class="set-hint">即时生效并记忆，所有会话与新建会话通用</div>
+    </el-dialog>
+
+    <!-- 快捷键设置 -->
+    <el-dialog title="快捷键设置" :visible.sync="hotkeyVisible" width="500px" append-to-body>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">双击 Ctrl：显示 / 隐藏命令输入栏</span>
+            <el-switch v-model="hotkeySettings.doubleCtrl" size="mini"></el-switch>
+        </div>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">Tab：命令输入栏智能补全（路径 / 历史 / 快捷命令）</span>
+            <el-switch v-model="hotkeySettings.tabComplete" size="mini"></el-switch>
+        </div>
+        <div class="set-row">
+            <span class="set-label" style="width:auto;flex:1">Esc：关闭命令输入栏</span>
+            <el-switch v-model="hotkeySettings.escClose" size="mini"></el-switch>
+        </div>
+        <el-divider></el-divider>
+        <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
+    </el-dialog>
+
+    <!-- 背景图片设置（终端 / AI 桌面共用弹窗） -->
+    <el-dialog :title="bgTarget === 'desktop' ? 'AI 桌面背景设置' : '终端背景设置'"
+               :visible.sync="bgVisible" width="520px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">图片</span>
+            <el-input size="small" v-model="bgDraft.url" placeholder="图片 URL，或点击右侧上传本地图片"
+                      style="flex:1" @change="applyBgDraft"></el-input>
+            <el-upload :show-file-list="false" :http-request="uploadBg" action="#" accept="image/*"
+                       style="display:inline-block;margin-left:8px">
+                <el-button size="small" icon="el-icon-upload2">上传</el-button>
+            </el-upload>
+        </div>
+        <div class="set-row">
+            <span class="set-label">不透明度</span>
+            <el-slider v-model="bgDraft.opacity" :min="0.1" :max="1" :step="0.05"
+                       style="flex:1" @change="applyBgDraft"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ Math.round(bgDraft.opacity * 100) }}%</span>
+        </div>
+        <div class="set-row">
+            <span class="set-label">模糊度</span>
+            <el-slider v-model="bgDraft.blur" :min="0" :max="12" :step="1"
+                       style="flex:1" @change="applyBgDraft"></el-slider>
+            <span class="set-hint" style="width:44px;text-align:right">{{ bgDraft.blur }}px</span>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="clearBg">清除背景</el-button>
+            <el-button size="small" type="primary" @click="bgVisible = false">完成</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- AI 设置 -->
+    <el-dialog title="AI 设置（大语言模型）" :visible.sync="aiSetVisible" width="640px" append-to-body>
+        <div class="set-row">
+            <span class="set-label">模型厂商</span>
+            <el-select size="small" v-model="aiSetForm.provider" style="flex:1" @change="onAiProviderChange">
+                <el-option v-for="p in aiProviders" :key="p.id" :label="p.name" :value="p.id"></el-option>
+            </el-select>
+        </div>
+        <div class="set-row">
+            <span class="set-label">API 地址</span>
+            <el-input size="small" v-model="aiSetForm.baseUrl" style="flex:1"
+                      :placeholder="aiCurrentPreset && aiCurrentPreset.baseUrl ? aiCurrentPreset.baseUrl : 'https://your-api-host/v1'"></el-input>
+        </div>
+        <div class="set-row">
+            <span class="set-label">API Key</span>
+            <el-input size="small" v-model="aiSetForm.apiKey" type="password" show-password style="flex:1"
+                      :placeholder="aiSetForm.hasKey ? '已配置，留空表示不修改' : 'sk-...'"></el-input>
+        </div>
+        <div class="set-row">
+            <span class="set-label">模型</span>
+            <el-select size="small" v-model="aiSetForm.model" filterable allow-create default-first-option
+                       style="flex:1" :loading="aiModelsLoading"
+                       placeholder="从列表选择，也可直接输入模型 ID">
+                <el-option v-for="m in aiModelOptions" :key="m" :label="m" :value="m"></el-option>
+            </el-select>
+            <el-button size="small" icon="el-icon-refresh" :loading="aiModelsLoading" style="margin-left:8px"
+                       @click="fetchAiModels()">刷新列表</el-button>
+        </div>
+        <div class="set-row">
+            <span class="set-label">单轮步数</span>
+            <el-input-number v-model="aiSetForm.maxSteps" size="small" :min="1" :max="100"
+                             :step="5" controls-position="right" style="width:140px"></el-input-number>
+            <span class="set-hint" style="margin-left:10px;flex:1">一次任务最多连续执行的步数，默认 50（1-100）</span>
+        </div>
+        <div class="set-row">
+            <span class="set-label">上下文窗口</span>
+            <el-input-number v-model="aiSetForm.contextWindow" size="small" :min="4096" :max="2000000"
+                             :step="1000" controls-position="right" style="width:160px"></el-input-number>
+            <span class="set-hint" style="margin-left:10px;flex:1">
+                按所用模型的上下文窗口填写（tokens），默认 400000；用于计算占用比例和压缩保留量
+            </span>
+        </div>
+        <div class="set-hint" style="line-height:1.9;min-height:19px">
+            <span v-if="aiModelsLoading">正在从厂商接口实时获取模型列表…</span>
+            <span v-else-if="aiModelsNote">{{ aiModelsNote }}</span>
+        </div>
+        <div class="set-hint" style="margin-top:6px;line-height:1.9">
+            · 模型列表由厂商接口实时获取（点「刷新列表」随时更新），列表中没有的模型可直接输入<br>
+            · <template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">API Key 获取：{{ aiCurrentPreset.keyUrl }}<br></template>
+            · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口<br>
+            · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度<br>
+            · 上下文窗口用于计算占用比例和压缩保留量，请按所用模型填写；压缩会调用一次模型生成结构化摘要
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="aiSetVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="aiSetSaving" @click="saveAiConfig">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 主机指纹确认 -->
+    <el-dialog :title="hostKeyPrompt && hostKeyPrompt.info.changed ? '主机密钥已变更' : '确认主机指纹'"
+               :visible.sync="hostKeyVisible" width="560px" append-to-body :show-close="false"
+               custom-class="host-key-dialog"
+               :close-on-click-modal="false" :close-on-press-escape="false">
+        <div v-if="hostKeyPrompt">
+            <el-alert v-if="hostKeyPrompt.info.changed" type="error" :closable="false" show-icon
+                      title="主机密钥与已保存的不一致，可能存在中间人攻击"></el-alert>
+            <el-alert v-else type="warning" :closable="false" show-icon
+                      title="首次连接该主机，请与服务器管理员核对指纹"></el-alert>
+            <div class="hk-box">
+                <div class="hk-row"><span>目标</span><b>{{ hostKeyPrompt.info.roleLabel
+                    || (hostKeyPrompt.info.role === 'jump' ? '跳板机' : '目标主机') }}</b></div>
+                <div class="hk-row"><span>地址</span><b>{{ hostKeyPrompt.info.host }}:{{ hostKeyPrompt.info.port }}</b></div>
+                <div class="hk-row"><span>类型</span><b>{{ hostKeyPrompt.info.keyType }}</b></div>
+                <div class="hk-row"><span>指纹</span><b class="hk-fp">{{ hostKeyPrompt.info.fingerprint }}</b></div>
+                <div class="hk-row" v-if="hostKeyPrompt.info.knownFingerprint">
+                    <span>原指纹</span><b class="hk-fp hk-old">{{ hostKeyPrompt.info.knownFingerprint }}</b></div>
+            </div>
+            <p class="hk-tip">
+                指纹不一致时请不要直接信任，先在服务器上执行
+                <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> 核对。
+            </p>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="cancelHostKeyPrompt">取消连接</el-button>
+            <el-button size="small" :type="hostKeyPrompt && hostKeyPrompt.info.changed ? 'danger' : 'primary'"
+                       :loading="hostKeyTrusting" @click="trustHostKey">
+                {{ hostKeyPrompt && hostKeyPrompt.info.changed ? '更新并信任' : '信任并连接' }}
+            </el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 端口转发 -->
+    <el-dialog title="端口转发" :visible.sync="pfVisible" width="780px" append-to-body
+               custom-class="pf-dialog" top="3vh">
+        <div class="pf-head">
+            <span class="pf-desc">规则按连接保存；勾选自动启动的规则会在连接建立后恢复。
+                本机监听 = 本机端口经服务器转发；服务器监听 = 服务器端口经本机转发。</span>
+        </div>
+        <el-table :data="pfRules" size="mini" v-loading="pfLoading" empty-text="暂无转发规则">
+            <el-table-column label="方向" width="64">
+                <template slot-scope="scope">{{ scope.row.direction === 'REMOTE' ? '服务器' : '本机' }}</template>
+            </el-table-column>
+            <el-table-column label="监听地址" min-width="145">
+                <template slot-scope="scope"><span class="portfwd-target">{{ scope.row.bindHost }}:{{
+                    scope.row.actualPort || scope.row.bindPort }}</span></template>
+            </el-table-column>
+            <el-table-column label="目标地址" min-width="145">
+                <template slot-scope="scope"><span class="portfwd-target">{{ scope.row.destHost }}:{{
+                    scope.row.destPort }}</span></template>
+            </el-table-column>
+            <el-table-column label="自动启动" width="72">
+                <template slot-scope="scope">{{ scope.row.autoStart ? '是' : '否' }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="88">
+                <template slot-scope="scope">
+                    <span v-if="scope.row.running" class="pf-badge pf-running">运行中</span>
+                    <span v-else-if="scope.row.error" class="portfwd-error" :title="scope.row.error">启动失败</span>
+                    <span v-else class="pf-badge">未启动</span>
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" width="188">
+                <template slot-scope="scope">
+                    <el-button size="mini" type="text" :disabled="scope.row.running || !pfTab || !pfTab.sessionId"
+                               @click="startPf(scope.row)">启动</el-button>
+                    <el-button size="mini" type="text" :disabled="!scope.row.running"
+                               @click="stopPf(scope.row)">停止</el-button>
+                    <el-button size="mini" type="text" @click="editPf(scope.row)">编辑</el-button>
+                    <el-button size="mini" type="text" style="color:#f56c6c"
+                               @click="deletePf(scope.row)">删除</el-button>
+                </template>
+            </el-table-column>
+        </el-table>
+        <div v-if="pfFirstError" class="portfwd-error" style="margin-top:6px">{{ pfFirstError }}</div>
+        <div v-if="!pfTab || !pfTab.sessionId" class="panel-tip" style="margin-top:6px">
+            当前连接尚未建立：规则可以保存，连接建立后自动启动的规则会生效。
+        </div>
+        <div class="pf-hint">监听地址填 127.0.0.1 仅本机可访问；填 0.0.0.0 会对外开放，请谨慎使用。</div>
+        <el-divider content-position="left">{{ pfEditId ? '编辑规则' : '新增规则' }}</el-divider>
+        <el-form :inline="true" size="mini" label-width="70px" class="pf-form">
+            <el-form-item label="方向">
+                <el-select v-model="pfForm.direction" style="width:110px">
+                    <el-option label="本机监听" value="LOCAL"></el-option>
+                    <el-option label="服务器监听" value="REMOTE"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="监听地址">
+                <el-input v-model="pfForm.bindHost" style="width:120px"></el-input>
+                <el-input-number v-model="pfForm.bindPort" :min="1" :max="65535" :controls="false"
+                                 style="width:86px;margin-left:6px"></el-input-number>
+            </el-form-item>
+            <el-form-item label="目标地址">
+                <el-input v-model="pfForm.destHost" style="width:120px"></el-input>
+                <el-input-number v-model="pfForm.destPort" :min="1" :max="65535" :controls="false"
+                                 style="width:86px;margin-left:6px"></el-input-number>
+            </el-form-item>
+            <el-form-item label="自动启动">
+                <el-switch v-model="pfForm.autoStart"></el-switch>
+            </el-form-item>
+            <el-form-item>
+                <el-button type="primary" :loading="pfSaving" @click="savePf">
+                    {{ pfEditId ? '保存修改' : '添加规则' }}
+                </el-button>
+                <el-button v-if="pfEditId" @click="resetPfForm">取消编辑</el-button>
+            </el-form-item>
+        </el-form>
+    </el-dialog>
+
+    <!-- 拖放/拖拽：复制或剪切到目标目录 -->
+    <el-dialog :title="desktopDropDialog.title || '复制或剪切文件'"
+               :visible.sync="desktopDropDialog.visible" width="460px" append-to-body
+               :close-on-click-modal="false" :close-on-press-escape="false"
+               :show-close="!desktopDropDialog.busy">
+        <div class="desk-drop-dialog">
+            <p>将 <b>{{ desktopDropDialog.names.length === 1
+                ? ('「' + desktopDropDialog.names[0] + '」')
+                : (desktopDropDialog.names.length + ' 个项目') }}</b>
+                <template v-if="desktopDropDialog.isDesktop">放到桌面</template>
+                <template v-else>复制或剪切到以下目录</template>？</p>
+            <div class="desk-drop-path">{{ desktopDropDialog.dest }}</div>
+            <p class="desk-drop-hint">复制：保留原文件，在目标位置生成副本；剪切：将原文件移动到目标位置。</p>
+        </div>
+        <div slot="footer">
+            <el-button size="small" :disabled="desktopDropDialog.busy"
+                       @click="desktopDropDialog.visible = false">取消</el-button>
+            <el-button size="small" :loading="desktopDropDialog.busy"
+                       @click="applyDesktopDrop('cut')">{{ desktopDropDialog.isDesktop ? '剪切到桌面' : '剪切到此处' }}</el-button>
+            <el-button size="small" type="primary" :loading="desktopDropDialog.busy"
+                       @click="applyDesktopDrop('copy')">{{ desktopDropDialog.isDesktop ? '复制到桌面' : '复制到此处' }}</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 编辑快捷命令 -->
+    <el-dialog title="编辑快捷命令" :visible.sync="cmdEditDialog" width="520px" append-to-body
+               :close-on-click-modal="false" :close-on-press-escape="false">
+        <el-form label-width="60px" size="small">
+            <el-form-item label="名称" required>
+                <el-input v-model="cmdEditForm.name" placeholder="例如：查看磁盘"></el-input>
+            </el-form-item>
+            <el-form-item label="命令" required>
+                <el-input v-model="cmdEditForm.command" type="textarea" :rows="3"
+                          placeholder="例如：df -h"></el-input>
+            </el-form-item>
+        </el-form>
+        <div slot="footer">
+            <el-button size="small" type="danger" plain icon="el-icon-delete" style="float:left"
+                       @click="removeSnippet">删除</el-button>
+            <el-button size="small" @click="cmdEditDialog = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="cmdEditSaving" @click="saveCmdEdit">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 进程详情 -->
+    <el-dialog :title="procDetail ? ('进程详情 · ' + procDetail.comm) : '进程详情'"
+               :visible.sync="procDetailVisible" width="680px" append-to-body>
+        <div class="sysinfo-list" v-if="procDetail">
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">名称</span>
+                <span class="sysinfo-value">{{ procDetail.comm }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">PID / 父进程 PID</span>
+                <span class="sysinfo-value">{{ procDetail.pid }} / {{ procDetail.ppid }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">用户</span>
+                <span class="sysinfo-value">{{ procDetail.user || '-' }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">状态</span>
+                <span class="sysinfo-value">{{ procDetail.state }}（{{ statText(procDetail.state) }}）</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">CPU</span>
+                <span class="sysinfo-value">瞬时 {{ procDetail.cpu == null ? '--' : (Math.round(procDetail.cpu * 10) / 10) + '%' }}
+                    ｜ 生命周期均值 {{ procDetail.cpuAvg == null ? '--' : procDetail.cpuAvg + '%' }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">内存</span>
+                <span class="sysinfo-value">{{ fmtMb(procDetail.rssMb) }}<template
+                        v-if="procDetail.memPct != null">（占物理内存 {{ procDetail.memPct }}%）</template></span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">运行时长</span>
+                <span class="sysinfo-value">{{ procDetail.elapsedSecs >= 0 ? fmtUptime(procDetail.elapsedSecs) : '--' }}</span>
+            </div>
+            <div class="sysinfo-row">
+                <span class="sysinfo-label">命令行</span>
+                <span class="sysinfo-value proc-cmd-detail">{{ procDetailCmd || procDetail.args || procDetail.comm || '-' }}</span>
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" icon="el-icon-document-copy" @click="copyProcCmd">复制命令行</el-button>
+            <el-button size="small" type="primary" @click="procDetailVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 可视化桌面：压缩 -->
+    <el-dialog title="压缩" :visible.sync="archiveDialogVisible" width="600px" append-to-body
+               :close-on-click-modal="false" :close-on-press-escape="!archiveSaving"
+               :show-close="!archiveSaving">
+        <div class="arc-dlg">
+            <div class="arc-sources">
+                <div class="arc-sources-title">
+                    <i class="el-icon-folder-opened"></i>
+                    压缩 {{ archiveSources.length }} 项
+                    <span class="dim">到 {{ desktop.archiveWin ? desktop.archiveWin.path : desk.path }}</span>
+                </div>
+                <div class="arc-chips">
+                    <span v-for="r in archiveSources" :key="'arcsrc' + r.name" class="arc-chip">
+                        <i :class="r.dir ? 'el-icon-folder' : 'el-icon-document'"></i>{{ r.name }}
+                    </span>
+                </div>
+            </div>
+            <el-form label-width="88px" size="small" class="arc-form">
+                <el-form-item label="压缩包名称">
+                    <el-input v-model="archiveForm.name" placeholder="archive.zip"></el-input>
+                    <div class="arc-warn" v-if="archiveNameExists && !archiveForm.overwrite">
+                        当前目录已有同名文件，开始压缩时会询问是否覆盖
+                    </div>
+                </el-form-item>
+                <el-form-item label="格式">
+                    <el-select v-model="archiveForm.format" class="arc-select"
+                               @change="archiveFormatChanged">
+                        <el-option v-for="f in archiveFormats" :key="'arcopt' + f.id"
+                                   :label="f.label + '（' + f.ext + '）'" :value="f.id">
+                            <span>{{ f.label }}</span>
+                            <span class="arc-opt-desc">{{ f.desc }}</span>
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="压缩级别">
+                    <el-select v-model="archiveForm.level" class="arc-select">
+                        <el-option v-for="l in archiveLevels" :key="'arclvl' + l.id"
+                                   :label="l.label + '（' + l.desc + '）'" :value="l.id">
+                            <span>{{ l.label }}</span>
+                            <span class="arc-opt-desc">{{ l.desc }}</span>
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="输出目录">
+                    <span class="arc-path">{{ desktop.archiveWin ? desktop.archiveWin.path : desk.path }}</span>
+                </el-form-item>
+                <el-form-item label="覆盖同名">
+                    <el-switch v-model="archiveForm.overwrite" size="mini"></el-switch>
+                    <span class="set-hint" style="margin-left:8px">目标压缩包已存在时覆盖</span>
+                </el-form-item>
+            </el-form>
+            <div class="arc-note">
+                <i class="el-icon-info"></i>
+                使用服务器自带命令：ZIP / TAR / gzip / bzip2 / xz / 7z。7Z 需要服务器已安装 7z 或 7za。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" :disabled="archiveSaving"
+                       @click="archiveDialogVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="archiveSaving" @click="archiveCompress">
+                {{ archiveSaving ? '正在压缩…' : '开始压缩' }}
+            </el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 可视化桌面：文件属性 -->
+    <el-dialog title="属性" :visible.sync="desktop.propsVisible" width="560px" append-to-body>
+        <div class="dsk-props" v-if="desktop.props">
+            <div class="dsk-props-head">
+                <span class="dsk-ico" :class="{ folder: desktop.props.dir }">
+                    <svg v-if="desktop.props.dir" class="dsk-folder-svg" viewBox="0 0 64 52" aria-hidden="true">
+                        <path d="M3 11c0-3.9 3.1-7 7-7h13.2c1.9 0 3.7.8 5 2.1L32 9h22c3.9 0 7 3.1 7 7v28c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V11z" fill="#e8a72e"/>
+                        <path d="M3 20h58v24c0 3.9-3.1 7-7 7H10c-3.9 0-7-3.1-7-7V20z" fill="#ffcf63"/>
+                    </svg>
+                    <span v-else class="dsk-file-ico" :class="'fi-' + desktop.props.kind">
+                        <span class="dsk-ext" :class="{ long: desktop.props.ext.length > 3 }">{{ desktop.props.ext }}</span>
+                    </span>
+                </span>
+                <div>
+                    <div class="dsk-props-name">{{ desktop.props.name }}</div>
+                    <div class="dim">{{ desktop.props.typeText }}</div>
+                </div>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">位置</span>
+                <span class="dsk-prop-value">{{ desktop.props.parent }}</span>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">类型</span>
+                <span class="dsk-prop-value">{{ desktop.props.typeText }}</span>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">大小</span>
+                <span class="dsk-prop-value">{{ desktop.props.dir ? '—（文件夹）' : fmtSize(desktop.props.size) }}</span>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">修改时间</span>
+                <span class="dsk-prop-value">{{ fmtTime(desktop.props.mtime) || '—' }}</span>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">权限</span>
+                <span class="dsk-prop-value dsk-mono">{{ desktop.props.perms || '—' }}</span>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">符号链接</span>
+                <span class="dsk-prop-value">{{ desktop.props.link ? '是' : '否' }}</span>
+            </div>
+            <div class="dsk-prop-row">
+                <span class="dsk-prop-label">完整路径</span>
+                <span class="dsk-prop-value dsk-mono">{{ desktop.props.path }}</span>
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" icon="el-icon-document-copy"
+                       @click="desktop.props && copyText(desktop.props.path)">复制路径</el-button>
+            <el-button size="small" icon="el-icon-key"
+                       @click="openPermFromDesktop">修改权限</el-button>
+            <el-button size="small" type="primary" @click="desktop.propsVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 系统信息 -->
+    <el-dialog :title="sysInfoTitle ? ('系统信息 · ' + sysInfoTitle) : '系统信息'"
+               :visible.sync="sysInfoVisible" width="780px" append-to-body>
+        <div v-if="sysInfoLoading && !sysInfo" class="sysinfo-tip">
+            <i class="el-icon-loading"></i> 正在采集系统信息…
+        </div>
+        <div v-else-if="sysInfoError && !sysInfo" class="sysinfo-tip sysinfo-err">{{ sysInfoError }}</div>
+        <div v-else class="sysinfo-list">
+            <div v-if="sysInfoError" class="sysinfo-tip sysinfo-err sysinfo-err-inline">刷新失败：{{ sysInfoError }}（内容为上次采集结果）</div>
+            <template v-if="sysInfo">
+                <div class="sysinfo-sec">基础信息</div>
+                <div class="sysinfo-row" v-for="row in sysInfo.basic" :key="'b' + row.label">
+                    <span class="sysinfo-label">{{ row.label }}</span>
+                    <span class="sysinfo-value">{{ row.value }}</span>
+                </div>
+                <template v-if="sysInfo.cpu && sysInfo.cpu.length">
+                    <div class="sysinfo-sec">CPU</div>
+                    <div class="sysinfo-row" v-for="row in sysInfo.cpu" :key="'c' + row.label">
+                        <span class="sysinfo-label">{{ row.label }}</span>
+                        <span class="sysinfo-value">{{ row.value }}</span>
+                    </div>
+                </template>
+                <template v-if="sysInfo.cpuUsage && sysInfo.cpuUsage.length">
+                    <div class="sysinfo-sec">CPU 占用（实时）</div>
+                    <div class="sysinfo-row" v-for="row in sysInfo.cpuUsage" :key="'u' + row.label">
+                        <span class="sysinfo-label">{{ row.label }}</span>
+                        <span class="sysinfo-value">{{ row.value }}</span>
+                    </div>
+                </template>
+                <template v-if="sysInfo.memory && sysInfo.memory.length">
+                    <div class="sysinfo-sec">内存 / 交换分区</div>
+                    <div class="sysinfo-row" v-for="row in sysInfo.memory" :key="'m' + row.label">
+                        <span class="sysinfo-label">{{ row.label }}</span>
+                        <span class="sysinfo-value">{{ row.value }}</span>
+                    </div>
+                </template>
+                <template v-if="sysInfo.net && sysInfo.net.length">
+                    <div class="sysinfo-sec">网络接口</div>
+                    <el-table :data="sysInfo.net" size="mini" class="sysinfo-table">
+                        <el-table-column label="名称" prop="name" min-width="80"></el-table-column>
+                        <el-table-column label="接收总量" min-width="96" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.rxBytes) }}</template>
+                        </el-table-column>
+                        <el-table-column label="发送总量" min-width="96" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.txBytes) }}</template>
+                        </el-table-column>
+                        <el-table-column label="接收速率" min-width="88" align="right">
+                            <template slot-scope="s">{{ s.row.rxRate == null ? '--' : fmtRate(s.row.rxRate) }}</template>
+                        </el-table-column>
+                        <el-table-column label="发送速率" min-width="88" align="right">
+                            <template slot-scope="s">{{ s.row.txRate == null ? '--' : fmtRate(s.row.txRate) }}</template>
+                        </el-table-column>
+                    </el-table>
+                </template>
+                <template v-if="sysInfo.disk && sysInfo.disk.length">
+                    <div class="sysinfo-sec">文件系统</div>
+                    <el-table :data="sysInfo.disk" size="mini" class="sysinfo-table">
+                        <el-table-column label="挂载点" prop="mount" min-width="110" show-overflow-tooltip></el-table-column>
+                        <el-table-column label="文件系统" prop="fs" min-width="130" show-overflow-tooltip></el-table-column>
+                        <el-table-column label="总大小" min-width="84" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.sizeKb) }}</template>
+                        </el-table-column>
+                        <el-table-column label="已用" min-width="84" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.usedKb) }}</template>
+                        </el-table-column>
+                        <el-table-column label="可用" min-width="84" align="right">
+                            <template slot-scope="s">{{ fmtKb(s.row.availKb) }}</template>
+                        </el-table-column>
+                        <el-table-column label="使用率" width="72" align="right">
+                            <template slot-scope="s">{{ s.row.pct }}%</template>
+                        </el-table-column>
+                    </el-table>
+                </template>
+            </template>
+            <div v-if="!sysInfo" class="sysinfo-tip">未获取到系统信息</div>
+        </div>
+        <div slot="footer">
+            <el-switch v-model="sysInfoAuto" size="mini" active-text="自动刷新（10s）" class="sysinfo-auto"></el-switch>
+            <el-button size="small" :disabled="sysInfoLoading"
+                       :icon="sysInfoLoading ? 'el-icon-loading' : 'el-icon-refresh'"
+                       @click="loadSysInfo">刷新</el-button>
+            <el-button size="small" type="primary" @click="sysInfoVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 局域网访问 -->
+    <el-dialog title="局域网访问" :visible.sync="lanVisible" width="560px" append-to-body>
+        <el-alert v-if="!lanSettings.authEnabled" type="warning" :closable="false" show-icon
+                  title="开放局域网前必须先启用登录认证并修改默认密码（application.yml → deepshell.auth）"></el-alert>
+        <el-alert v-else-if="lanSettings.defaultPassword" type="error" :closable="false" show-icon
+                  title="当前仍在使用默认密码 deepshell，必须修改后才能开放局域网"></el-alert>
+        <div class="set-row" style="margin-top:12px">
+            <span class="set-label" style="width:auto;flex:1">开放局域网访问（切换需重启应用生效）</span>
+            <el-switch v-model="lanSettings.lanEnabled" @change="saveLan"></el-switch>
+        </div>
+        <div class="set-row">
+            <span class="set-hint">
+                当前状态：{{ lanSettings.effectiveLan ? ('已开放（监听 0.0.0.0:' + lanSettings.port + '）') : ('仅本机（监听 127.0.0.1:' + lanSettings.port + '）') }}
+            </span>
+            <span v-if="lanSettings.restartRequired" class="set-hint" style="color:#e6a23c">
+                设置与运行状态不一致，请重启应用后生效
+            </span>
+        </div>
+        <div class="set-row">
+            <span class="set-hint">
+                传输加密：{{ lanSettings.tlsEnabled ? 'HTTPS（TLS 已启用）' : 'HTTP（未加密）' }}
+                <template v-if="!lanSettings.tlsEnabled && lanSettings.tlsNextEnabled">
+                    ；开启局域网并重启后自动启用 HTTPS
+                </template>
+                <template v-else-if="!lanSettings.tlsEnabled && lanSettings.tlsMode === 'off'">
+                    ；当前配置关闭了 TLS（deepshell.tls.mode=off）
+                </template>
+            </span>
+        </div>
+        <el-divider></el-divider>
+        <div class="set-hint" style="margin-bottom:6px">访问地址：</div>
+        <div class="lan-url" v-for="u in lanSettings.urls" :key="u">
+            <span class="lan-url-text">{{ u }}</span>
+            <el-button size="mini" type="text" icon="el-icon-document-copy" title="复制"
+                       @click="copyText(u)"></el-button>
+        </div>
+        <div class="set-hint" style="margin-top:10px;line-height:1.9">
+            · 默认仅本机（127.0.0.1）可访问；开放并重启后，局域网内电脑可通过上方 IP 地址访问<br>
+            · 开放局域网必须启用登录认证并修改默认密码，否则后端会拒绝开启（已手工开启时应用会拒绝启动）<br>
+            · 局域网模式默认自动启用 HTTPS：首次启动会生成自签证书（数据目录 tls/），浏览器需信任一次<br>
+            · 正式证书可配置 deepshell.tls.keystore / keystore-password；由反向代理终止 TLS 时设 deepshell.tls.mode: off<br>
+            · 首次开放如弹出 Windows 防火墙提示，请选择「允许访问」
+        </div>
+    </el-dialog>
+
+    <!-- 登录与安全 -->
+    <el-dialog title="登录与安全" :visible.sync="authSetVisible" width="520px" append-to-body>
+        <template v-if="authStatus.enabled">
+            <el-alert v-if="authStatus.defaultPassword" type="error" :closable="false" show-icon
+                      title="仍在使用默认密码 deepshell，开放局域网访问前必须修改"></el-alert>
+            <div class="set-row" style="margin-top:12px">
+                <span class="set-label" style="width: 88px">当前用户</span>
+                <span class="set-value">{{ authStatus.username }}</span>
+            </div>
+            <div class="set-row">
+                <span class="set-label" style="width: 88px">Token 有效期</span>
+                <el-input-number v-model="authSetHours" :min="1" :max="720" :step="1"
+                                 controls-position="right" size="small"
+                                 style="width: 150px"></el-input-number>
+                <span class="set-hint" style="margin-left: 8px">小时</span>
+            </div>
+            <div class="set-hint" style="line-height: 1.9; margin-top: 6px">
+                · 默认 6 小时；持续使用工作台时会自动续期，长时间无操作则到期退出<br>
+                · 修改后立即按新有效期重新签发 Token
+                <span v-if="authStatus.tokenRemainingSeconds != null">
+                    ；当前剩余约 {{ fmtTokenRemaining() }}
+                </span>
+            </div>
+        </template>
+        <div v-else class="set-hint" style="line-height: 1.9">
+            登录功能当前未启用。在启动目录的 application.yml 中设置：<br>
+            <code>deepshell.auth.enabled: true</code><br>
+            <code>deepshell.auth.username: admin</code><br>
+            <code>deepshell.auth.password: 你的密码</code><br>
+            重启应用后生效。
+        </div>
+        <div slot="footer">
+            <el-button v-if="authStatus.enabled" type="danger" plain size="small"
+                       @click="logout">退出登录</el-button>
+            <el-button size="small" @click="authSetVisible = false">关闭</el-button>
+            <el-button v-if="authStatus.enabled" type="primary" size="small"
+                       :loading="authSetSaving" @click="saveAuthSettings">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 审计日志 -->
+    <el-dialog title="审计日志" :visible.sync="auditVisible" width="920px" top="6vh" append-to-body>
+        <div class="audit-toolbar">
+            <el-select v-model="auditAction" size="mini" clearable placeholder="全部操作"
+                       style="width: 150px" @change="loadAudit(1)">
+                <el-option v-for="a in auditActions" :key="a[0]" :label="a[1]" :value="a[0]"></el-option>
+            </el-select>
+            <el-input v-model="auditKeyword" size="mini" clearable
+                      placeholder="搜索目标 / 详情 / 用户" style="width: 240px"
+                      @keyup.enter.native="loadAudit(1)"></el-input>
+            <el-button size="mini" icon="el-icon-search" @click="loadAudit(1)">查询</el-button>
+            <span class="spacer"></span>
+            <el-button size="mini" icon="el-icon-download" @click="exportAudit">导出 CSV</el-button>
+            <el-button size="mini" icon="el-icon-refresh" @click="loadAudit(auditPage)">刷新</el-button>
+        </div>
+        <el-table :data="auditItems" size="mini" stripe height="430" v-loading="auditLoading">
+            <el-table-column label="时间" width="145">
+                <template slot-scope="s">
+                    <span class="dim">{{ fmtTime(s.row.createdAt) }}</span>
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
+                <template slot-scope="s">{{ auditActionLabel(s.row.action) }}</template>
+            </el-table-column>
+            <el-table-column label="目标" prop="target" min-width="170" show-overflow-tooltip></el-table-column>
+            <el-table-column label="结果" width="76" align="center">
+                <template slot-scope="s">
+                    <span class="audit-result" :class="'audit-' + (s.row.result || '').toLowerCase()">
+                        {{ s.row.result || '—' }}
+                    </span>
+                </template>
+            </el-table-column>
+            <el-table-column label="用户" prop="username" width="90" show-overflow-tooltip></el-table-column>
+            <el-table-column label="IP" prop="clientIp" width="120" show-overflow-tooltip></el-table-column>
+            <el-table-column label="详情" prop="detail" min-width="180" show-overflow-tooltip></el-table-column>
+        </el-table>
+        <div class="audit-pager">
+            <el-pagination background layout="prev, pager, next, total"
+                           :current-page="auditPage" :page-size="auditPageSize"
+                           :total="auditTotal" @current-change="loadAudit"></el-pagination>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="auditVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 帮助 -->
+    <el-dialog title="帮助" :visible.sync="helpVisible" width="640px" top="5vh" append-to-body>
+        <div class="help-box">
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-monitor"></i>连接与工作台</div>
+                <ul>
+                    <li>右上角「＋」打开已保存连接，或点击「新建连接」直接创建后立即连接；连接右侧 ⚙ 可设置置顶 / 收藏 / <b>编辑连接</b>，也可以<b>把连接拖动到文件夹上</b>快速归入文件夹；<b>文件夹上右键「连接所有」</b>可批量打开其中（含子文件夹）的全部服务器</li>
+                    <li>页面刷新（F5）后会自动<b>恢复之前打开的会话标签并重新连接</b>，不会丢失工作现场</li>
+                    <li>标签：<b>拖动</b>可排序；<b>右键</b>支持复制 IP / 系统信息 / 重新连接 / 断开 / 关闭（其他、左边、右边、全部）；中键点击快速关闭</li>
+                    <li>终端顶栏实时显示远端 CPU / 内存 / 交换 / 网络利用率，悬浮查看主机、负载与运行时长</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-position"></i>命令输入栏（终端底部）</div>
+                <ul>
+                    <li><b>双击 Ctrl</b> 显示 / 隐藏；<b>Esc</b> 关闭；<b>Enter</b> 发送</li>
+                    <li><b>Tab</b> 智能补全（路径 / 历史 / 快捷命令）；<b>Alt</b> 或 <b>↑↓</b> 调出历史命令</li>
+                    <li><b>AI 生成命令</b>：点击魔法棒图标展开 AI 输入框，用自然语言描述需求，自动翻译为 shell 命令并填入命令框（需先在右上角菜单「AI 设置」配置 API Key）</li>
+                    <li>右侧工具：历史、选项（发送后清空 / 追加回车 / 忽略空行）、<b>多会话下发</b>（一条命令同时发到多台）、复制 / 粘贴、搜索、连接编辑、全屏</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-chat-dot-round"></i>AI 终端（右侧面板）</div>
+                <ul>
+                    <li>用自然语言描述需求，AI 会以当前会话的<b>登录用户身份</b>在服务器上自动执行命令、读取输出并逐步推进，直到任务完成；命令与输出以卡片形式展示（含退出码、耗时，可复制命令 / 输出）</li>
+                    <li><b>输入</b>：Enter 发送、Shift+Enter 换行；<b>↑↓</b> 调出历史输入；输入 <b>/</b> 打开快捷命令（/new、/clear、/compact、/pin、/fork、/auto、/manual、/desktop、/stop、/help）；AI 执行中按 Enter 会把新要求<b>排队</b>（支持多条，可删除 / 放回输入框 / 单独插话），本轮结束后自动发送；<b>Ctrl+Enter</b> 或「插话」按钮会中断当前生成/命令并立即发送新要求；中文输入法回车不会误触发送</li>
+                    <li><b>上下文用量</b>：输入框下方显示当前上下文占用与窗口比例，点击可查看上次请求的真实 Prompt / 输出 / 前缀缓存命中；超过 80% 会提示压缩。上下文使用超过 50% 后，工具栏压缩图标与上下文卡片中的「压缩上下文」按钮才可用；厂商未返回 usage 时自动按字符估算</li>
+                    <li><b>压缩上下文</b>：点击工具栏压缩图标、上下文卡片中的「压缩上下文」或输入 <b>/compact</b>，把较早对话生成结构化摘要并替换旧消息，保留最近消息；压缩卡片可展开查看摘要，摘要会作为后续请求的背景</li>
+                    <li><b>置顶与分叉</b>：对话列表顶部按钮可置顶当前对话（置顶优先展示且不会被数量上限淘汰）；工具栏「分叉」会复制当前对话为新对话，AI 回复或命令结果下方的「分叉」可从该条消息处复制分支，原对话保持不变</li>
+                    <li><b>输出</b>：回复支持 Markdown（列表 / 加粗 / 行内代码 / 代码块）；模型返回思考过程时显示可折叠的「思考过程」；长命令输出可展开全部或复制；请求失败可一键重试，达到单轮步数上限可一键继续</li>
+                    <li><b>单轮步数</b>：默认 50 步，可在右上角菜单「AI 设置」中调整为 1-100；达到上限会暂停并给出「继续执行」按钮，不会无限执行消耗额度</li>
+                    <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
+                    <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
+                    <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；对 ZIP / JAR / WAR / TAR / TAR.GZ / TGZ / TAR.BZ2 / TAR.XZ / 7Z / RAR / GZ / BZ2 / XZ 压缩包，右键「解压」可解压到当前目录或同名文件夹，默认跳过已存在的同名文件，调用服务器自带 unzip / tar / 7z / unrar / gzip / bzip2 / xz；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、<b>从桌面图标拖到资源管理器窗口</b>（松手后选择复制或剪切）、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录；<b>双击文本文件</b>会打开「文本编辑器」应用窗口，顶部含文件 / 编辑 / 选择 / 视图 / 帮助菜单，支持多标签、新建 / 打开 / 保存 / 另存为，关闭标签前会提示未保存修改；工具栏新增<b>「过滤」</b>开关，勾选后只显示包含关键词的行（支持区分大小写与正则），过滤视图为只读，关闭过滤后恢复编辑</li>
+                    <li><b>桌面应用插件</b>：开始菜单「已安装应用 → 安装 / 管理」导入 ZIP（plugin.json + 入口 HTML + 图标），安装后直接出现在开始菜单；插件在隔离沙箱 iframe 中运行，支持同 ID 更新与卸载；格式详见 README「桌面应用插件」</li>
+                    <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏放置 AI 终端、新建终端，以及已打开窗口的按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 服务与计划任务 / 网络工具箱 / 多机命令 / 常用目录 / 快捷命令 / 连接管理，可最小化与还原）；这些工具都从开始菜单打开，均在桌面内以窗口运行，不再跳转终端工作台。右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；<b>点击或右键连接状态</b>可重新连接 / 断开 / 查看系统信息；连接断开时状态旁会显示「重新连接」，任务栏空白处右键也可重新连接。点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；开始菜单底部可在新标签页打开工作台（保留当前桌面），或直接返回工作台；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
+                    <li><b>服务与计划任务 / 网络工具箱 / 多机命令</b>：开始菜单打开。服务窗口列出 systemd / SysV 服务，可启动、停止、重启与设置 / 取消开机自启；计划任务页查看用户 crontab（可添加 / 删除）、系统 crontab 与 systemd 定时器。网络工具箱在目标服务器上执行 ping / 路由追踪 / DNS 查询 / 端口探测。多机命令可选择多台已保存连接并发执行同一条命令，逐台查看退出码、耗时与输出；已打开的会话直接复用，未连接的按保存的代理 / 跳板机配置临时建连</li>
+                    <li><b>常用目录 / 快捷命令（桌面窗口）</b>：常用目录可添加、移除目录，<b>单击目录</b>会在终端执行 cd 并让资源管理器跳转到该目录；快捷命令固定发送到当前桌面会话，单击执行、右侧 + 仅填入输入框；桌面终端窗口底栏也提供快捷命令入口，工作台的快捷命令面板保持不变</li>
+                    <li><b>连接管理（桌面窗口）</b>：开始菜单「连接管理」在桌面内以窗口打开，支持搜索、收藏 / 置顶、文件夹分组、拖动排序、连接导入导出以及新建 / 编辑 / 复制 / 删除；<b>单击连接</b>会在新浏览器标签页打开该连接的 AI 桌面，当前桌面保持不变。终端工作台的「打开连接」弹窗行为不变</li>
+                    <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后会按退避策略自动重连，也可在任务栏连接状态处右键手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
+                    <li><b>设置（控制面板）</b>：开始菜单「设置」打开控制面板式窗口，左侧分类包含外观与桌面、时间与时钟、快捷键、电源与休眠、AI 助手、网络与连接、系统信息；可切换默认视图、图片缩略图、隐藏文件、终端字体 / 背景、快捷键、24 小时制 / 秒 / 日期与时区显示，设置空闲自动返回工作台，或重新连接 / 断开当前 SSH 会话</li>
+                    <li><b>多对话</b>：面板左侧是对话列表（最近使用的在前），点「新对话」开新会话，点条目切换；每个对话有独立上下文与工作目录，鼠标悬浮条目可删除；记录保存在<b>服务端 SQLite 数据库</b>（随数据目录迁移 / 备份），刷新、换浏览器打开都还在（浏览器里旧存的记录首次打开自动迁移入库）</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-folder-opened"></i>文件 SFTP（右侧面板）</div>
+                <ul>
+                    <li>双击目录进入 / 双击文件在线编辑；点击列头排序（名称 / 大小 / 修改时间）</li>
+                    <li>在线编辑使用 <b>CodeMirror</b>：行号、语法高亮、区分大小写 / 全词 / 正则查找、替换与全部替换、匹配项高亮、双击选中词高亮；快捷键 Ctrl+F 查找、Ctrl+H 替换、Ctrl+S 保存。终端工作台的 SFTP 面板仍以**弹窗**打开，但内部与 AI 桌面的<b>「文本编辑器」应用窗口</b>使用同一套顶部菜单（文件 / 编辑 / 选择 / 视图 / 帮助）、多标签、新建、打开远程文件、保存、另存为、撤销 / 重做、剪切 / 复制 / 粘贴、转到行、行号 / 自动换行 / 字号缩放及未保存确认</li>
+                    <li><b>拖动文件名到文件夹</b>即可移动（拖到表格边缘自动滚动找目标，移动前弹确认框）</li>
+                    <li>VSCode 图标：下载到本机用 VSCode 打开，<b>保存后自动同步回服务器</b>（含 VSCode 原子保存，失败会自动重试）</li>
+                    <li><b>批量分发</b>：工具栏「批量分发」图标（分享）打开；选择本地多个文件、目标目录与多台已保存连接，服务端并行上传到每台服务器的同一路径；已打开的会话直接复用，未连接的自动建立临时 SFTP 连接；可查看逐台进度、取消与重试失败项</li>
+                    <li>工具栏：返回上一目录 / 上级目录 / 新建文件夹 / 新建文件（创建后直接打开编辑）/ 上传 / 刷新当前目录 / <b>分析磁盘占用</b> / <b>目录跟随开</b></li>
+                    <li><b>目录跟随</b>（默认开启）：终端里 <code>cd</code> 到某个目录后，文件面板自动切换到该目录；手动浏览不受影响，直到下次 cd；点工具栏链接图标可开关</li>
+                    <li><b>把系统里的文件直接拖进浏览器窗口</b>即可上传到当前目录（拖入时会显示目标目录提示，成功后顶部弹出提示）</li>
+                    <li>名称左侧复选框支持<b>多选</b>（表头可全选）；选中后出现操作条，可<b>打包下载</b>（后端通过 SFTP 流式打包，浏览器只下载一次）或<b>逐个下载</b>文件（文件夹会跳过）</li>
+                    <li>本机（127.0.0.1 / localhost）访问且运行环境有图形界面时，还可<b>下载到本机</b>：后端弹出原生目录选择框，自动创建 <code>deepshell-目录名-时间</code> 子目录，通过 SFTP 直接写盘；传输队列显示进度与当前文件，完成后可查看失败明细并在文件管理器中打开目录</li>
+                    <li>每行操作：下载、重命名、删除（目录递归删除，带确认）</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-folder-opened"></i>常用目录（右侧面板）</div>
+                <ul>
+                    <li><b>按当前主机（连接）分别保存</b>，切换标签页自动切换对应的常用目录，不同主机互不影响</li>
+                    <li>把常用路径存成快捷入口：浏览到目标目录后点「定位」按钮一键添加，或直接输入路径</li>
+                    <li><b>点击条目即在终端执行 cd</b>（特殊字符自动安全转义），文件面板同步进入该目录</li>
+                    <li>鼠标悬浮条目右侧的 × 可从常用目录中移除</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-pie-chart"></i>磁盘分析（右侧面板 / 桌面「磁盘」窗口）</div>
+                <ul>
+                    <li>输入目录后点搜索（或从 SFTP 工具栏点「分析磁盘占用」），列出每个子目录 / 文件的大小与占比（按大小降序）</li>
+                    <li><b>点击文件夹逐层下钻</b>找占空间最大的目录，「↑」返回上一级；不跨文件系统挂载点统计</li>
+                    <li>桌面开始菜单「磁盘」会以独立窗口打开同一套分析工具，默认从当前文件目录开始扫描，窗口可拖动 / 缩放 / 最小化，打开后会出现在任务栏窗口区</li>
+                    <li>目录很大时扫描需要等待（面板会显示已用时间），超时可换更小的目录逐层分析</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-data-line"></i>监控与进程</div>
+                <ul>
+                    <li>「进程」面板：类任务管理器，支持排序 / 过滤 / 3 秒自动刷新，可结束（SIGTERM）/ 强杀（SIGKILL）；<b>单击进程行查看详情</b>（PID、父进程、用户、状态、CPU、内存、运行时长与完整命令行，支持一键复制）</li>
+                    <li>采样经独立通道读取 /proc，不打扰交互终端；仅支持 Linux 服务器</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-menu"></i>右上角菜单</div>
+                <ul>
+                    <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、终端背景设置、AI 设置（DeepSeek / 通义千问 / 智谱 GLM / MiniMax / Kimi / OpenAI 等厂商，模型列表实时获取、下拉选择）</li>
+                    <li>「DeepShell 服务 → 备份与还原」可把连接与密码、快捷命令、AI 对话、桌面外观与图标 / 字体、背景图、插件及插件数据打包为 ZIP；在新安装的 DeepShell 中导入即可恢复</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-folder"></i>数据与安全</div>
+                <ul>
+                    <li>连接、密码（AES 加密）、快捷命令与背景图存放于数据目录（分发包为程序目录下 <b>data/</b>），拷贝该目录即可迁移</li>
+                    <li>系统备份包含连接密码、AI API Key 与 SSH 私钥，请妥善保管；登录配置、HTTPS 证书和审计日志不包含在备份中</li>
+                    <li>本工具设计为本机使用，请勿直接暴露到公网</li>
+                </ul>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 关于 -->
+    <el-dialog title="关于" :visible.sync="aboutVisible" width="440px" append-to-body>
+        <div class="about-box">
+            <div class="about-logo">Deep<b>Shell</b></div>
+            <div class="about-line">版本 {{ appInfo.version }} · 现代化 Web 终端工具</div>
+            <div class="about-line">SSH 终端 · SFTP · 实时监控 · AI 运维助手</div>
+            <div class="about-line">SpringBoot + Thymeleaf + ElementUI + xterm.js</div>
+            <el-divider></el-divider>
+            <div class="about-line dim">运行环境：Java {{ appInfo.java }} ｜ {{ appInfo.os }}</div>
+            <div class="about-line dim">数据目录：{{ appInfo.dataDir }}</div>
+            <div class="about-line dim">本地工具 · 连接与账号信息仅保存在本机</div>
+        </div>
+    </el-dialog>
+
+    <el-dialog :title="editDialogTitle ? ('文本编辑器 · ' + editDialogTitle) : '文本编辑器'"
+               :visible.sync="editVisible" width="1120px" top="3vh" custom-class="edit-dialog"
+               :close-on-click-modal="false" :before-close="beforeEditClose"
+               destroy-on-close @closed="onEditClosed">
+        <div class="edit-dialog-app">
+            <desktop-text-editor v-if="editVisible" ref="terminalEditor" :tab="editTab"
+                                 :pending-path="editPendingPath" :pending-seq="editPendingSeq"
+                                 @title-change="editDialogTitle = $event"
+                                 @saved="onDialogEditorSaved"></desktop-text-editor>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="cancelEdit">关闭</el-button>
+            <el-button size="small" type="primary" @click="saveDialogEdit">保存到远程 (Ctrl+S)</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- SFTP 批量分发：本地文件 -> 多台服务器同一目录 -->
+    <el-dialog :title="distribute.mode === 'cross' ? '跨服务器传输文件' : '批量分发文件到多台服务器'"
+               :visible.sync="distribute.visible"
+               width="840px" top="4vh" custom-class="dist-dialog"
+               :close-on-click-modal="false" :before-close="beforeDistributeClose"
+               destroy-on-close @closed="onDistributeClosed">
+        <div class="dist-shell" v-if="distribute.phase === 'edit'"
+             @dragover.prevent @drop.prevent="onDistributeDrop">
+            <div class="dist-hint">
+                <i class="el-icon-info"></i>
+                <template v-if="distribute.mode === 'cross'">
+                    把当前服务器选中的文件直接传输到其他服务器，无需下载到本机；源文件保持不变，同名文件会被覆盖。
+                </template>
+                <template v-else>
+                    选择本地文件，同时上传到多台服务器的同一目录；同名文件会被覆盖。
+                </template>
+            </div>
+            <div class="dist-section">
+                <div class="dist-section-head">
+                    <span class="dist-section-title">{{ distribute.mode === 'cross' ? '源文件（当前服务器）' : '本地文件' }}</span>
+                    <span class="dist-count" v-if="distribute.mode === 'cross' && distribute.sourceDir">
+                        {{ distribute.sourceDir }}
+                    </span>
+                    <span class="dist-count" v-if="distribute.files.length">
+                        {{ distribute.files.length }} 个 · {{ fmtSize(distributeFileBytes) }}
+                    </span>
+                    <span class="spacer"></span>
+                    <el-button v-if="distribute.files.length" size="mini" type="text"
+                               @click="clearDistributeFiles">清空</el-button>
+                </div>
+                <div v-if="distribute.mode !== 'cross'" class="dist-drop" :class="{ over: distribute.dragOver }"
+                     @click="pickDistributeFiles"
+                     @dragover.prevent.stop="distribute.dragOver = true"
+                     @dragleave.prevent="distribute.dragOver = false"
+                     @drop.prevent.stop="onDistributeDrop">
+                    <i class="el-icon-upload"></i>
+                    <span>点击选择文件，或拖入浏览器窗口</span>
+                    <span class="dist-drop-hint">支持多选，文件名和扩展名保持不变</span>
+                </div>
+                <input ref="distFileInput" type="file" multiple style="display: none"
+                       @change="onDistributeFilesPick">
+                <div class="dist-file-list" v-if="distribute.files.length">
+                    <div class="dist-file" v-for="(f, i) in distribute.files" :key="f.uid">
+                        <i class="el-icon-document"></i>
+                        <span class="dist-file-name" :title="f.path || f.name">{{ f.name }}</span>
+                        <span class="dist-file-size">{{ fmtSize(f.size) }}</span>
+                        <i class="el-icon-close" title="移除" @click.stop="removeDistributeFile(i)"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="dist-section">
+                <div class="dist-row">
+                    <span class="dist-label">目标目录</span>
+                    <el-input v-model="distribute.targetPath" size="small" class="dist-path-input"
+                              placeholder="/opt/app" @keyup.enter.native="startDistribute">
+                        <i slot="prefix" class="el-icon-folder-opened"></i>
+                    </el-input>
+                </div>
+                <div class="dist-sub">所有服务器使用同一绝对路径；目录不存在时自动逐级创建。</div>
+            </div>
+            <div class="dist-section">
+                <div class="dist-section-head">
+                    <span class="dist-section-title">目标服务器</span>
+                    <span class="dist-count">已选 {{ distribute.ids.length }} / {{ distributeTargetTotal }}</span>
+                    <span class="spacer"></span>
+                    <el-button size="mini" type="text" @click="selectAllDistributeTargets">全选</el-button>
+                    <el-button size="mini" type="text" :disabled="!distribute.ids.length"
+                               @click="clearDistributeTargets">清空</el-button>
+                </div>
+                <el-input v-model="distribute.keyword" size="mini" class="dist-search"
+                          prefix-icon="el-icon-search" clearable
+                          placeholder="搜索名称 / 主机 / 用户名"></el-input>
+                <div class="dist-target-list">
+                    <div v-for="c in distributeTargets" :key="c.id" class="dist-target"
+                         :class="{ checked: distribute.ids.indexOf(c.id) >= 0 }"
+                         @click="toggleDistributeTarget(c.id)">
+                        <span class="dist-check" @click.stop>
+                            <el-checkbox :value="distribute.ids.indexOf(c.id) >= 0"
+                                         @change="toggleDistributeTarget(c.id)"></el-checkbox>
+                        </span>
+                        <span class="dist-target-name">{{ c.name }}</span>
+                        <span class="dist-target-addr">{{ c.username }}@{{ c.host }}:{{ c.port }}</span>
+                        <span class="spacer"></span>
+                        <el-tag v-if="connectionIsOpen(c.id)" size="mini" type="success" effect="plain">已连接</el-tag>
+                        <el-tag v-if="c.groupName" size="mini" type="info" effect="plain">{{ c.groupName }}</el-tag>
+                    </div>
+                    <div v-if="!distributeTargets.length" class="dist-empty">
+                        {{ connections.length ? '没有匹配的连接' : '暂无已保存的连接' }}
+                    </div>
+                </div>
+                <div class="dist-sub">已打开的会话会直接复用，未连接的服务器会自动建立临时 SFTP 连接。</div>
+            </div>
+            <div class="dist-error" v-if="distribute.error">{{ distribute.error }}</div>
+        </div>
+        <div class="dist-shell" v-else @dragover.prevent @drop.prevent>
+            <div class="dist-run-head">
+                <div class="dist-run-title">
+                    <i :class="[distributeStatusIcon, distributeStatusClass]"></i>
+                    {{ distributeStatusText }}
+                </div>
+                <template v-if="distribute.task">
+                    <div class="dist-run-sub">
+                        目标目录 <code>{{ distribute.task.targetPath }}</code> ·
+                        {{ distribute.task.files.length }} 个文件 ·
+                        {{ distribute.task.totalTargets }} 台服务器
+                    </div>
+                    <el-progress :percentage="distributeOverallPct"
+                                 :status="distributeOverallStatus" :stroke-width="8"
+                                 :show-text="false"></el-progress>
+                    <div class="dist-run-stats">
+                        <span><b class="dist-ok">{{ distribute.task.doneTargets }}</b> 成功</span>
+                        <span v-if="distribute.task.failedTargets">
+                            <b class="dist-bad">{{ distribute.task.failedTargets }}</b> 失败
+                        </span>
+                        <span v-if="distribute.task.cancelledTargets">
+                            已取消 {{ distribute.task.cancelledTargets }}
+                        </span>
+                        <span>{{ fmtSize(distribute.task.doneBytes) }} / {{ fmtSize(distribute.task.totalBytes) }}</span>
+                        <span v-if="distribute.speed > 0">{{ fmtRate(distribute.speed) }}</span>
+                    </div>
+                </template>
+                <template v-else>
+                    <div class="dist-run-sub">正在把文件上传到应用服务器并准备分发…</div>
+                    <el-progress :percentage="distribute.preparePct" :stroke-width="8"
+                                 :show-text="false"></el-progress>
+                </template>
+            </div>
+            <div class="dist-run-list" v-if="distribute.task && distribute.task.targets.length">
+                <div v-for="t in distribute.task.targets" :key="t.connectionId" class="dist-run-item">
+                    <span class="dist-dot" :class="'is-' + t.status"></span>
+                    <div class="dist-run-main">
+                        <div class="dist-run-line">
+                            <span class="dist-run-name">{{ t.name }}</span>
+                            <span class="dist-run-addr">{{ t.username }}@{{ t.host }}:{{ t.port }}</span>
+                            <span class="spacer"></span>
+                            <span class="dist-run-pct">{{ distributeTargetPct(t) }}%</span>
+                        </div>
+                        <el-progress :percentage="distributeTargetPct(t)"
+                                     :status="distributeTargetStatus(t)" :stroke-width="5"
+                                     :show-text="false"></el-progress>
+                        <div class="dist-run-detail" :class="{ error: t.status === 'error' }">
+                            {{ distributeTargetDetail(t) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="dist-error" v-if="distribute.error">{{ distribute.error }}</div>
+        </div>
+        <div slot="footer">
+            <template v-if="distribute.phase === 'edit'">
+                <el-button size="small" @click="distribute.visible = false">取消</el-button>
+                <el-button size="small" type="primary" :loading="distribute.starting"
+                           :disabled="!canDistribute" @click="startDistribute">
+                    {{ distribute.mode === 'cross' ? '开始传输' : '开始分发' }}<template v-if="distribute.ids.length">（{{ distribute.ids.length }} 台）</template>
+                </el-button>
+            </template>
+            <template v-else>
+                <el-button v-if="distribute.starting" size="small" disabled>正在准备…</el-button>
+                <el-button v-else-if="distribute.task && distribute.task.status === 'running'"
+                           size="small" :loading="distribute.cancelling"
+                           @click="cancelDistribute">取消分发</el-button>
+                <el-button v-if="!distribute.starting && distribute.task && distribute.task.status !== 'running'
+                                  && distribute.task.failedTargets"
+                           size="small" @click="retryDistribute">重试失败项</el-button>
+                <el-button v-if="!distribute.starting
+                                  && !(distribute.task && distribute.task.status === 'running')"
+                           size="small" type="primary" @click="closeDistribute">关闭</el-button>
+            </template>
+        </div>
+    </el-dialog>
+
+    <!-- AI 桌面应用插件管理 -->
+    <el-dialog title="桌面应用插件" :visible.sync="pluginMgrVisible" width="720px" top="8vh"
+               custom-class="plugin-dialog" append-to-body :close-on-click-modal="false">
+        <div class="plugin-mgr-hint">
+            <i class="el-icon-info"></i>
+            官方插件使用 DeepShell RSA 公钥验证签名；未验证插件可能被篡改或冒充官方。含后端 JAR 的插件会以服务端权限运行，安装后需重启 DeepShell 才会加载。
+        </div>
+        <div class="plugin-mgr-actions">
+            <el-button size="small" type="primary" icon="el-icon-upload2"
+                       :loading="pluginImporting" @click="pickPluginZip">导入 ZIP 插件</el-button>
+            <input ref="pluginZipInput" type="file" accept=".zip,application/zip"
+                   class="plugin-zip-input" style="display: none" @change="onPluginZipPick">
+            <span class="dim">ZIP 根目录需包含 plugin.json、入口 HTML 与图标</span>
+        </div>
+
+        <div class="plugin-builtin" v-if="builtinAvailablePlugins.length">
+            <div class="plugin-builtin-head">
+                <span>内置应用</span>
+                <em>由 DeepShell 提供 · 仅 AI 可视化桌面可用 · 支持安装与卸载</em>
+            </div>
+            <div class="plugin-builtin-card" v-for="p in builtinAvailablePlugins" :key="'builtin-' + p.id">
+                <span class="plugin-builtin-icon">
+                    <img v-if="p.iconUrl" :src="p.iconUrl" alt="">
+                    <i v-else class="el-icon-s-grid"></i>
+                </span>
+                <div class="plugin-builtin-main">
+                    <div class="plugin-builtin-name">
+                        {{ p.name }}
+                        <span class="plugin-builtin-ver">v{{ p.version }}</span>
+                        <span class="plugin-sign-badge verified">官方签名</span>
+                        <span v-if="p.hasBackend" class="plugin-backend-badge">含后端</span>
+                        <span class="plugin-builtin-tag">内置</span>
+                    </div>
+                    <div class="plugin-builtin-desc" :title="p.description">{{ p.description }}</div>
+                    <div class="plugin-builtin-meta">
+                        {{ p.author }} · 仅 AI 桌面
+                        <template v-if="p.updateAvailable"> · 已安装 v{{ p.installedVersion }}，可更新</template>
+                        <template v-if="p.hasBackend"> · 安装后重启加载后端</template>
+                    </div>
+                </div>
+                <el-button size="mini" type="primary"
+                           :loading="pluginBuiltinInstalling === p.key"
+                           @click="installBuiltinPlugin(p)">{{ p.updateAvailable ? '更新' : '安装' }}</el-button>
+            </div>
+        </div>
+
+        <div class="plugin-mgr-error" v-if="pluginMgrError">{{ pluginMgrError }}</div>
+        <div class="plugin-mgr-list" v-loading="pluginMgrLoading">
+            <div v-for="p in desktopPlugins" :key="'plgm' + p.id" class="plugin-mgr-item">
+                <span class="plugin-mgr-icon">
+                    <img v-if="p.iconUrl" :src="p.iconUrl" alt="">
+                    <i v-else class="el-icon-s-grid"></i>
+                </span>
+                <div class="plugin-mgr-main">
+                    <div class="plugin-mgr-name">
+                        {{ p.name }}<span class="plugin-mgr-version">v{{ p.version }}</span>
+                        <span class="plugin-sign-badge"
+                              :class="p.verified ? 'verified' : (p.signatureStatus === 'invalid' ? 'invalid' : 'unsigned')">
+                            {{ p.verified ? '官方签名' : (p.signatureStatus === 'invalid' ? '签名异常' : '未验证') }}
+                        </span>
+                        <span v-if="p.hasBackend" class="plugin-backend-badge"
+                              :class="{ loaded: p.backendLoaded }">
+                            {{ p.backendLoaded ? '含后端 · 已加载' : '含后端 · 待重启' }}
+                        </span>
+                    </div>
+                    <div class="plugin-mgr-desc" :title="p.description">{{ p.description || '暂无描述' }}</div>
+                    <div class="plugin-mgr-meta">
+                        {{ p.verified ? '官方签名 · 发布者 ' + (p.author || '未知') : '未验证 · 发布者 ' + (p.author || '未知') }}
+                        · {{ p.fileCount }} 个文件 · {{ fmtSize(p.totalBytes) }}
+                    </div>
+                </div>
+                <el-button size="mini" type="text"
+                           :disabled="p.hasBackend && p.backendLoaded === false"
+                           :title="p.hasBackend && p.backendLoaded === false ? '需要重启 DeepShell 后加载后端模块' : '打开插件'"
+                           @click="openDesktopPlugin(p)">打开</el-button>
+                <el-button size="mini" type="text" class="danger-text" @click="deletePlugin(p)">卸载</el-button>
+            </div>
+            <div v-if="!pluginMgrLoading && !desktopPlugins.length" class="plugin-mgr-empty">
+                还没有安装插件。<template v-if="builtinAvailablePlugins.length">安装上方内置应用，</template>或导入 ZIP 后即可在开始菜单找到它。
+            </div>
+        </div>
+        <div class="plugin-mgr-tip">
+            <i class="el-icon-warning-outline"></i>
+            未验证插件无法证明发布者身份，也不能防止内容被篡改；含后端 JAR 的插件可以读取/修改服务器资源，请只安装可信来源的包。修改官方插件内容会使 RSA 签名失效。
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="pluginMgrVisible = false">关闭</el-button>
+        </div>
+    </el-dialog>
+
+    <el-dialog title="重命名" :visible.sync="renameVisible" width="420px">
+        <el-input v-model="renameForm.newName" size="small" @keyup.enter.native="doRename"></el-input>
+        <div slot="footer">
+            <el-button size="small" @click="renameVisible = false">取消</el-button>
+            <el-button size="small" type="primary" @click="doRename">确定</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 修改权限 -->
+    <el-dialog title="修改权限" :visible.sync="permVisible" width="480px" append-to-body>
+        <el-form label-width="72px" size="small">
+            <el-form-item label="路径">
+                <span class="dsk-mono perm-path">{{ permForm.path }}</span>
+            </el-form-item>
+            <el-form-item label="权限">
+                <el-input v-model="permForm.mode" maxlength="4" placeholder="644"
+                          style="width: 120px" @keyup.enter.native="savePerm"></el-input>
+                <span class="set-hint" style="margin-left: 10px">八进制，如 644 / 755 / 600</span>
+            </el-form-item>
+            <el-form-item label="快捷">
+                <el-button size="mini" @click="permForm.mode = '644'">644 文件</el-button>
+                <el-button size="mini" @click="permForm.mode = '755'">755 目录</el-button>
+                <el-button size="mini" @click="permForm.mode = '600'">600 私有</el-button>
+                <el-button size="mini" @click="permForm.mode = '700'">700 私有目录</el-button>
+            </el-form-item>
+        </el-form>
+        <div slot="footer">
+            <el-button size="small" @click="permVisible = false">取消</el-button>
+            <el-button size="small" type="primary" :loading="permSaving" @click="savePerm">保存</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 下载到本机：结果汇总 -->
+    <el-dialog title="下载到本机结果" :visible.sync="localDlSummary.visible" width="560px" append-to-body>
+        <div v-if="localDlSummary.item" class="local-dl-summary">
+            <div class="local-dl-row">
+                <b>目标目录</b>
+                <span class="local-dl-path">{{ localDlSummary.item.targetPath }}</span>
+            </div>
+            <div class="local-dl-row">
+                <b>文件</b>
+                <span>成功 {{ localDlSummary.item.doneFiles }} / {{ localDlSummary.item.totalFiles }} 个，
+                    失败 {{ localDlSummary.item.errorCount || 0 }} 个</span>
+            </div>
+            <div class="local-dl-row" v-if="localDlSummary.item.renamedCount">
+                <b>名称调整</b>
+                <span>{{ localDlSummary.item.renamedCount }} 项（已按本机文件名规则调整）</span>
+            </div>
+            <div class="local-dl-row" v-if="localDlSummary.item.error">
+                <b>错误</b>
+                <span class="local-dl-error">{{ localDlSummary.item.error }}</span>
+            </div>
+            <div class="local-dl-errors" v-if="localDlSummary.item.errors && localDlSummary.item.errors.length">
+                <div v-for="(e, i) in localDlSummary.item.errors" :key="i">{{ e }}</div>
+                <div class="local-dl-more"
+                     v-if="(localDlSummary.item.errorCount || 0) > localDlSummary.item.errors.length">
+                    还有 {{ localDlSummary.item.errorCount - localDlSummary.item.errors.length }} 项失败未显示…
+                </div>
+            </div>
+        </div>
+        <span slot="footer">
+            <el-button size="small" @click="localDlSummary.visible = false">关闭</el-button>
+            <el-button size="small" type="primary" icon="el-icon-folder-opened"
+                       :disabled="!localDlSummary.item" @click="openLocalDownloadDir">打开目录</el-button>
+        </span>
+    </el-dialog>
+</th:block>
+</body>
+</html>
