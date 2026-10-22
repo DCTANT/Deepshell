@@ -7,6 +7,23 @@
     <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}">
     <link rel="icon" type="image/png" sizes="32x32" th:href="@{/favicon-32.png}">
     <link rel="apple-touch-icon" sizes="180x180" th:href="@{/apple-touch-icon.png}">
+    <script>
+        /* 手机 UA 兜底跳转（服务端已识别）；?desktop=1 强制使用电脑版。
+           iPadOS 13+ 默认伪装成 Macintosh UA，需要结合触点数判断。 */
+        (function () {
+            try {
+                if (new URLSearchParams(location.search).get('desktop') === '1') {
+                    return;
+                }
+                var ua = navigator.userAgent || '';
+                var mobile = /Android|iPhone|iPod|iPad|Mobile|Windows Phone|HarmonyOS/i.test(ua)
+                    || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+                if (mobile && !window.matchMedia('(pointer: fine)').matches) {
+                    location.replace('/m');
+                }
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
     <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
     <link rel="stylesheet" th:href="@{/vendor/xterm/xterm.css}">
     <link rel="stylesheet" th:href="@{/vendor/codemirror/codemirror.min.css}">

@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="theme-color" content="#070b12">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="DeepShell">
+    <meta name="format-detection" content="telephone=no">
+    <title>DeepShell · 手机版</title>
+    <link rel="icon" type="image/x-icon" th:href="@{/favicon.ico}">
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}">
+    <link rel="icon" type="image/png" sizes="32x32" th:href="@{/favicon-32.png}">
+    <link rel="apple-touch-icon" sizes="180x180" th:href="@{/apple-touch-icon.png}">
+    <link rel="stylesheet" th:href="@{/vendor/element-ui/index.css}">
+    <link rel="stylesheet" th:href="@{/vendor/xterm/xterm.css}">
+    <link rel="stylesheet" th:href="@{/css/mobile.css}">
+</head>
+<body>
+<div id="mApp" v-cloak class="m-root" :class="'wp-' + wallpaperId">
+
+    <!-- ================= 手机桌面 ================= -->
+    <section class="m-home" v-show="view === 'home'">
+        <div class="m-home-shade"></div>
+        <div class="m-home-inner">
+            <div class="m-statusbar">
+                <span class="m-status-time">{{ clockTime }}</span>
+                <span class="m-status-right">
+                    <span class="m-status-sessions" v-if="openSessionCount">
+                        <i class="el-icon-connection"></i>{{ openSessionCount }}
+                    </span>
+                    <i class="el-icon-menu"></i>
+                </span>
+            </div>
+
+            <header class="m-home-head">
+                <div class="m-home-brand">Deep<span>Shell</span></div>
+                <div class="m-home-greet">{{ clockDate }} · {{ greeting }}</div>
+            </header>
+
+            <div class="m-home-grid">
+                <button type="button" class="m-app" v-for="app in apps" :key="app.id"
+                        @click="tapApp(app)">
+                    <span class="m-app-icon" :style="{ background: app.bg }">
+                        <i :class="app.icon"></i>
+                        <span class="m-app-badge" v-if="app.id === 'terminal' && openSessionCount">{{ openSessionCount }}</span>
+                    </span>
+                    <span class="m-app-label">{{ app.label }}</span>
+                </button>
+            </div>
+
+            <div class="m-home-fill"></div>
+
+            <div class="m-home-tip" v-if="openSessionCount">
+                <i class="el-icon-connection"></i>
+                当前有 {{ openSessionCount }} 个终端会话保持连接
+            </div>
+            <div class="m-home-tip subtle" v-else-if="tabs.length">
+                有 {{ tabs.length }} 个终端标签未连接，点击「终端」查看
+            </div>
+            <div class="m-home-tip subtle" v-else>
+                连接服务器后，可在终端与手机桌面之间随时切换
+            </div>
+
+            <div class="m-dock">
+                <button type="button" class="m-dock-app" v-for="app in dockApps" :key="'dock-' + app.id"
+                        @click="tapApp(app)">
+                    <span class="m-app-icon" :style="{ background: app.bg }"><i :class="app.icon"></i></span>
+                    <span class="m-app-label">{{ app.label }}</span>
+                </button>
+            </div>
+            <div class="m-home-indicator"></div>
+        </div>
+    </section>
+
+    <!-- ================= 终端工作台 ================= -->
+    <section class="m-term" v-show="view === 'term'" :class="{ 'no-keybar': !keybarEnabled }">
+        <header class="m-term-head">
+            <button type="button" class="m-icon-btn" title="返回桌面" @click="goHome">
+                <i class="el-icon-arrow-left"></i>
+            </button>
+            <div class="m-tabstrip" ref="tabStrip">
+                <button type="button" class="m-tab" v-for="t in tabs" :key="t.key"
+                        :class="{ active: t.key === activeKey }" @click="activateTab(t.key)">
+                    <span class="m-dot" :class="'st-' + t.status"></span>
+                    <span class="m-tab-name">{{ t.title }}</span>
+                    <i class="el-icon-close m-tab-close" @click.stop="closeTab(t)"></i>
+                </button>
+                <button type="button" class="m-tab m-tab-add" title="打开连接" @click="openConnSheet('terminal')">
+                    <i class="el-icon-plus"></i>
+                </button>
+            </div>
+            <button type="button" class="m-icon-btn" title="终端操作" @click="showTermMenu">
+                <i class="el-icon-more"></i>
+            </button>
+        </header>
+
+        <div class="m-term-meta" v-if="activeTab">
+            <span class="m-term-conn">
+                <span class="m-dot" :class="'st-' + activeTab.status"></span>{{ statusLabel(activeTab) }}
+            </span>
+            <span class="m-term-addr" v-if="activeTab.host">{{ activeTab.username }}@{{ activeTab.host }}</span>
+            <span class="m-spacer"></span>
+            <button type="button" class="m-term-stats" v-if="activeTab.stats && !activeTab.stats.error"
+                    @click="showSysInfo">
+                {{ statsLabel(activeTab) }}
+            </button>
+        </div>
+
+        <div class="m-searchbar" v-show="search.visible">
+            <i class="el-icon-search"></i>
+            <input ref="searchInput" v-model="search.text" placeholder="搜索终端输出"
+                   @input="runSearch" @keyup.enter="findNext">
+            <span class="m-search-count">{{ search.index }} / {{ search.count }}</span>
+            <button type="button" class="m-icon-btn sm" title="上一个" @click="findPrev">
+                <i class="el-icon-arrow-up"></i>
+            </button>
+            <button type="button" class="m-icon-btn sm" title="下一个" @click="findNext">
+                <i class="el-icon-arrow-down"></i>
+            </button>
+            <button type="button" class="m-icon-btn sm" title="关闭搜索" @click="closeSearch">
+                <i class="el-icon-close"></i>
+            </button>
+        </div>
+
+        <div class="m-term-stage" @click="focusTerm">
+            <div v-if="!tabs.length" class="m-empty">
+                <div class="m-empty-logo">Deep<b>Shell</b></div>
+                <p>连接一台服务器，开始移动运维</p>
+                <button type="button" class="m-btn primary" @click.stop="openConnSheet('terminal')">
+                    <i class="el-icon-connection"></i>打开连接
+                </button>
+            </div>
+            <div v-for="t in tabs" :key="t.key" class="m-term-host" v-show="t.key === activeKey"
+                 :ref="'term-' + t.key"></div>
+        </div>
+
+        <div class="m-cmdbar" v-if="termInputOpen">
+            <input ref="termInput" v-model="termInput" placeholder="输入命令，回车发送"
+                   autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                   @keyup.enter="sendTermInput">
+            <button type="button" class="m-cmd-send" title="发送" @click="sendTermInput">
+                <i class="el-icon-s-promotion"></i>
+            </button>
+            <button type="button" class="m-cmd-close" title="收起" @click="termInputOpen = false">
+                <i class="el-icon-close"></i>
+            </button>
+        </div>
+
+        <div class="m-keybar" v-if="keybarEnabled">
+            <button type="button" @click="sendSeq('\x1b')">Esc</button>
+            <button type="button" @click="sendSeq('\t')">Tab</button>
+            <button type="button" class="m-key-accent" @click="showCtrlSheet">Ctrl</button>
+            <button type="button" class="m-key-accent" :class="{ on: termInputOpen }" title="命令输入"
+                    @click="toggleTermInput"><i class="el-icon-edit-outline"></i></button>
+            <span class="m-key-sep"></span>
+            <button type="button" @click="sendSeq('\x1b[A')"><i class="el-icon-arrow-up"></i></button>
+            <button type="button" @click="sendSeq('\x1b[B')"><i class="el-icon-arrow-down"></i></button>
+            <button type="button" @click="sendSeq('\x1b[D')"><i class="el-icon-arrow-left"></i></button>
+            <button type="button" @click="sendSeq('\x1b[C')"><i class="el-icon-arrow-right"></i></button>
+            <span class="m-key-sep"></span>
+            <button type="button" @click="sendSeq('|')">|</button>
+            <button type="button" @click="sendSeq('-')">-</button>
+            <button type="button" @click="sendSeq('/')">/</button>
+            <button type="button" @click="sendSeq('~')">~</button>
+            <button type="button" @click="sendSeq('\x7f')"><i class="el-icon-back"></i></button>
+        </div>
+    </section>
+
+    <!-- ================= 全屏应用 ================= -->
+    <section class="m-app-screen" v-if="activeApp" ref="appScreen">
+        <header class="m-app-head">
+            <button type="button" class="m-icon-btn" title="返回" @click="closeApp">
+                <i class="el-icon-arrow-left"></i>
+            </button>
+            <div class="m-app-head-title">
+                <span class="m-app-head-name">{{ appTitle }}</span>
+                <span class="m-app-head-sub" v-if="appSubtitle">{{ appSubtitle }}</span>
+            </div>
+            <button type="button" class="m-icon-btn" v-if="activeApp === 'procs'" title="刷新"
+                    @click="loadProcs">
+                <i class="el-icon-refresh"></i>
+            </button>
+            <button type="button" class="m-icon-btn" v-else-if="activeApp === 'conns'" title="新建连接"
+                    @click="openConnForm(null)">
+                <i class="el-icon-plus"></i>
+            </button>
+            <button type="button" class="m-icon-btn" v-else-if="activeApp === 'files'" title="文件操作"
+                    @click="showFileMenu">
+                <i class="el-icon-more"></i>
+            </button>
+            <button type="button" class="m-icon-btn" v-else-if="activeApp === 'disk'" title="上级目录"
+                    @click="diskUp">
+                <i class="el-icon-top"></i>
+            </button>
+            <span class="m-head-space" v-else></span>
+        </header>
+
+        <div class="m-app-body" :class="'app-' + activeApp">
+            <!-- ---------- 文件 SFTP ---------- -->
+            <div class="m-files" v-if="activeApp === 'files'">
+                <div class="m-file-toolbar">
+                    <button type="button" class="m-icon-btn sm" title="上级目录" @click="filesUp">
+                        <i class="el-icon-top"></i>
+                    </button>
+                    <button type="button" class="m-path" title="点击输入路径" @click="editFilesPath">
+                        <i class="el-icon-folder-opened"></i>
+                        <span>{{ files.path || '正在读取…' }}</span>
+                    </button>
+                    <button type="button" class="m-icon-btn sm" title="刷新" @click="refreshFiles">
+                        <i class="el-icon-refresh"></i>
+                    </button>
+                    <button type="button" class="m-icon-btn sm" title="上传" @click="chooseUpload">
+                        <i class="el-icon-upload2"></i>
+                    </button>
+                </div>
+                <div class="m-follow-bar uploading" v-if="files.uploading">
+                    <i class="el-icon-loading"></i>{{ files.uploadText }}
+                </div>
+                <div class="m-follow-bar" v-else-if="files.follow && activeTab && activeTab.termCwd">
+                    <i class="el-icon-link"></i>
+                    跟随终端目录 · {{ activeTab.termCwd }}
+                </div>
+                <input ref="uploadInput" class="m-hidden-input" type="file" multiple @change="onUploadFiles">
+
+                <div class="m-file-list">
+                    <div class="m-file-row" v-for="e in files.entries" :key="e.name" @click="tapFile(e)">
+                        <span class="m-file-ico" :class="fileIconClass(e)"><i :class="fileIcon(e)"></i></span>
+                        <span class="m-file-main">
+                            <span class="m-file-name">{{ e.name }}</span>
+                            <span class="m-file-meta">
+                                {{ e.dir ? '文件夹' : fmtSize(e.size) }}
+                                <template v-if="e.mtime"> · {{ fmtTime(e.mtime) }}</template>
+                            </span>
+                        </span>
+                        <i class="el-icon-arrow-right m-file-chev" v-if="e.dir"></i>
+                        <button type="button" class="m-row-more" title="更多"
+                                @click.stop="showFileActions(e)">
+                            <i class="el-icon-more"></i>
+                        </button>
+                    </div>
+                    <div class="m-list-loading" v-if="files.loading">
+                        <i class="el-icon-loading"></i> 正在读取目录…
+                    </div>
+                    <div class="m-list-empty" v-else-if="!files.entries.length">当前目录为空</div>
+                    <div class="m-list-error" v-if="files.error">{{ files.error }}</div>
+                </div>
+                <div class="m-list-foot" v-if="files.entries.length">共 {{ files.entries.length }} 项</div>
+            </div>
+
+            <!-- ---------- AI 终端 ---------- -->
+            <div class="m-ai" v-else-if="activeApp === 'ai'">
+                <div class="m-ai-toolbar">
+                    <button type="button" class="m-chip" :class="{ on: aiTab && aiTab.aiMode === 'auto' }"
+                            @click="toggleAiMode">
+                        <i :class="aiTab && aiTab.aiMode === 'auto' ? 'el-icon-lightning' : 'el-icon-lock'"></i>
+                        {{ aiTab && aiTab.aiMode === 'auto' ? '自动执行' : '每步确认' }}
+                    </button>
+                    <button type="button" class="m-chip" @click="newAiChat">
+                        <i class="el-icon-plus"></i>新对话
+                    </button>
+                    <span class="m-spacer"></span>
+                    <button type="button" class="m-icon-btn sm" title="AI 设置" @click="openAiConfig">
+                        <i class="el-icon-setting"></i>
+                    </button>
+                </div>
+
+                <div class="m-ai-list" ref="aiList">
+                    <div v-if="!aiTab" class="m-list-empty">请先连接一台服务器</div>
+                    <template v-else>
+                        <div class="m-ai-empty" v-if="!aiTab.aiMsgs.length">
+                            <div class="m-ai-orb"><i class="el-icon-chat-dot-round"></i></div>
+                            <div class="m-ai-empty-title">AI 终端</div>
+                            <p>用自然语言描述你要做的事，AI 会以当前登录用户身份在服务器上执行命令并给出结果。</p>
+                            <div class="m-ai-warn" v-if="aiConfig.loaded && !aiConfig.hasKey">
+                                <i class="el-icon-key"></i>
+                                <span>尚未配置 AI API Key</span>
+                                <button type="button" @click="openAiConfig">去配置</button>
+                            </div>
+                            <div class="m-ai-egs">
+                                <button type="button" v-for="eg in aiExamples" :key="eg"
+                                        @click="useAiExample(eg)">{{ eg }}</button>
+                            </div>
+                        </div>
+
+                        <div v-for="(m, i) in aiTab.aiMsgs" :key="i" class="m-msg" :class="m.role">
+                            <template v-if="m.role === 'user'">
+                                <div class="m-bubble user">{{ m.text }}</div>
+                            </template>
+                            <template v-else>
+                                <div class="m-bubble ai" v-if="m.text" v-html="renderMd(m.text)"></div>
+                                <div class="m-cmd-card" v-if="m.cmd">
+                                    <div class="m-cmd-head">
+                                        <i class="el-icon-caret-right"></i>
+                                        <code>{{ m.cmd }}</code>
+                                        <button type="button" class="m-cmd-copy" title="复制命令"
+                                                @click.stop="copyText(m.cmd)">
+                                            <i class="el-icon-document-copy"></i>
+                                        </button>
+                                    </div>
+                                    <div class="m-cmd-note" v-if="m.note">{{ m.note }}</div>
+                                    <div class="m-cmd-danger" v-if="m.danger">
+                                        <i class="el-icon-warning-outline"></i>{{ m.danger }}
+                                    </div>
+                                    <div class="m-cmd-actions" v-if="m.state === 'confirm'">
+                                        <button type="button" class="m-btn" @click="skipAiCmd(m)">跳过</button>
+                                        <button type="button" class="m-btn danger" @click="execAiCmd(m)">执行</button>
+                                    </div>
+                                    <div class="m-cmd-skipped" v-else-if="m.state === 'skipped'">
+                                        <i class="el-icon-remove-outline"></i>已跳过
+                                    </div>
+                                    <div class="m-cmd-result" v-else-if="m.state === 'done'">
+                                        <button type="button" class="m-cmd-result-head" @click="m.open = !m.open">
+                                            <span :class="m.rc === 0 ? 'ok' : (m.rc == null ? '' : 'fail')">
+                                                退出码 {{ m.rc == null ? '未知' : m.rc }}
+                                            </span>
+                                            <span class="m-cmd-dur" v-if="m.durationMs">{{ m.durationMs }} ms</span>
+                                            <span class="m-spacer"></span>
+                                            <i :class="m.open ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"></i>
+                                        </button>
+                                        <pre class="m-cmd-output" v-if="m.open">{{ m.output || m.error || '（无输出）' }}</pre>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="m-ai-typing" v-if="aiTab.aiBusy">
+                            <i class="el-icon-loading"></i>
+                            <span>{{ aiTab.aiPhase || 'AI 正在思考…' }}</span>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="m-ai-inputbar" v-if="aiTab">
+                    <textarea ref="aiInput" v-model="aiInput" rows="1" placeholder="告诉 AI 你想做什么…"
+                              @input="resizeAiInput" @keydown="onAiKeydown"></textarea>
+                    <button type="button" class="m-ai-stop" v-if="aiTab.aiBusy" @click="stopAi">
+                        <i class="el-icon-video-pause"></i>
+                    </button>
+                    <button type="button" class="m-ai-send" v-else @click="sendAi"
+                            :disabled="!aiInput.trim()">
+                        <i class="el-icon-s-promotion"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ---------- 进程 ---------- -->
+            <div class="m-procs" v-else-if="activeApp === 'procs'">
+                <div class="m-inline-search">
+                    <i class="el-icon-search"></i>
+                    <input v-model="procs.keyword" placeholder="过滤 名称 / 用户 / PID / 命令">
+                </div>
+                <div class="m-proc-list">
+                    <div class="m-proc-row" v-for="p in procRows" :key="p.pid" @click="showProc(p)">
+                        <span class="m-proc-ico"><i class="el-icon-cpu"></i></span>
+                        <span class="m-proc-main">
+                            <span class="m-proc-name">{{ p.comm }}</span>
+                            <span class="m-proc-meta">PID {{ p.pid }} · {{ p.user }}</span>
+                        </span>
+                        <span class="m-proc-metrics">
+                            <b :class="{ hot: (p.cpu || 0) >= 50 }">{{ fmtCpu(p.cpu) }}</b>
+                            <em>{{ fmtMb(p.rssMb) }}</em>
+                        </span>
+                    </div>
+                    <div class="m-list-loading" v-if="procs.loading">
+                        <i class="el-icon-loading"></i> 正在读取进程…
+                    </div>
+                    <div class="m-list-empty" v-else-if="!procRows.length">没有匹配的进程</div>
+                    <div class="m-list-error" v-if="procs.error">{{ procs.error }}</div>
+                </div>
+            </div>
+
+            <!-- ---------- 磁盘分析 ---------- -->
+            <div class="m-disk" v-else-if="activeApp === 'disk'">
+                <div class="m-disk-search">
+                    <input v-model="disk.path" placeholder="输入要分析的目录，如 /var/log"
+                           @keyup.enter="analyzeDisk(disk.path)">
+                    <button type="button" class="m-btn primary" @click="analyzeDisk(disk.path)">分析</button>
+                </div>
+                <div class="m-disk-loading" v-if="disk.loading">
+                    <i class="el-icon-loading"></i> 正在统计目录占用（可能较慢）…
+                </div>
+                <div class="m-list-error" v-if="disk.error">{{ disk.error }}</div>
+                <template v-if="disk.result">
+                    <div class="m-disk-total">
+                        <span class="m-disk-total-label">总占用</span>
+                        <b>{{ fmtSizeKb(disk.result.totalKb) }}</b>
+                        <span class="m-disk-total-path">{{ disk.result.path }}</span>
+                    </div>
+                    <div class="m-disk-row" v-for="e in disk.result.entries" :key="e.path"
+                         :class="{ dir: e.dir }" @click="e.dir && analyzeDisk(e.path)">
+                        <div class="m-disk-row-head">
+                            <i :class="e.dir ? 'el-icon-folder' : 'el-icon-document'"></i>
+                            <span class="m-disk-name">{{ e.name }}</span>
+                            <span class="m-disk-size">{{ fmtSizeKb(e.sizeKb) }}</span>
+                            <i class="el-icon-arrow-right" v-if="e.dir"></i>
+                        </div>
+                        <div class="m-disk-track">
+                            <i :style="{ width: Math.max(1, e.pct) + '%' }"
+                               :class="diskBarClass(e.pct)"></i>
+                        </div>
+                        <div class="m-disk-pct">{{ e.pct }}%</div>
+                    </div>
+                    <div class="m-list-empty" v-if="!disk.result.entries.length">该目录没有可统计的子项</div>
+                </template>
+            </div>
+
+            <!-- ---------- 快捷命令 ---------- -->
+            <div class="m-cmds" v-else-if="activeApp === 'cmds'">
+                <div class="m-snippet-list">
+                    <div class="m-snippet" v-for="c in snippets" :key="c.id" @click="runSnippet(c)">
+                        <span class="m-snippet-ico"><i class="el-icon-caret-right"></i></span>
+                        <span class="m-snippet-main">
+                            <b>{{ c.name }}</b>
+                            <code>{{ c.command }}</code>
+                        </span>
+                        <button type="button" class="m-row-more" title="删除"
+                                @click.stop="deleteSnippet(c)">
+                            <i class="el-icon-delete"></i>
+                        </button>
+                    </div>
+                    <div class="m-list-empty" v-if="!snippets.length">
+                        还没有快捷命令，点击右下角 + 添加
+                    </div>
+                </div>
+                <button type="button" class="m-fab" title="添加快捷命令" @click="openSnippetForm">
+                    <i class="el-icon-plus"></i>
+                </button>
+            </div>
+
+            <!-- ---------- 连接管理 ---------- -->
+            <div class="m-conns" v-else-if="activeApp === 'conns'">
+                <div class="m-inline-search">
+                    <i class="el-icon-search"></i>
+                    <input v-model="connKeyword" placeholder="搜索连接名称 / 主机 / 用户">
+                </div>
+                <div class="m-conn-list">
+                    <div class="m-conn-row" v-for="c in filteredConnections" :key="c.id" @click="connectFromApp(c)">
+                        <span class="m-conn-avatar" :style="{ background: connAvatarBg(c) }">
+                            {{ connInitial(c) }}
+                        </span>
+                        <span class="m-conn-main">
+                            <span class="m-conn-name">
+                                {{ c.name }}
+                                <i class="el-icon-star-on" v-if="c.favorite"></i>
+                                <i class="el-icon-top" v-if="c.pinned"></i>
+                            </span>
+                            <span class="m-conn-meta">{{ c.username }}@{{ c.host }}:{{ c.port || 22 }}</span>
+                        </span>
+                        <button type="button" class="m-row-more" title="连接操作"
+                                @click.stop="showConnActions(c)">
+                            <i class="el-icon-more"></i>
+                        </button>
+                    </div>
+                    <div class="m-list-empty" v-if="!connections.length">
+                        还没有连接，点击右上角 + 新建
+                    </div>
+                </div>
+            </div>
+
+            <!-- ---------- 设置 ---------- -->
+            <div class="m-settings" v-else-if="activeApp === 'settings'">
+                <div class="m-setting-group">
+                    <div class="m-setting-title">桌面外观</div>
+                    <div class="m-setting-block">
+                        <div class="m-setting-label">壁纸</div>
+                        <div class="m-wallpaper-row">
+                            <button type="button" class="m-wallpaper" v-for="w in wallpapers" :key="w.id"
+                                    :class="[w.id, { active: wallpaperId === w.id }]"
+                                    :title="w.label" @click="setWallpaper(w.id)">
+                                <i class="el-icon-check" v-if="wallpaperId === w.id"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="m-setting-row">
+                        <div>
+                            <div class="m-setting-label">终端字号</div>
+                            <div class="m-setting-desc">当前 {{ fontSize }} px，修改后立即生效</div>
+                        </div>
+                        <div class="m-stepper">
+                            <button type="button" @click="changeFontSize(-1)">−</button>
+                            <span>{{ fontSize }}</span>
+                            <button type="button" @click="changeFontSize(1)">＋</button>
+                        </div>
+                    </div>
+                    <div class="m-setting-row">
+                        <div>
+                            <div class="m-setting-label">功能键栏</div>
+                            <div class="m-setting-desc">Esc / Tab / Ctrl / 方向键等快捷按键</div>
+                        </div>
+                        <button type="button" class="m-switch" :class="{ on: keybarEnabled }"
+                                @click="toggleKeybar"><span></span></button>
+                    </div>
+                    <div class="m-setting-row">
+                        <div>
+                            <div class="m-setting-label">危险命令确认</div>
+                            <div class="m-setting-desc">删除系统目录、关机、格式化等操作发送前二次确认</div>
+                        </div>
+                        <button type="button" class="m-switch" :class="{ on: dangerConfirm }"
+                                @click="toggleDangerConfirm"><span></span></button>
+                    </div>
+                </div>
+
+                <div class="m-setting-group">
+                    <div class="m-setting-title">AI 助手</div>
+                    <button type="button" class="m-setting-link" @click="openAiConfig">
+                        <i class="el-icon-magic-stick"></i>
+                        <span>AI 模型配置</span>
+                        <span class="m-setting-value">{{ aiConfig.hasKey ? '已配置 Key' : '未配置' }}</span>
+                        <i class="el-icon-arrow-right"></i>
+                    </button>
+                </div>
+
+                <div class="m-setting-group">
+                    <div class="m-setting-title">关于</div>
+                    <div class="m-setting-row">
+                        <div>
+                            <div class="m-setting-label">DeepShell 手机版</div>
+                            <div class="m-setting-desc">
+                                {{ appInfo ? ('版本 ' + appInfo.version + (appInfo.buildTime ? ' · ' + appInfo.buildTime : '')) : '读取中…' }}
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="m-setting-link" @click="openDesktopVersion">
+                        <i class="el-icon-monitor"></i>
+                        <span>切换到电脑版</span>
+                        <i class="el-icon-arrow-right"></i>
+                    </button>
+                    <button type="button" class="m-setting-link" @click="refreshPage">
+                        <i class="el-icon-refresh"></i>
+                        <span>刷新手机版</span>
+                        <i class="el-icon-arrow-right"></i>
+                    </button>
+                    <button type="button" class="m-setting-link danger" v-if="authStatus.enabled" @click="logout">
+                        <i class="el-icon-switch-button"></i>
+                        <span>退出登录</span>
+                        <i class="el-icon-arrow-right"></i>
+                    </button>
+                </div>
+                <div class="m-settings-foot">DeepShell · 移动运维工作台</div>
+            </div>
+
+            <!-- ---------- AI 配置 ---------- -->
+            <div class="m-ai-config" v-else-if="activeApp === 'aiConfig'">
+                <div class="m-form-tip">
+                    AI 使用 OpenAI 兼容接口；手机版与电脑版共用同一份配置。API Key 留空表示保持已保存的 Key。
+                </div>
+                <label class="m-field">
+                    <span>厂商</span>
+                    <select v-model="aiConfig.provider" @change="onAiProviderChange">
+                        <option v-for="p in aiConfig.providers" :key="p.id" :value="p.id">{{ p.name }}</option>
+                    </select>
+                </label>
+                <label class="m-field">
+                    <span>接口地址</span>
+                    <input v-model="aiConfig.baseUrl" placeholder="https://api.deepseek.com" autocomplete="off">
+                </label>
+                <label class="m-field">
+                    <span>API Key</span>
+                    <input v-model="aiConfig.apiKey" type="password" autocomplete="off"
+                           :placeholder="aiConfig.hasKey ? '已保存，留空不修改' : '填写你的 API Key'">
+                </label>
+                <label class="m-field">
+                    <span>模型</span>
+                    <input v-model="aiConfig.model" placeholder="deepseek-chat" autocapitalize="off" autocomplete="off">
+                </label>
+                <div class="m-model-chips" v-if="aiModels.length">
+                    <button type="button" v-for="m in aiModels" :key="m" class="m-chip sm"
+                            :class="{ on: aiConfig.model === m }" @click="aiConfig.model = m">{{ m }}</button>
+                </div>
+                <label class="m-field">
+                    <span>单轮最多执行步数</span>
+                    <input v-model.number="aiConfig.maxSteps" type="number" min="1" max="100">
+                </label>
+                <button type="button" class="m-btn primary block" :disabled="aiConfig.saving" @click="saveAiConfig">
+                    <i class="el-icon-loading" v-if="aiConfig.saving"></i>
+                    {{ aiConfig.saving ? '保存中…' : '保存 AI 配置' }}
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= 打开连接弹层 ================= -->
+    <div class="m-sheet-mask" v-if="connSheet.visible" @click.self="closeConnSheet">
+        <div class="m-sheet">
+            <div class="m-sheet-handle"></div>
+            <div class="m-sheet-title">
+                <span>{{ connSheetTitle }}</span>
+                <button type="button" class="m-sheet-action" @click="openConnForm(null, true)">
+                    <i class="el-icon-plus"></i>新建连接
+                </button>
+            </div>
+            <div class="m-inline-search">
+                <i class="el-icon-search"></i>
+                <input v-model="connSheet.keyword" placeholder="搜索连接名称 / 主机 / 用户">
+            </div>
+            <div class="m-conn-list sheet-list">
+                <div class="m-conn-row" v-for="c in connSheetRows" :key="c.id" @click="connectFromSheet(c)">
+                    <span class="m-conn-avatar" :style="{ background: connAvatarBg(c) }">
+                        {{ connInitial(c) }}
+                    </span>
+                    <span class="m-conn-main">
+                        <span class="m-conn-name">
+                            {{ c.name }}
+                            <i class="el-icon-star-on" v-if="c.favorite"></i>
+                            <i class="el-icon-top" v-if="c.pinned"></i>
+                        </span>
+                        <span class="m-conn-meta">{{ c.username }}@{{ c.host }}:{{ c.port || 22 }}</span>
+                    </span>
+                    <i class="el-icon-arrow-right m-conn-arrow"></i>
+                </div>
+                <div class="m-list-empty" v-if="!connSheetRows.length">
+                    {{ connections.length ? '没有匹配的连接' : '还没有连接，先新建一个吧' }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 通用底部弹层 ================= -->
+    <div class="m-sheet-mask" v-if="sheet.type" @click.self="closeSheet">
+        <div class="m-sheet" :class="'sheet-' + sheet.type">
+            <div class="m-sheet-handle"></div>
+
+            <template v-if="sheet.type === 'termMenu'">
+                <div class="m-sheet-title"><span>终端操作</span></div>
+                <div class="m-menu-grid">
+                    <button type="button" @click="pasteTerm"><i class="el-icon-document-copy"></i><span>粘贴</span></button>
+                    <button type="button" @click="copyTermSelection"><i class="el-icon-scissors"></i><span>复制选中</span></button>
+                    <button type="button" @click="openSearch"><i class="el-icon-search"></i><span>搜索</span></button>
+                    <button type="button" @click="clearTerm"><i class="el-icon-delete"></i><span>清屏</span></button>
+                    <button type="button" @click="fitActive"><i class="el-icon-full-screen"></i><span>自适应</span></button>
+                    <button type="button" @click="reconnectActive"><i class="el-icon-refresh-right"></i><span>重新连接</span></button>
+                    <button type="button" @click="showSysInfo"><i class="el-icon-cpu"></i><span>系统信息</span></button>
+                    <button type="button" class="danger" @click="disconnectActive"><i class="el-icon-switch-button"></i><span>断开连接</span></button>
+                </div>
+                <button type="button" class="m-sheet-danger" v-if="activeTab" @click="closeActiveTab">
+                    <i class="el-icon-close"></i>关闭当前标签
+                </button>
+            </template>
+
+            <template v-else-if="sheet.type === 'ctrl'">
+                <div class="m-sheet-title"><span>组合键与翻页</span></div>
+                <div class="m-key-grid">
+                    <button type="button" v-for="k in ctrlKeys" :key="k.label" @click="sendCtrl(k)">
+                        {{ k.label }}
+                    </button>
+                </div>
+            </template>
+
+            <template v-else-if="sheet.type === 'fileMenu'">
+                <div class="m-sheet-title"><span>文件操作</span></div>
+                <div class="m-sheet-list">
+                    <button type="button" @click="newFolder"><i class="el-icon-folder-add"></i>新建文件夹</button>
+                    <button type="button" @click="newFile"><i class="el-icon-document-add"></i>新建文本文件</button>
+                    <button type="button" @click="chooseUpload"><i class="el-icon-upload2"></i>上传文件到当前目录</button>
+                    <button type="button" @click="filesHome"><i class="el-icon-house"></i>回到用户主目录</button>
+                    <button type="button" @click="toggleFollow">
+                        <i class="el-icon-link"></i>跟随终端 cd 目录
+                        <span class="m-sheet-state" :class="{ on: files.follow }">{{ files.follow ? '已开启' : '已关闭' }}</span>
+                    </button>
+                    <button type="button" @click="analyzeCurrentDir"><i class="el-icon-pie-chart"></i>分析当前目录占用</button>
+                    <button type="button" @click="refreshFiles"><i class="el-icon-refresh"></i>刷新</button>
+                </div>
+            </template>
+
+            <template v-else-if="sheet.type === 'fileActions'">
+                <div class="m-sheet-title">
+                    <span class="m-sheet-ellipsis">{{ sheet.entry ? sheet.entry.name : '' }}</span>
+                </div>
+                <div class="m-sheet-list">
+                    <button type="button" v-if="sheet.entry && sheet.entry.dir" @click="enterDir(sheet.entry)">
+                        <i class="el-icon-folder-opened"></i>打开文件夹
+                    </button>
+                    <button type="button" v-if="sheet.entry && !sheet.entry.dir && isPreviewable(sheet.entry)"
+                            @click="openFilePreview(sheet.entry)">
+                        <i class="el-icon-view"></i>预览
+                    </button>
+                    <button type="button" v-if="sheet.entry && !sheet.entry.dir" @click="downloadEntry(sheet.entry)">
+                        <i class="el-icon-download"></i>下载到本机
+                    </button>
+                    <button type="button" @click="renameEntry(sheet.entry)"><i class="el-icon-edit"></i>重命名</button>
+                    <button type="button" @click="chmodEntry(sheet.entry)"><i class="el-icon-key"></i>修改权限</button>
+                    <button type="button" @click="showFileProps(sheet.entry)"><i class="el-icon-info"></i>属性</button>
+                    <button type="button" class="danger" @click="deleteEntry(sheet.entry)">
+                        <i class="el-icon-delete"></i>删除
+                    </button>
+                </div>
+            </template>
+
+            <template v-else-if="sheet.type === 'connActions'">
+                <div class="m-sheet-title">
+                    <span class="m-sheet-ellipsis">{{ sheet.conn ? sheet.conn.name : '' }}</span>
+                </div>
+                <div class="m-sheet-list">
+                    <button type="button" @click="connectFromSheet(sheet.conn)">
+                        <i class="el-icon-connection"></i>连接并打开终端
+                    </button>
+                    <button type="button" @click="testConn(sheet.conn)">
+                        <i class="el-icon-s-promotion"></i>测试连接
+                    </button>
+                    <button type="button" @click="openConnForm(sheet.conn)">
+                        <i class="el-icon-edit"></i>编辑连接
+                    </button>
+                    <button type="button" class="danger" @click="deleteConn(sheet.conn)">
+                        <i class="el-icon-delete"></i>删除连接
+                    </button>
+                </div>
+            </template>
+
+            <template v-else-if="sheet.type === 'procActions'">
+                <div class="m-sheet-title">
+                    <span class="m-sheet-ellipsis">{{ sheet.proc ? sheet.proc.comm : '' }}</span>
+                </div>
+                <div class="m-sheet-meta" v-if="sheet.proc">
+                    PID {{ sheet.proc.pid }} · {{ sheet.proc.user }} · 状态 {{ sheet.proc.state }}
+                </div>
+                <div class="m-proc-detail" v-if="sheet.proc">
+                    <span>CPU</span><b>{{ fmtCpu(sheet.proc.cpu) }}</b>
+                    <span>内存</span><b>{{ fmtMb(sheet.proc.rssMb) }}（{{ (sheet.proc.memPct || 0).toFixed(1) }}%）</b>
+                    <span>运行时长</span><b>{{ sheet.proc.elapsedSecs >= 0 ? fmtUptime(sheet.proc.elapsedSecs) : '未知' }}</b>
+                </div>
+                <pre class="m-proc-cmd" v-if="sheet.proc">{{ sheet.proc.args || sheet.proc.comm }}</pre>
+                <div class="m-sheet-list">
+                    <button type="button" class="danger" @click="killProc(sheet.proc, false)">
+                        <i class="el-icon-switch-button"></i>结束进程（SIGTERM）
+                    </button>
+                    <button type="button" class="danger" @click="killProc(sheet.proc, true)">
+                        <i class="el-icon-close"></i>强制结束（SIGKILL）
+                    </button>
+                </div>
+            </template>
+
+            <template v-else-if="sheet.type === 'sysInfo'">
+                <div class="m-sheet-title"><span>系统信息</span></div>
+                <div class="m-sysinfo" v-if="sysInfo">
+                    <div class="m-sysinfo-row" v-for="row in sysInfo.basic" :key="row.label">
+                        <span>{{ row.label }}</span><b>{{ row.value }}</b>
+                    </div>
+                    <div class="m-sysinfo-row" v-for="row in sysInfo.memory" :key="'mem-' + row.label">
+                        <span>{{ row.label }}</span><b>{{ row.value }}</b>
+                    </div>
+                    <div class="m-sysinfo-disk" v-for="d in sysInfo.disk" :key="d.mount">
+                        <div class="m-sysinfo-disk-head">
+                            <span class="m-sheet-ellipsis">{{ d.mount }}</span>
+                            <b>{{ d.pct }}%</b>
+                        </div>
+                        <div class="m-disk-track"><i :style="{ width: Math.max(1, d.pct) + '%' }"
+                                                   :class="diskBarClass(d.pct)"></i></div>
+                        <div class="m-sysinfo-disk-meta">
+                            {{ fmtSizeKb(d.usedKb) }} / {{ fmtSizeKb(d.sizeKb) }} · {{ d.fs }}
+                        </div>
+                    </div>
+                </div>
+                <div class="m-list-loading" v-else>
+                    <i class="el-icon-loading"></i> 正在采集系统信息…
+                </div>
+                <div class="m-list-error" v-if="sysInfoError">{{ sysInfoError }}</div>
+            </template>
+
+            <template v-else-if="sheet.type === 'snippetForm'">
+                <div class="m-sheet-title"><span>新建快捷命令</span></div>
+                <label class="m-field">
+                    <span>名称</span>
+                    <input v-model="snippetForm.name" placeholder="如：查看磁盘占用" maxlength="100">
+                </label>
+                <label class="m-field">
+                    <span>命令</span>
+                    <textarea v-model="snippetForm.command" rows="3" placeholder="如：df -h"
+                              autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+                </label>
+                <button type="button" class="m-btn primary block" @click="saveSnippet">保存快捷命令</button>
+            </template>
+        </div>
+    </div>
+
+    <!-- ================= 连接编辑（全屏） ================= -->
+    <div class="m-form-screen" v-if="connForm.visible">
+        <header class="m-app-head">
+            <button type="button" class="m-icon-btn" @click="closeConnForm"><i class="el-icon-close"></i></button>
+            <div class="m-app-head-title">
+                <span class="m-app-head-name">{{ connForm.id ? '编辑连接' : '新建连接' }}</span>
+                <span class="m-app-head-sub">密码将加密保存在本机</span>
+            </div>
+            <button type="button" class="m-text-btn" :disabled="connForm.saving" @click="saveConn">
+                {{ connForm.saving ? '保存中…' : '保存' }}
+            </button>
+        </header>
+        <div class="m-form-body">
+            <label class="m-field">
+                <span>连接名称</span>
+                <input v-model="connForm.name" placeholder="如：生产服务器" maxlength="100">
+            </label>
+            <div class="m-field-row">
+                <label class="m-field grow">
+                    <span>主机地址</span>
+                    <input v-model="connForm.host" placeholder="192.168.1.10 或域名"
+                           autocapitalize="off" autocorrect="off" spellcheck="false">
+                </label>
+                <label class="m-field port">
+                    <span>端口</span>
+                    <input v-model.number="connForm.port" type="number" min="1" max="65535" placeholder="22">
+                </label>
+            </div>
+            <label class="m-field">
+                <span>用户名</span>
+                <input v-model="connForm.username" placeholder="root"
+                       autocapitalize="off" autocorrect="off" spellcheck="false">
+            </label>
+            <label class="m-field">
+                <span>认证方式</span>
+                <select v-model="connForm.authType">
+                    <option value="PASSWORD">密码</option>
+                    <option value="KEY">私钥</option>
+                </select>
+            </label>
+            <label class="m-field" v-if="connForm.authType === 'PASSWORD'">
+                <span>密码</span>
+                <input v-model="connForm.password" type="password" autocomplete="new-password"
+                       :placeholder="connForm.id ? '留空表示不修改已保存密码' : '登录密码'">
+            </label>
+            <template v-else>
+                <label class="m-field">
+                    <span>私钥路径（服务器本机）</span>
+                    <input v-model="connForm.keyPath" placeholder="如 /home/user/.ssh/id_rsa"
+                           autocapitalize="off" autocorrect="off" spellcheck="false">
+                </label>
+                <label class="m-field">
+                    <span>私钥口令</span>
+                    <input v-model="connForm.passphrase" type="password" autocomplete="new-password"
+                           :placeholder="connForm.id ? '留空表示不修改' : '私钥没有口令可留空'">
+                </label>
+            </template>
+            <label class="m-field">
+                <span>备注</span>
+                <input v-model="connForm.remark" placeholder="可选" maxlength="500">
+            </label>
+            <div class="m-setting-row compact">
+                <div>
+                    <div class="m-setting-label">持久会话（tmux）</div>
+                    <div class="m-setting-desc">服务器安装 tmux 时，刷新或重启后仍可恢复前台命令</div>
+                </div>
+                <button type="button" class="m-switch" :class="{ on: connForm.persistSession }"
+                        @click="connForm.persistSession = !connForm.persistSession"><span></span></button>
+            </div>
+            <div class="m-test-result" v-if="connForm.testing">
+                <i class="el-icon-loading"></i> 正在测试连接…
+            </div>
+            <div class="m-test-result" :class="connForm.testOk ? 'ok' : 'fail'" v-else-if="connForm.testText">
+                {{ connForm.testText }}
+            </div>
+            <button type="button" class="m-btn block" :disabled="connForm.testing" @click="testConnForm">
+                <i class="el-icon-s-promotion"></i>测试连接
+            </button>
+            <div class="m-form-note">
+                代理、跳板机、所属文件夹等高级选项请在电脑版中配置，手机版编辑时会保留原有设置。
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 文本预览 / 编辑 ================= -->
+    <div class="m-preview-screen" v-if="preview.visible">
+        <header class="m-app-head">
+            <button type="button" class="m-icon-btn" @click="closePreview"><i class="el-icon-close"></i></button>
+            <div class="m-app-head-title">
+                <span class="m-app-head-name">{{ preview.name }}</span>
+                <span class="m-app-head-sub">{{ preview.path }}</span>
+            </div>
+            <button type="button" class="m-text-btn" v-if="preview.editable && !preview.loading"
+                    :disabled="preview.saving" @click="savePreview">
+                {{ preview.saving ? '保存中…' : '保存' }}
+            </button>
+            <span class="m-head-space" v-else></span>
+        </header>
+        <div class="m-preview-body">
+            <div class="m-list-loading" v-if="preview.loading">
+                <i class="el-icon-loading"></i> 正在打开文件…
+            </div>
+            <div class="m-list-error" v-else-if="preview.error">{{ preview.error }}</div>
+            <textarea v-else v-model="preview.content" class="m-preview-text" spellcheck="false"
+                      autocapitalize="off" autocorrect="off"></textarea>
+        </div>
+    </div>
+
+    <!-- ================= 图片 / 视频 / 音频预览 ================= -->
+    <div class="m-media-screen" v-if="media.visible">
+        <header class="m-media-head">
+            <button type="button" class="m-icon-btn" @click="closeMedia"><i class="el-icon-arrow-left"></i></button>
+            <span class="m-media-title">{{ media.name }}</span>
+            <button type="button" class="m-icon-btn" title="下载" @click="downloadMedia">
+                <i class="el-icon-download"></i>
+            </button>
+        </header>
+        <div class="m-media-stage">
+            <img v-if="media.type === 'image'" :src="media.url" :alt="media.name">
+            <video v-else-if="media.type === 'video'" :src="media.url" controls playsinline autoplay></video>
+            <div v-else class="m-audio-box">
+                <div class="m-audio-art"><i class="el-icon-headset"></i></div>
+                <div class="m-audio-name">{{ media.name }}</div>
+                <audio :src="media.url" controls autoplay></audio>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 主机指纹确认 ================= -->
+    <div class="m-modal-mask" v-if="hostKey.visible">
+        <div class="m-modal">
+            <div class="m-modal-icon warn"><i class="el-icon-key"></i></div>
+            <div class="m-modal-title">主机指纹确认</div>
+            <div class="m-modal-text">
+                首次连接该服务器，或指纹发生变化。请核对指纹后再信任：
+            </div>
+            <div class="m-hostkey-meta" v-if="hostKey.info">
+                {{ hostKey.info.host }}:{{ hostKey.info.port }} · {{ hostKey.info.keyType }}
+            </div>
+            <pre class="m-hostkey-code">{{ hostKey.info ? hostKey.info.fingerprintSha256 || hostKey.info.fingerprint || hostKey.info.keyBase64 : '' }}</pre>
+            <div class="m-cmd-danger" v-if="hostKey.info && hostKey.info.changed">
+                <i class="el-icon-warning-outline"></i>指纹与已保存记录不一致，可能是服务器重装或中间人攻击
+            </div>
+            <div class="m-modal-actions">
+                <button type="button" class="m-btn" @click="cancelHostKey">取消</button>
+                <button type="button" class="m-btn primary" :disabled="hostKey.trusting" @click="trustHostKey">
+                    {{ hostKey.trusting ? '信任中…' : '信任并连接' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 通用确认 / 输入 ================= -->
+    <div class="m-modal-mask" v-if="dialog.visible" @click.self="cancelDialog">
+        <div class="m-modal">
+            <div class="m-modal-title">{{ dialog.title }}</div>
+            <div class="m-modal-text" v-if="dialog.message">{{ dialog.message }}</div>
+            <pre class="m-modal-code" v-if="dialog.code">{{ dialog.code }}</pre>
+            <input v-if="dialog.input" ref="dialogInput" v-model="dialog.value"
+                   :placeholder="dialog.placeholder || ''" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <textarea v-if="dialog.textarea" ref="dialogInput" v-model="dialog.value" rows="4"
+                      :placeholder="dialog.placeholder || ''" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+            <div class="m-modal-actions">
+                <button type="button" class="m-btn" v-if="!dialog.single"
+                        @click="cancelDialog">{{ dialog.cancelText || '取消' }}</button>
+                <button type="button" class="m-btn" :class="{ danger: dialog.danger, primary: !dialog.danger }"
+                        :disabled="dialog.busy" @click="confirmDialog">
+                    {{ dialog.busy ? '处理中…' : (dialog.confirmText || '确定') }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="m-toast" :class="toastState.type" v-if="toastState.visible">{{ toastState.text }}</div>
+</div>
+
+<noscript>DeepShell 手机版需要启用 JavaScript。</noscript>
+
+<script th:src="@{/vendor/vue/vue.min.js}"></script>
+<script th:src="@{/vendor/axios/axios.min.js}"></script>
+<script th:src="@{/vendor/xterm/xterm.js}"></script>
+<script th:src="@{/vendor/xterm-addon-fit/xterm-addon-fit.js}"></script>
+<script th:src="@{/vendor/xterm-addon-search/xterm-addon-search.js}"></script>
+<script th:src="@{/js/mobile.js}"></script>
+</body>
+</html>
