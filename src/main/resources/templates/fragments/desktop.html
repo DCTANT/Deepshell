@@ -45,8 +45,11 @@
                  @dragleave.stop="onDesktopIconDragLeave(icon)"
                  @drop.prevent.stop="onDesktopIconDrop($event, icon)">
                 <span v-if="icon.type === 'app'" class="dsk-icon-app"
+                      :class="{ 'has-upload': !!desktopAppIconImage(icon) }"
                       :style="desktopAppIconStyle(icon)">
-                    <i :class="icon.icon"></i>
+                    <img v-if="desktopAppIconImage(icon)" :src="desktopAppIconImage(icon)"
+                         class="dsk-app-upload-img" alt="">
+                    <i v-else :class="icon.icon"></i>
                 </span>
                 <span v-else class="dsk-icon-file-wrap">
                     <svg v-if="icon.isFolderVisual" class="dsk-folder-svg dsk-icon-folder"
@@ -93,6 +96,8 @@
                     <span class="dsk-titlebar-icon">
                         <img v-if="w.type === 'plugin' && w.pluginIconUrl" :src="w.pluginIconUrl"
                              class="dsk-plugin-title-icon" alt="">
+                        <img v-else-if="desktopWindowIconImage(w)" :src="desktopWindowIconImage(w)"
+                             class="dsk-win-upload-icon" alt="">
                         <i v-else :class="desktopWindowIcon(w)"></i>
                     </span>
                     <span class="dsk-titlebar-text">
@@ -1460,14 +1465,18 @@
                         :class="{ active: desktopAiWin && desktop.activeWinId === desktopAiWin.id && !desktopAiWin.min,
                                   'is-min': desktopAiWin && desktopAiWin.min }"
                         title="打开 AI 终端窗口" @click.stop="toggleDesktopAiApp">
-                    <i :class="desktopAppIconByAction('ai', 'el-icon-chat-dot-round')"></i>
+                    <img v-if="desktopAppImageByAction('ai')" :src="desktopAppImageByAction('ai')"
+                         class="dsk-task-upload-icon" alt="">
+                    <i v-else :class="desktopAppIconByAction('ai', 'el-icon-chat-dot-round')"></i>
                     <span class="dsk-task-label">AI 终端</span>
                     <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
                 </button>
                 <button class="dsk-task-app dsk-terminal-app"
                         title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow()">
-                    <i :class="desktopAppIconByAction('terminal', 'el-icon-monitor')"></i>
+                    <img v-if="desktopAppImageByAction('terminal')" :src="desktopAppImageByAction('terminal')"
+                         class="dsk-task-upload-icon" alt="">
+                    <i v-else :class="desktopAppIconByAction('terminal', 'el-icon-monitor')"></i>
                     <span class="dsk-task-label">新建终端</span>
                 </button>
                 <span class="dsk-taskbar-sep"></span>
@@ -1479,6 +1488,8 @@
                         @contextmenu.prevent.stop="onDesktopTaskContextMenu($event, w)">
                     <img v-if="w.type === 'plugin' && w.pluginIconUrl" :src="w.pluginIconUrl"
                          class="dsk-task-plugin-icon" alt="">
+                    <img v-else-if="desktopWindowIconImage(w)" :src="desktopWindowIconImage(w)"
+                         class="dsk-task-upload-icon" alt="">
                     <i v-else :class="desktopWindowIcon(w)"></i>
                     <span class="dsk-task-label">{{ desktopWindowTitle(w) }}</span>
                     <i v-if="w.type === 'transfer' && transferActiveCount" class="dsk-task-busy"
@@ -1626,8 +1637,12 @@
                     <div class="dsk-start-apps">
                         <button v-for="a in desktopStartApps" :key="a.id" class="dsk-start-app"
                                 @click="desktopLaunchApp(a.id)">
-                            <span class="dsk-start-appico" :style="desktopAppIconStyle(a)">
-                                <i :class="a.icon"></i>
+                            <span class="dsk-start-appico"
+                                  :class="{ 'has-upload': !!desktopAppIconImage(a) }"
+                                  :style="desktopAppIconStyle(a)">
+                                <img v-if="desktopAppIconImage(a)" :src="desktopAppIconImage(a)"
+                                     class="dsk-app-upload-img" alt="">
+                                <i v-else :class="a.icon"></i>
                             </span>
                             <span class="dsk-start-applabel">{{ a.label }}</span>
                         </button>
@@ -1671,8 +1686,12 @@
                         <div class="dsk-start-results">
                             <button v-for="a in desktopStartAppMatches" :key="'sa' + a.id"
                                     class="dsk-start-result" @click="desktopLaunchApp(a.id)">
-                                <span class="dsk-start-appico small" :style="desktopAppIconStyle(a)">
+                                <span class="dsk-start-appico small"
+                                      :class="{ 'has-upload': !a.iconUrl && !!desktopAppIconImage(a) }"
+                                      :style="desktopAppIconStyle(a)">
                                     <img v-if="a.iconUrl" :src="a.iconUrl" alt="">
+                                    <img v-else-if="desktopAppIconImage(a)" :src="desktopAppIconImage(a)"
+                                         class="dsk-app-upload-img" alt="">
                                     <i v-else :class="a.icon"></i>
                                 </span>
                                 <span class="dsk-start-result-main">
@@ -2029,8 +2048,12 @@
                                 </div>
                                 <div class="dsk-set-row dsk-app-setting-row" v-for="a in desktopAppIcons"
                                      :key="'setic' + a.key">
-                                    <span class="dsk-app-mini" :style="desktopAppIconStyle(a)">
-                                        <i :class="a.icon"></i>
+                                    <span class="dsk-app-mini"
+                                          :class="{ 'has-upload': !!desktopAppIconImage(a) }"
+                                          :style="desktopAppIconStyle(a)">
+                                        <img v-if="desktopAppIconImage(a)" :src="desktopAppIconImage(a)"
+                                             class="dsk-app-upload-img" alt="">
+                                        <i v-else :class="a.icon"></i>
                                     </span>
                                     <div class="dsk-set-info">
                                         <b>{{ a.label }}</b>
@@ -2046,7 +2069,7 @@
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
                                         <b>应用图标样式</b>
-                                        <span>把系统应用的图标、背景颜色和形状恢复为默认</span>
+                                        <span>图标、图片、颜色和形状仅保存在当前连接，可单独或全部恢复默认</span>
                                     </div>
                                     <el-button size="mini" @click="resetAllDesktopAppIconStyles">
                                         全部恢复默认
@@ -2307,8 +2330,13 @@
              @click.self="closeDesktopAppProperties">
             <div class="dsk-appprops" v-if="desktopAppPropsApp" @click.stop>
                 <div class="dsk-appprops-head">
-                    <span class="dsk-appprops-ico" :style="desktopAppIconStyle(desktopAppProps)">
-                        <i :class="desktopAppProps.icon"></i>
+                    <span class="dsk-appprops-ico"
+                          :class="{ 'has-upload': !!desktopAppIconImage(desktopAppProps) }"
+                          :style="desktopAppIconStyle(desktopAppProps)">
+                        <img v-if="desktopAppIconImage(desktopAppProps)"
+                             :src="desktopAppIconImage(desktopAppProps)"
+                             class="dsk-app-upload-img" alt="">
+                        <i v-else :class="desktopAppProps.icon"></i>
                     </span>
                     <div class="dsk-appprops-headtext">
                         <div class="dsk-appprops-title">{{ desktopAppPropsApp.label }} · 属性</div>
@@ -2346,27 +2374,40 @@
                                 <span>组件标识</span><b class="dsk-mono">{{ desktopAppPropsApp.key }}</b>
                             </div>
                             <div class="dsk-appprops-row">
-                                <span>当前图标</span><b class="dsk-mono">{{ desktopAppProps.icon }}</b>
+                                <span>当前图标</span><b class="dsk-mono">{{ desktopAppProps.image ? '自定义图片' : desktopAppProps.icon }}</b>
                             </div>
                         </div>
                     </div>
                     <div class="dsk-appprops-editor">
                         <div class="dsk-appprops-sec dsk-appprops-sec-editor">
                             <span><i class="el-icon-brush"></i>自定义图标样式</span>
-                            <em>保存后同步到桌面图标与开始菜单</em>
+                            <em>仅对当前连接生效 · 保存后同步到桌面与开始菜单</em>
                         </div>
                         <div class="dsk-appprops-editor-body">
                             <div class="dsk-appprops-preview">
                                 <span class="dsk-appprops-preview-icon"
+                                      :class="{ 'has-upload': !!desktopAppIconImage(desktopAppProps) }"
                                       :style="desktopAppIconStyle(desktopAppProps)">
-                                    <i :class="desktopAppProps.icon"></i>
+                                    <img v-if="desktopAppIconImage(desktopAppProps)"
+                                         :src="desktopAppIconImage(desktopAppProps)"
+                                         class="dsk-app-upload-img" alt="">
+                                    <i v-else :class="desktopAppProps.icon"></i>
                                 </span>
                                 <div class="dsk-appprops-preview-name">{{ desktopAppPropsApp.label }}</div>
                                 <div class="dsk-appprops-preview-meta">
-                                    {{ desktopAppProps.color }} · {{ desktopShapeLabel(desktopAppProps.shape) }}
+                                    {{ desktopAppProps.image ? '自定义图片' : (desktopAppProps.color + ' · ' + desktopShapeLabel(desktopAppProps.shape)) }}
                                 </div>
                             </div>
                             <div class="dsk-appprops-editor-main">
+                                <div class="dsk-app-icon-upload">
+                                    <el-button size="mini" icon="el-icon-upload2"
+                                               @click="pickDesktopAppIconFile">上传图片</el-button>
+                                    <el-button v-if="desktopAppProps.image" size="mini" type="text"
+                                               @click="desktopAppProps.image = ''">移除图片</el-button>
+                                    <span class="dsk-app-icon-upload-hint">
+                                        PNG / JPG / WebP，自动压缩并居中裁切；建议使用正方形图片，上传后优先于图标库图标
+                                    </span>
+                                </div>
                                 <div class="dsk-icon-editor-label">
                                     <span>选择图标</span>
                                     <em>{{ desktopAppPropsIcons.length }} 个可用图标</em>
@@ -2412,6 +2453,9 @@
                     </div>
                 </div>
                 <div class="dsk-appprops-foot">
+                    <input ref="appIconFileInput" type="file"
+                           accept="image/png,image/jpeg,image/jpg,image/webp"
+                           class="dsk-app-icon-file" @change="onDesktopAppIconFile">
                     <el-button size="mini" @click="resetDesktopAppIconForm">恢复默认样式</el-button>
                     <span class="spacer"></span>
                     <el-button size="mini" @click="closeDesktopAppProperties">取消</el-button>

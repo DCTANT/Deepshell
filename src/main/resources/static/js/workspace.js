@@ -233,7 +233,8 @@ var DESKTOP_ICON_SIZES = [
 ];
 
 /* ---------- AI 可视化桌面：系统应用图标样式 ---------- */
-var DESKTOP_APP_ICON_STYLE_KEY = 'deepshell.desktopAppIconStyles';
+var DESKTOP_APP_ICON_STYLE_PREFIX = 'deepshell.desktopAppIconStyles.';
+var DESKTOP_APP_ICON_IMAGE_MAX = 600000;
 var DESKTOP_APP_RELEASE_FALLBACK = '2026-10-21';
 
 var DESKTOP_APP_SHAPES = [
@@ -302,10 +303,26 @@ function desktopAppDefaultStyle(action) {
     return DESKTOP_APP_DEFAULTS[action] || null;
 }
 
-function loadDesktopAppIconStyles() {
+function desktopAppStylesKey(connId) {
+    return connId == null || connId === ''
+        ? '' : DESKTOP_APP_ICON_STYLE_PREFIX + String(connId);
+}
+
+function desktopValidAppImage(image) {
+    return typeof image === 'string'
+        && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(image)
+        && image.length <= DESKTOP_APP_ICON_IMAGE_MAX;
+}
+
+/* 图标样式与上传图片均按连接隔离 */
+function loadDesktopAppIconStyles(connId) {
     var out = {};
+    var key = desktopAppStylesKey(connId);
+    if (!key) {
+        return out;
+    }
     try {
-        var raw = localStorage.getItem(DESKTOP_APP_ICON_STYLE_KEY);
+        var raw = localStorage.getItem(key);
         var data = raw ? JSON.parse(raw) : null;
         if (!data || typeof data !== 'object') {
             return out;
@@ -322,16 +339,25 @@ function loadDesktopAppIconStyles() {
             out[action] = {
                 icon: icon,
                 color: desktopNormalizeHex(s.color, def.color),
-                shape: shape
+                shape: shape,
+                image: desktopValidAppImage(s.image) ? s.image : ''
             };
         });
     } catch (e) { /* ignore */ }
     return out;
 }
 
-function saveDesktopAppIconStyles(styles) {
+function saveDesktopAppIconStyles(connId, styles) {
+    var key = desktopAppStylesKey(connId);
+    if (!key) {
+        return;
+    }
     try {
-        localStorage.setItem(DESKTOP_APP_ICON_STYLE_KEY, JSON.stringify(styles || {}));
+        if (!styles || !Object.keys(styles).length) {
+            localStorage.removeItem(key);
+        } else {
+            localStorage.setItem(key, JSON.stringify(styles));
+        }
     } catch (e) { /* ignore */ }
 }
 
@@ -794,6 +820,147 @@ function escapeAiHtml(s) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 }
+
+/* ---------- 终端危险命令识别 ---------- */
+function dangerousCommandRule(command) {
+    return dangerousCommandRuleDepth(command, 0);
+}
+
+function dangerousCommandRuleDepth(command, depth) {
+    var raw = String(command == null ? '' : command);
+    if (!raw.trim()) {
+        return null;
+    }
+    var norm = raw.replace(/\\\r?\n/g, ' ').replace(/\r\n?/g, '\n');
+    var prefix = '(?:(?:sudo|doas|command|builtin|exec)(?:\\s+-[^\\s]+)*\\s+|env(?:\\s+[A-Za-z_][A-Za-z0-9_]*=\\S+)*\\s+)*';
+    var re = new RegExp('(?:^|[;&|\\n]\\s*|[$#]\\s+)\\s*' + prefix
+        + '((?:[^\\s/]+/)*[A-Za-z][A-Za-z0-9_.-]*)\\b([^;&|\\n]*)', 'g');
+    var match;
+    while ((match = re.exec(norm)) !== null) {
+        var name = String(match[1] || '').split('/').pop().toLowerCase();
+        var args = String(match[2] || '').trim().split(/\s+/).filter(Boolean);
+        var rule = dangerousCommandFromArgs(name, args, depth);
+        if (rule) {
+            return rule;
+        }
+    }
+    if (/:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/i.test(norm)) {
+        return { id: 'fork-bomb', label: 'Fork 炸弹，可能耗尽系统进程' };
+    }
+    if (/(?:^|[^0-9A-Za-z_])>\s*\/dev\/(?:sd|vd|nvme|hd|mmcblk|mapper)\w*/i.test(norm)) {
+        return { id: 'device-write', label: '直接写入磁盘设备，可能破坏数据' };
+    }
+    return null;
+}
+
+function dangerousCommandFromArgs(name, args, depth) {
+    var i;
+    if (name === 'rm') {
+        var flags = [];
+        var targets = [];
+        for (i = 0; i < args.length; i++) {
+            var a = args[i];
+            if (a === '--') {
+                continue;
+            }
+            if (a.charAt(0) === '-' && a.length > 1) {
+                flags.push(a);
+            } else {
+                targets.push(a);
+            }
+        }
+        var flagText = flags.join(' ');
+        var recursive = /(^|\s)--recursive(\s|$)/.test(flagText) || /(^|\s)-[A-Za-z]*[rR]/.test(flagText);
+        var force = /(^|\s)--force(\s|$)/.test(flagText) || /(^|\s)-[A-Za-z]*f/.test(flagText);
+        var noPreserve = /--no-preserve-root/.test(flagText);
+        if ((recursive || force || noPreserve)
+                && targets.some(function (t) { return protectedSystemTarget(t); })) {
+            return { id: 'rm-system', label: '递归或强制删除系统关键目录' };
+        }
+        return null;
+    }
+    if (name === 'mkfs' || name.indexOf('mkfs.') === 0) {
+        return { id: 'mkfs', label: '格式化文件系统，会清空分区数据' };
+    }
+    if (name === 'dd') {
+        for (i = 0; i < args.length; i++) {
+            if (/^of=\/dev\/(?:sd|vd|nvme|hd|mmcblk|mapper)/i.test(args[i])) {
+                return { id: 'dd-device', label: '直接写入磁盘设备，可能破坏数据' };
+            }
+        }
+        return null;
+    }
+    if (name === 'shutdown' || name === 'reboot' || name === 'poweroff' || name === 'halt') {
+        return { id: 'power', label: '关机、重启或停机操作' };
+    }
+    if (name === 'init' && /^(0|6)$/.test(args[0] || '')) {
+        return { id: 'init-power', label: '切换运行级别 0/6，会关机或重启' };
+    }
+    if (name === 'systemctl' && args.some(function (x) {
+        return /^(reboot|poweroff|halt|shutdown)$/.test(x);
+    })) {
+        return { id: 'systemctl-power', label: '关机、重启或停机操作' };
+    }
+    if (name === 'wipefs') {
+        return { id: 'wipefs', label: '擦除文件系统签名，可能导致分区不可用' };
+    }
+    if ((name === 'fdisk' || name === 'parted' || name === 'sgdisk')
+            && !args.some(function (x) { return x === '-l' || x === '--list'; })) {
+        return { id: 'partition', label: '磁盘分区编辑操作，可能破坏分区表' };
+    }
+    if (name === 'kill') {
+        var kill9 = args.indexOf('-9') >= 0 || args.indexOf('-KILL') >= 0;
+        var pids = args.filter(function (x) { return /^\d+$/.test(x); });
+        if (kill9 && pids.indexOf('1') >= 0) {
+            return { id: 'kill-init', label: '强制结束 PID 1，可能导致系统崩溃' };
+        }
+        return null;
+    }
+    if (name === 'chmod' || name === 'chown') {
+        var rootTarget = args.some(function (x) { return protectedSystemTarget(x); });
+        if (rootTarget) {
+            return {
+                id: name + '-system',
+                label: name === 'chmod' ? '修改系统关键目录权限' : '修改系统关键目录所有者'
+            };
+        }
+        return null;
+    }
+    if (name === 'find') {
+        var findRoot = args.length && protectedSystemTarget(args[0]);
+        var deleting = args.indexOf('-delete') >= 0
+            || (args.indexOf('-exec') >= 0 && args.indexOf('rm') >= 0);
+        if (findRoot && deleting) {
+            return { id: 'find-delete', label: '批量删除系统关键目录文件' };
+        }
+        return null;
+    }
+    if ((name === 'bash' || name === 'sh' || name === 'zsh' || name === 'dash') && depth < 2) {
+        var ci = args.indexOf('-c');
+        if (ci >= 0) {
+            var inner = args.slice(ci + 1).join(' ').replace(/^['"]|['"]$/g, '');
+            if (inner) {
+                return dangerousCommandRuleDepth(inner, depth + 1);
+            }
+        }
+    }
+    return null;
+}
+
+function protectedSystemTarget(token) {
+    var s = String(token || '').replace(/^['"]|['"]$/g, '').toLowerCase();
+    if (!s) {
+        return false;
+    }
+    if (/^(~|\$home|\$\{home\})(\/\*?)?$/.test(s)) {
+        return true;
+    }
+    if (/^\/(?:\*?)$/.test(s)) {
+        return true;
+    }
+    return /^\/(?:bin|sbin|etc|usr|var|boot|lib|lib64|opt|home|root|dev|sys|proc|run|srv|mnt|media)(?:\/\*?)?$/.test(s);
+}
+
 
 function aiInlineMarkdown(text) {
     var codes = [];
@@ -1716,11 +1883,18 @@ Vue.component('term-cmd-bar', {
                 ELEMENT.Message.warning('当前终端未连接');
                 return;
             }
-            t.ws.send(JSON.stringify({ type: 'data', data: c.command + '\r' }));
-            if (this.$root.pushHistory) {
-                this.$root.pushHistory(t, c.command);
-            }
+            var self = this;
             this.snippetsVisible = false;
+            var run = function () {
+                if (!t.ws || t.ws.readyState !== 1) {
+                    return;
+                }
+                t.ws.send(JSON.stringify({ type: 'data', data: c.command + '\r' }));
+                if (self.$root.pushHistory) {
+                    self.$root.pushHistory(t, c.command);
+                }
+            };
+            this.$root.confirmDangerousCommand(c.command, run);
         },
         fillSnippet: function (c) {
             this.tab.cmdText = c.command;
@@ -3507,10 +3681,12 @@ new Vue({
         desktopAppIconColors: DESKTOP_APP_ICON_COLORS,
         desktopAppProps: {
             visible: false,
+            connId: '',
             key: '',
             icon: '',
             color: '#3d7eff',
             shape: 'rounded',
+            image: '',
             iconSearch: ''
         },
         /* AI 可视化桌面 */
@@ -3961,6 +4137,11 @@ new Vue({
                     self._deskAppearanceSaveTimer = null;
                     saveDesktopAppearance(v);
                 }, 180);
+            }
+        },
+        desktopAppStyleConnId: function (nv, ov) {
+            if (nv !== ov) {
+                this.applyDesktopAppIconStylesForConn(nv);
             }
         },
         openAfterConnect: function (v) {
@@ -4888,6 +5069,10 @@ new Vue({
                 '--dsk-icon-pad-x': m.padX + 'px',
                 '--dsk-icon-pad-y': m.padY + 'px'
             };
+        },
+        desktopAppStyleConnId: function () {
+            var t = this.desktopTab;
+            return t && t.connId != null ? String(t.connId) : '';
         },
         desktopAppPropsApp: function () {
             var key = this.desktopAppProps.key;
@@ -10710,6 +10895,9 @@ new Vue({
             }
             return '圆角';
         },
+        desktopAppIconImage: function (app) {
+            return app && app.image ? app.image : '';
+        },
         desktopAppIconStyle: function (app) {
             var color = (app && app.color) || '#54657e';
             var rgb = desktopHexToRgb(color);
@@ -10732,6 +10920,26 @@ new Vue({
             }
             return fallback || 'el-icon-s-grid';
         },
+        desktopAppImageByAction: function (action) {
+            for (var i = 0; i < this.desktopAppIcons.length; i++) {
+                if (this.desktopAppIcons[i].action === action) {
+                    return this.desktopAppIcons[i].image || '';
+                }
+            }
+            return '';
+        },
+        desktopWindowIconImage: function (w) {
+            var type = (w && w.type) || 'explorer';
+            var action = ({
+                explorer: 'explorer',
+                trash: 'trash',
+                editor: 'editor',
+                terminal: 'terminal',
+                transfer: 'transfers',
+                ai: 'ai'
+            })[type];
+            return action ? this.desktopAppImageByAction(action) : '';
+        },
         openDesktopAppProperties: function (item) {
             if (typeof item === 'string') {
                 for (var i = 0; i < this.desktopAppIcons.length; i++) {
@@ -10752,10 +10960,12 @@ new Vue({
             this.closeDesktopSubMenus();
             this.desktopAppProps = {
                 visible: true,
+                connId: this.desktopAppStyleConnId,
                 key: item.key,
                 icon: item.icon,
                 color: item.color,
                 shape: item.shape || 'rounded',
+                image: item.image || '',
                 iconSearch: ''
             };
             var self = this;
@@ -10793,12 +11003,95 @@ new Vue({
             this.desktopAppProps.icon = def.icon;
             this.desktopAppProps.color = def.color;
             this.desktopAppProps.shape = 'rounded';
+            this.desktopAppProps.image = '';
+        },
+        pickDesktopAppIconFile: function () {
+            if (this.$refs.appIconFileInput) {
+                this.$refs.appIconFileInput.click();
+            }
+        },
+        onDesktopAppIconFile: function (ev) {
+            var input = ev && ev.target;
+            var file = input && input.files && input.files[0];
+            if (input) {
+                input.value = '';
+            }
+            if (!file) {
+                return;
+            }
+            if (!/^image\/(?:png|jpe?g|webp)$/i.test(file.type || '')) {
+                ELEMENT.Message.warning('仅支持 PNG / JPG / WebP 图片');
+                return;
+            }
+            if (file.size > 8 * 1024 * 1024) {
+                ELEMENT.Message.warning('图片不能超过 8 MB');
+                return;
+            }
+            var self = this;
+            var reader = new FileReader();
+            reader.onload = function () {
+                var img = new Image();
+                img.onload = function () {
+                    try {
+                        var size = 192;
+                        var canvas = document.createElement('canvas');
+                        canvas.width = size;
+                        canvas.height = size;
+                        var ctx = canvas.getContext('2d');
+                        ctx.clearRect(0, 0, size, size);
+                        var scale = Math.max(size / img.width, size / img.height);
+                        var dw = Math.max(1, Math.round(img.width * scale));
+                        var dh = Math.max(1, Math.round(img.height * scale));
+                        ctx.drawImage(img, Math.round((size - dw) / 2), Math.round((size - dh) / 2), dw, dh);
+                        var data = canvas.toDataURL('image/png');
+                        if (!desktopValidAppImage(data)) {
+                            ELEMENT.Message.warning('图片处理后体积过大，请换一张更简单的图片');
+                            return;
+                        }
+                        self.desktopAppProps.image = data;
+                    } catch (e) {
+                        ELEMENT.Message.warning('图片处理失败，请换一张图片重试');
+                    }
+                };
+                img.onerror = function () {
+                    ELEMENT.Message.warning('无法读取图片，请更换文件');
+                };
+                img.src = reader.result;
+            };
+            reader.onerror = function () {
+                ELEMENT.Message.warning('图片读取失败，请重新选择');
+            };
+            reader.readAsDataURL(file);
+        },
+        resetDesktopAppIconState: function () {
+            var self = this;
+            this.desktopAppIcons.forEach(function (a) {
+                var def = desktopAppDefaultStyle(a.action);
+                if (!def) {
+                    return;
+                }
+                a.icon = def.icon;
+                a.color = def.color;
+                self.$set(a, 'shape', 'rounded');
+                self.$set(a, 'image', '');
+            });
+            this.desktopStartApps.forEach(function (a) {
+                var def = DESKTOP_START_ICON_DEFAULTS[a.id];
+                if (!def) {
+                    return;
+                }
+                a.icon = def.icon;
+                a.color = def.color;
+                self.$set(a, 'shape', 'rounded');
+                self.$set(a, 'image', '');
+            });
         },
         applyDesktopAppIconStyle: function (action, style) {
             if (!action || !style) {
                 return;
             }
             var self = this;
+            var image = desktopValidAppImage(style.image) ? style.image : '';
             this.desktopAppIcons.forEach(function (a) {
                 if (a.action !== action) {
                     return;
@@ -10806,6 +11099,7 @@ new Vue({
                 a.icon = style.icon;
                 a.color = style.color;
                 self.$set(a, 'shape', style.shape || 'rounded');
+                self.$set(a, 'image', image);
             });
             var startId = DESKTOP_APP_START_IDS[action];
             if (!startId) {
@@ -10818,6 +11112,15 @@ new Vue({
                 a.icon = style.icon;
                 a.color = style.color;
                 self.$set(a, 'shape', style.shape || 'rounded');
+                self.$set(a, 'image', image);
+            });
+        },
+        applyDesktopAppIconStylesForConn: function (connId) {
+            var self = this;
+            this.resetDesktopAppIconState();
+            var styles = loadDesktopAppIconStyles(connId);
+            Object.keys(styles).forEach(function (action) {
+                self.applyDesktopAppIconStyle(action, styles[action]);
             });
         },
         saveDesktopAppIconStyle: function () {
@@ -10827,51 +11130,55 @@ new Vue({
                 this.closeDesktopAppProperties();
                 return;
             }
+            var connId = form.connId || this.desktopAppStyleConnId;
+            if (!connId) {
+                ELEMENT.Message.warning('当前没有可用的连接，无法保存图标样式');
+                return;
+            }
             var def = desktopAppDefaultStyle(app.action) || { icon: app.icon, color: app.color };
             var icon = (typeof form.icon === 'string' && /^el-icon-[a-z0-9-]+$/.test(form.icon))
                 ? form.icon : def.icon;
             var color = desktopNormalizeHex(form.color, def.color);
             var shape = (form.shape === 'circle' || form.shape === 'square') ? form.shape : 'rounded';
-            var styles = loadDesktopAppIconStyles();
-            if (icon === def.icon && color === def.color && shape === 'rounded') {
+            if (form.image && !desktopValidAppImage(form.image)) {
+                ELEMENT.Message.warning('当前图片数据无效，请重新上传');
+                return;
+            }
+            var image = form.image || '';
+            var styles = loadDesktopAppIconStyles(connId);
+            var style = { icon: icon, color: color, shape: shape, image: image };
+            if (icon === def.icon && color === def.color && shape === 'rounded' && !image) {
                 delete styles[app.action];
             } else {
-                styles[app.action] = { icon: icon, color: color, shape: shape };
+                styles[app.action] = style;
             }
-            saveDesktopAppIconStyles(styles);
-            this.applyDesktopAppIconStyle(app.action, {
-                icon: icon,
-                color: color,
-                shape: shape
-            });
+            saveDesktopAppIconStyles(connId, styles);
+            if (styles[app.action]) {
+                this.applyDesktopAppIconStyle(app.action, styles[app.action]);
+            } else {
+                this.applyDesktopAppIconStyle(app.action, {
+                    icon: def.icon,
+                    color: def.color,
+                    shape: 'rounded',
+                    image: ''
+                });
+            }
             this.desktopAppProps.visible = false;
-            ELEMENT.Message.success('已更新「' + app.label + '」的图标样式');
+            ELEMENT.Message.success('已更新当前连接的「' + app.label + '」图标样式');
         },
         resetAllDesktopAppIconStyles: function () {
             var self = this;
-            this.$confirm('恢复所有系统应用的默认图标、颜色和形状？', '恢复默认图标样式',
+            var connId = this.desktopAppStyleConnId;
+            if (!connId) {
+                ELEMENT.Message.warning('当前没有可用的连接');
+                return;
+            }
+            this.$confirm('恢复当前连接所有系统应用的默认图标、颜色、形状和图片？', '恢复默认图标样式',
                 { type: 'warning', confirmButtonText: '恢复默认', cancelButtonText: '取消' })
                 .then(function () {
-                    saveDesktopAppIconStyles({});
-                    self.desktopAppIcons.forEach(function (a) {
-                        var def = desktopAppDefaultStyle(a.action);
-                        if (!def) {
-                            return;
-                        }
-                        a.icon = def.icon;
-                        a.color = def.color;
-                        self.$set(a, 'shape', 'rounded');
-                    });
-                    self.desktopStartApps.forEach(function (a) {
-                        var def = DESKTOP_START_ICON_DEFAULTS[a.id];
-                        if (!def) {
-                            return;
-                        }
-                        a.icon = def.icon;
-                        a.color = def.color;
-                        self.$set(a, 'shape', 'rounded');
-                    });
-                    ELEMENT.Message.success('已恢复默认应用图标');
+                    saveDesktopAppIconStyles(connId, {});
+                    self.resetDesktopAppIconState();
+                    ELEMENT.Message.success('已恢复当前连接的默认应用图标');
                 })
                 .catch(function () { /* 取消 */ });
         },
@@ -15331,11 +15638,59 @@ new Vue({
             try { fit.fit(); } catch (e) { /* 容器未就绪时忽略 */ }
             tab.term = term;
             tab.fit = fit;
+            tab._dangerInput = '';
+            tab._dangerInputUnknown = false;
 
             term.onData(function (data) {
-                if (tab.ws && tab.ws.readyState === 1) {
-                    tab.ws.send(JSON.stringify({ type: 'data', data: data }));
+                var sendData = function () {
+                    if (tab.ws && tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({ type: 'data', data: data }));
+                    }
+                };
+                if (data.indexOf('\r') < 0 && data.indexOf('\n') < 0) {
+                    self.trackTerminalDangerInput(tab, data);
+                    sendData();
+                    return;
                 }
+                var typed = tab._dangerInputUnknown ? ''
+                    : ((tab._dangerInput || '') + data);
+                tab._dangerInput = '';
+                tab._dangerInputUnknown = false;
+                var line = self.terminalCommandLine(tab);
+                if (line === null) {
+                    // vim / less 等全屏程序直接放行，避免把界面内容误判为命令
+                    sendData();
+                    return;
+                }
+                var hit = null;
+                if (typed.trim()) {
+                    var typedRule = dangerousCommandRule(typed);
+                    if (typedRule) {
+                        hit = {
+                            rule: typedRule,
+                            display: typed.replace(/[\r\n]+$/, '').trim()
+                        };
+                    }
+                }
+                if (!hit && line && line.trim()) {
+                    var lineRule = dangerousCommandRule(line.replace(/[$#]\s+/g, '\n'));
+                    if (lineRule) {
+                        var stripped = line.replace(/^.*?[$#]\s+/, '').trim();
+                        hit = { rule: lineRule, display: stripped || line.trim() };
+                    }
+                }
+                if (!hit) {
+                    var plainData = String(data).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
+                    var dataRule = dangerousCommandRule(plainData);
+                    if (dataRule) {
+                        hit = { rule: dataRule, display: plainData.replace(/[\r\n]+/g, ' ').trim() };
+                    }
+                }
+                if (!hit) {
+                    sendData();
+                    return;
+                }
+                self.confirmDangerousCommand(hit.display || data, sendData, hit.rule);
             });
             term.onResize(function (size) {
                 if (tab.ws && tab.ws.readyState === 1) {
@@ -18720,6 +19075,102 @@ new Vue({
             } catch (e) { /* ignore */ }
             ELEMENT.Message.success('历史已清空');
         },
+        trackTerminalDangerInput: function (tab, data) {
+            var s = tab._dangerInput || '';
+            var unknown = !!tab._dangerInputUnknown;
+            var str = String(data || '');
+            for (var i = 0; i < str.length; i++) {
+                var ch = str.charAt(i);
+                var code = ch.charCodeAt(0);
+                if (ch === '\x7f') {
+                    s = s.slice(0, -1);
+                } else if (ch === '\x15') {
+                    s = '';
+                    unknown = false;
+                } else if (ch === '\x17') {
+                    s = s.replace(/\s*\S+\s*$/, '');
+                } else if (ch === '\x03') {
+                    s = '';
+                    unknown = false;
+                } else if (ch === '\t' || ch === '\x1b') {
+                    unknown = true;
+                } else if (code >= 32 && code !== 127) {
+                    s += ch;
+                }
+            }
+            tab._dangerInput = s;
+            tab._dangerInputUnknown = unknown;
+        },
+        terminalCommandLine: function (tab) {
+            try {
+                var term = tab && tab.term;
+                if (!term) {
+                    return '';
+                }
+                var buf = term.buffer && term.buffer.active;
+                if (!buf) {
+                    return '';
+                }
+                if (buf.type === 'alternate') {
+                    return null;
+                }
+                var y = buf.baseY + buf.cursorY;
+                var line = buf.getLine(y);
+                if (!line) {
+                    return '';
+                }
+                var text = line.translateToString(true);
+                var guard = 0;
+                while (y > 0 && guard < 40) {
+                    var prev = buf.getLine(y - 1);
+                    if (!prev || !prev.isWrapped) {
+                        break;
+                    }
+                    text = prev.translateToString(true) + text;
+                    y--;
+                    guard++;
+                }
+                return text;
+            } catch (e) {
+                return '';
+            }
+        },
+        confirmDangerousCommand: function (command, proceed, forcedRule) {
+            var rule = forcedRule || dangerousCommandRule(command);
+            if (!rule) {
+                if (this._dangerPromptOpen) {
+                    return false;
+                }
+                proceed();
+                return true;
+            }
+            if (this._dangerPromptOpen) {
+                return false;
+            }
+            var self = this;
+            this._dangerPromptOpen = true;
+            var cmd = escapeAiHtml(String(command || '').trim());
+            var html = '<div class="danger-cmd-content">'
+                + '<p>检测到高风险操作：<b>' + escapeAiHtml(rule.label) + '</b></p>'
+                + '<pre>' + cmd + '</pre>'
+                + '<p class="danger-cmd-tip">只有点击「仍然执行」后，命令才会发送到终端；取消则不会执行。</p>'
+                + '</div>';
+            this.$confirm(html, '危险命令确认', {
+                type: 'warning',
+                dangerouslyUseHTMLString: true,
+                confirmButtonText: '仍然执行',
+                cancelButtonText: '取消',
+                closeOnClickModal: false,
+                customClass: 'danger-cmd-confirm',
+                confirmButtonClass: 'el-button--danger'
+            }).then(function () {
+                self._dangerPromptOpen = false;
+                proceed();
+            }).catch(function () {
+                self._dangerPromptOpen = false;
+            });
+            return false;
+        },
         sendCmd: function (tab) {
             var t = tab || this.activeTab;
             if (!t || !t.sessionId) {
@@ -18744,15 +19195,20 @@ new Vue({
                 return;
             }
             var data = JSON.stringify({ type: 'data', data: payload });
-            targets.forEach(function (x) {
-                x.ws.send(data);
+            var self = this;
+            this.confirmDangerousCommand(text, function () {
+                targets.forEach(function (x) {
+                    if (x.ws && x.ws.readyState === 1) {
+                        x.ws.send(data);
+                    }
+                });
+                self.pushHistory(t, text);
+                if (self.cmdOpts.clearAfterSend) {
+                    t.cmdText = '';
+                }
+                t._comp = null;
+                self.focusCmdInput(t);
             });
-            this.pushHistory(t, text);
-            if (this.cmdOpts.clearAfterSend) {
-                t.cmdText = '';
-            }
-            t._comp = null;
-            this.focusCmdInput(t);
         },
         toggleTarget: function (key, checked, tab) {
             var t = tab || this.activeTab;
@@ -19094,14 +19550,24 @@ new Vue({
                     : '没有已连接的终端会话');
                 return;
             }
+            var self = this;
             var payload = JSON.stringify({ type: 'data', data: text });
             var active = this.uiTab;
-            targets.forEach(function (x) {
-                x.ws.send(payload);
-            });
-            if (!this.desktop.visible && active && targets.indexOf(active) >= 0 && active.term) {
-                active.term.focus();
+            var doSend = function () {
+                targets.forEach(function (x) {
+                    if (x.ws && x.ws.readyState === 1) {
+                        x.ws.send(payload);
+                    }
+                });
+                if (!self.desktop.visible && active && targets.indexOf(active) >= 0 && active.term) {
+                    active.term.focus();
+                }
+            };
+            if (/[\r\n]/.test(text) && dangerousCommandRule(text)) {
+                this.confirmDangerousCommand(text, doSend);
+                return;
             }
+            doSend();
         },
         toggleSnippetTarget: function (key, checked) {
             var i = this.snippetTargets.indexOf(key);
@@ -19124,10 +19590,21 @@ new Vue({
                 ELEMENT.Message.warning('当前没有已连接的终端会话');
                 return;
             }
-            t.ws.send(JSON.stringify({ type: 'data', data: text }));
-            if (t.term) {
-                t.term.focus();
+            var self = this;
+            var doSend = function () {
+                if (!t.ws || t.ws.readyState !== 1) {
+                    return;
+                }
+                t.ws.send(JSON.stringify({ type: 'data', data: text }));
+                if (t.term) {
+                    t.term.focus();
+                }
+            };
+            if (/[\r\n]/.test(text) && dangerousCommandRule(text)) {
+                this.confirmDangerousCommand(text, doSend);
+                return;
             }
+            doSend();
         },
         loadSnippets: function () {
             var self = this;
@@ -19204,11 +19681,7 @@ new Vue({
         }
     },
     created: function () {
-        var self = this;
-        var styles = loadDesktopAppIconStyles();
-        Object.keys(styles).forEach(function (action) {
-            self.applyDesktopAppIconStyle(action, styles[action]);
-        });
+        this.applyDesktopAppIconStylesForConn(this.desktopAppStyleConnId);
     },
     mounted: function () {
         var self = this;
