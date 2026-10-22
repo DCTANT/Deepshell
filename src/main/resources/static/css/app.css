@@ -5655,3 +5655,70 @@ body.resizing .term-host {
     background: #c63d3d;
     border-color: #c63d3d;
 }
+
+/* 右上角菜单：分组与二级菜单 */
+.top-menu {
+    min-width: 204px;
+}
+
+.tab-menu-group {
+    position: relative;
+}
+
+.tab-menu-group-head {
+    cursor: default;
+}
+
+.tab-menu-group-head.open,
+.tab-menu-group-head:hover {
+    background: rgba(76, 141, 255, .16);
+    color: #ffffff;
+}
+
+.tab-menu-group-head.open > i:first-child,
+.tab-menu-group-head:hover > i:first-child {
+    color: #6ea8ff;
+}
+
+.tab-menu-grow {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tab-menu-arrow {
+    flex: 0 0 auto;
+    margin-left: 8px;
+    color: #6f7d93;
+    font-size: 10px;
+}
+
+.tab-menu-group-head.open .tab-menu-arrow,
+.tab-menu-group-head:hover .tab-menu-arrow {
+    color: #9fc4ff;
+}
+
+.tab-menu-sub {
+    position: absolute;
+    right: calc(100% + 8px);
+    top: -5px;
+    z-index: 4001;
+    min-width: 216px;
+}
+
+.tab-menu-sub .tab-menu-item {
+    min-width: 0;
+}
+
+.tab-menu-state {
+    margin-left: auto;
+    padding-left: 12px;
+    color: #8b98ad;
+    font-size: 10.5px;
+}
+
+.tab-menu-state.on {
+    color: #8bd49c;
+}

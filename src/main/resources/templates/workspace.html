@@ -393,40 +393,139 @@
     <th:block th:replace="~{fragments/dialogs :: dialogs}"></th:block>
 
     <div class="tab-menu top-menu" v-if="topMenuVisible"
-         :style="{ top: topMenuPos.top + 'px', right: topMenuPos.right + 'px' }">
-        <div class="tab-menu-item" @click="onMenuCommand('connImport')">
-            <i class="el-icon-upload2"></i>连接导入
+         :style="{ top: topMenuPos.top + 'px', right: topMenuPos.right + 'px' }"
+         @click.stop @mouseleave="topSubMenu = ''">
+        <div class="tab-menu-group" @mouseenter="topSubMenu = 'session'">
+            <div class="tab-menu-item tab-menu-group-head"
+                 :class="{ open: topSubMenu === 'session' }"
+                 @click.stop="topSubMenu = topSubMenu === 'session' ? '' : 'session'">
+                <i class="el-icon-connection"></i>
+                <span class="tab-menu-grow">会话与连接</span>
+                <i class="el-icon-arrow-left tab-menu-arrow"></i>
+            </div>
+            <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'session'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('openConnection')">
+                    <i class="el-icon-folder-opened"></i>打开连接
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('newConnection')">
+                    <i class="el-icon-plus"></i>新建连接
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('reconnectActive')">
+                    <i class="el-icon-refresh-right"></i>重新连接当前标签
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('disconnectActive')">
+                    <i class="el-icon-switch-button"></i>断开当前标签
+                </div>
+                <div class="tab-menu-sep"></div>
+                <div class="tab-menu-item" @click="onMenuCommand('portfwd')">
+                    <i class="el-icon-guide"></i>端口转发
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('sysinfo')">
+                    <i class="el-icon-cpu"></i>系统信息
+                </div>
+                <div class="tab-menu-sep"></div>
+                <div class="tab-menu-item" @click="onMenuCommand('connImport')">
+                    <i class="el-icon-upload2"></i>连接导入
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('connExport')">
+                    <i class="el-icon-download"></i>连接导出
+                </div>
+            </div>
         </div>
-        <div class="tab-menu-item" @click="onMenuCommand('connExport')">
-            <i class="el-icon-download"></i>连接导出
+
+        <div class="tab-menu-group" @mouseenter="topSubMenu = 'terminal'">
+            <div class="tab-menu-item tab-menu-group-head"
+                 :class="{ open: topSubMenu === 'terminal' }"
+                 @click.stop="topSubMenu = topSubMenu === 'terminal' ? '' : 'terminal'">
+                <i class="el-icon-monitor"></i>
+                <span class="tab-menu-grow">终端与面板</span>
+                <i class="el-icon-arrow-left tab-menu-arrow"></i>
+            </div>
+            <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'terminal'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('font')">
+                    <i class="el-icon-edit-outline"></i>终端字体
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('hotkey')">
+                    <i class="el-icon-set-up"></i>快捷键设置
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('bg')">
+                    <i class="el-icon-picture-outline"></i>终端背景
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('fitTerminal')">
+                    <i class="el-icon-full-screen"></i>终端自适应
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('openFilePanel')">
+                    <i class="el-icon-folder"></i>显示文件 SFTP 面板
+                </div>
+                <div class="tab-menu-sep"></div>
+                <div class="tab-menu-item" @click="onMenuCommand('toggleDangerConfirm')">
+                    <i class="el-icon-warning-outline"></i>
+                    <span class="tab-menu-grow">危险命令确认</span>
+                    <span class="tab-menu-state" :class="{ on: dangerConfirmEnabled }">
+                        {{ dangerConfirmEnabled ? '已开启' : '已关闭' }}
+                    </span>
+                </div>
+            </div>
         </div>
-        <div class="tab-menu-item" @click="onMenuCommand('font')">
-            <i class="el-icon-edit-outline"></i>字体设置
+
+        <div class="tab-menu-group" @mouseenter="topSubMenu = 'ai'">
+            <div class="tab-menu-item tab-menu-group-head"
+                 :class="{ open: topSubMenu === 'ai' }"
+                 @click.stop="topSubMenu = topSubMenu === 'ai' ? '' : 'ai'">
+                <i class="el-icon-magic-stick"></i>
+                <span class="tab-menu-grow">AI 助手</span>
+                <i class="el-icon-arrow-left tab-menu-arrow"></i>
+            </div>
+            <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'ai'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('ai')">
+                    <i class="el-icon-setting"></i>AI 设置
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('openAiPanel')">
+                    <i class="el-icon-chat-dot-round"></i>AI 终端面板
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('desktop')">
+                    <i class="el-icon-monitor"></i>打开 AI 可视化桌面
+                </div>
+            </div>
         </div>
-        <div class="tab-menu-item" @click="onMenuCommand('hotkey')">
-            <i class="el-icon-set-up"></i>快捷键设置
+
+        <div class="tab-menu-group" @mouseenter="topSubMenu = 'security'">
+            <div class="tab-menu-item tab-menu-group-head"
+                 :class="{ open: topSubMenu === 'security' }"
+                 @click.stop="topSubMenu = topSubMenu === 'security' ? '' : 'security'">
+                <i class="el-icon-lock"></i>
+                <span class="tab-menu-grow">安全与访问</span>
+                <i class="el-icon-arrow-left tab-menu-arrow"></i>
+            </div>
+            <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'security'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('lan')">
+                    <i class="el-icon-share"></i>局域网访问
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('auth')">
+                    <i class="el-icon-lock"></i>登录与安全
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('audit')">
+                    <i class="el-icon-tickets"></i>审计日志
+                </div>
+            </div>
         </div>
-        <div class="tab-menu-item" @click="onMenuCommand('bg')">
-            <i class="el-icon-picture-outline"></i>终端背景设置
-        </div>
-        <div class="tab-menu-item" @click="onMenuCommand('ai')">
-            <i class="el-icon-magic-stick"></i>AI 设置
-        </div>
-        <div class="tab-menu-item" @click="onMenuCommand('lan')">
-            <i class="el-icon-share"></i>局域网访问
-        </div>
-        <div class="tab-menu-item" @click="onMenuCommand('auth')">
-            <i class="el-icon-lock"></i>登录与安全
-        </div>
-        <div class="tab-menu-item" @click="onMenuCommand('audit')">
-            <i class="el-icon-tickets"></i>审计日志
-        </div>
-        <div class="tab-menu-sep"></div>
-        <div class="tab-menu-item" @click="onMenuCommand('help')">
-            <i class="el-icon-question"></i>帮助
-        </div>
-        <div class="tab-menu-item" @click="onMenuCommand('about')">
-            <i class="el-icon-info"></i>关于
+
+        <div class="tab-menu-group" @mouseenter="topSubMenu = 'help'">
+            <div class="tab-menu-item tab-menu-group-head"
+                 :class="{ open: topSubMenu === 'help' }"
+                 @click.stop="topSubMenu = topSubMenu === 'help' ? '' : 'help'">
+                <i class="el-icon-question"></i>
+                <span class="tab-menu-grow">帮助</span>
+                <i class="el-icon-arrow-left tab-menu-arrow"></i>
+            </div>
+            <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'help'" @click.stop>
+                <div class="tab-menu-item" @click="onMenuCommand('help')">
+                    <i class="el-icon-question"></i>使用帮助
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('about')">
+                    <i class="el-icon-info"></i>关于 DeepShell
+                </div>
+            </div>
         </div>
     </div>
 

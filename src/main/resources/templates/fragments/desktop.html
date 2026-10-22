@@ -2162,6 +2162,34 @@
                             </div>
                         </template>
 
+                        <template v-else-if="desktop.settingsSection === 'safety'">
+                            <div class="dsk-set-heading">
+                                <i class="el-icon-lock"></i>
+                                <div><b>终端安全</b><span>危险命令确认与终端执行保护</span></div>
+                            </div>
+                            <div class="dsk-set-card">
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>危险命令确认</b>
+                                        <span>执行 rm -rf 系统目录、mkfs、dd 写盘、关机重启等高风险命令前弹出确认框</span>
+                                    </div>
+                                    <el-switch v-model="dangerConfirmEnabled" size="mini"></el-switch>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>覆盖范围</b>
+                                        <span>终端直接输入、底部命令栏、快捷命令与 AI 桌面终端</span>
+                                    </div>
+                                    <span class="dsk-set-value" :class="dangerConfirmEnabled ? 'ok' : 'warn'">
+                                        {{ dangerConfirmEnabled ? '已开启' : '已关闭' }}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="dsk-set-note">
+                                关闭后危险命令会直接发送执行，请仅在明确知道风险时关闭。该设置按浏览器保存。
+                            </div>
+                        </template>
+
                         <template v-else-if="desktop.settingsSection === 'power'">
                             <div class="dsk-set-heading">
                                 <i class="el-icon-switch-button"></i>

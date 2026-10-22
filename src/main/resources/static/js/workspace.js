@@ -648,6 +648,14 @@ function loadOpenAfterConnect() {
     return 'desktop';
 }
 
+/* 终端危险命令确认：默认开启，可在设置中关闭 */
+function loadDangerConfirmEnabled() {
+    try {
+        return localStorage.getItem('deepshell.dangerConfirm') !== '0';
+    } catch (e) { /* ignore */ }
+    return true;
+}
+
 /* 本次启动（同一标签页会话）只有首个连接自动进桌面，之后新开连接一律保持终端标签 */
 function consumeFirstConnect() {
     try {
@@ -3781,6 +3789,7 @@ new Vue({
             { id: 'appearance', label: '外观与桌面', icon: 'el-icon-monitor' },
             { id: 'time', label: '时间与时钟', icon: 'el-icon-time' },
             { id: 'shortcuts', label: '快捷键', icon: 'el-icon-set-up' },
+            { id: 'safety', label: '终端安全', icon: 'el-icon-lock' },
             { id: 'power', label: '电源与休眠', icon: 'el-icon-switch-button' },
             { id: 'ai', label: 'AI 助手', icon: 'el-icon-magic-stick' },
             { id: 'network', label: '网络与连接', icon: 'el-icon-connection' },
@@ -4018,6 +4027,7 @@ new Vue({
         pfForm: emptyPfForm(),
         folderMenu: { visible: false, x: 0, y: 0, row: null },
         topMenuVisible: false,
+        topSubMenu: '',
         topMenuPos: { top: 48, right: 10 },
         connImportVisible: false,
         connExportVisible: false,
@@ -4114,6 +4124,7 @@ new Vue({
         bgTarget: 'terminal',
         bgDraft: { url: '', opacity: 0.35, blur: 0 },
         openAfterConnect: loadOpenAfterConnect(),
+        dangerConfirmEnabled: loadDangerConfirmEnabled(),
         chatExamples: ['看看哪个目录占用空间最大', '这台服务器上都装了什么服务，分别监听哪些端口',
             '最近的登录记录里有没有异常 IP'],
         fontCandidates: ['Consolas', 'JetBrains Mono', 'Courier New', 'monospace',
@@ -4146,6 +4157,14 @@ new Vue({
         },
         openAfterConnect: function (v) {
             try { localStorage.setItem('deepshell.openAfterConnect', v); } catch (e) { /* ignore */ }
+        },
+        dangerConfirmEnabled: function (v) {
+            try { localStorage.setItem('deepshell.dangerConfirm', v ? '1' : '0'); } catch (e) { /* ignore */ }
+        },
+        topMenuVisible: function (v) {
+            if (!v) {
+                this.topSubMenu = '';
+            }
         },
         cmdOpts: {
             deep: true,
@@ -5842,6 +5861,7 @@ new Vue({
         toggleTopMenu: function () {
             if (this.topMenuVisible) {
                 this.topMenuVisible = false;
+                this.topSubMenu = '';
                 return;
             }
             var el = this.$refs.menuBtn;
@@ -5852,20 +5872,81 @@ new Vue({
                     right: Math.max(8, Math.round(window.innerWidth - r.right - 2))
                 };
             }
+            this.topSubMenu = '';
             this.topMenuVisible = true;
         },
         onMenuCommand: function (cmd) {
             this.topMenuVisible = false;
-            if (cmd === 'connImport') {
+            this.topSubMenu = '';
+            var t = this.activeTab;
+            if (cmd === 'openConnection') {
+                this.openConnectDialog();
+            } else if (cmd === 'newConnection') {
+                this.openNewConnDialog();
+            } else if (cmd === 'connImport') {
                 this.connImportVisible = true;
             } else if (cmd === 'connExport') {
                 this.openConnExport();
+            } else if (cmd === 'reconnectActive') {
+                if (t) {
+                    this.reconnectTab(t);
+                } else {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                }
+            } else if (cmd === 'disconnectActive') {
+                if (t) {
+                    this.disconnectTab(t);
+                } else {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                }
+            } else if (cmd === 'portfwd') {
+                if (t) {
+                    this.openPortForwards(t);
+                } else {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                }
+            } else if (cmd === 'sysinfo') {
+                if (!t || !t.sessionId) {
+                    ELEMENT.Message.warning('当前标签尚未连接，无法获取系统信息');
+                } else {
+                    this.sysInfoTitle = t.title;
+                    this.sysInfoSessionId = t.sessionId;
+                    this.sysInfo = null;
+                    this.sysInfoError = '';
+                    this.sysInfoVisible = true;
+                }
             } else if (cmd === 'font') {
                 this.fontVisible = true;
             } else if (cmd === 'hotkey') {
                 this.hotkeyVisible = true;
             } else if (cmd === 'bg') {
                 this.openBgSettings('terminal');
+            } else if (cmd === 'fitTerminal') {
+                this.fitActive();
+            } else if (cmd === 'openAiPanel') {
+                if (!t) {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                } else {
+                    this.panelVisible = true;
+                    this.panelTab = 'ai';
+                    this.ensurePanelWide();
+                    var self = this;
+                    this.$nextTick(function () {
+                        self.fitActive();
+                        self.scrollAiChat();
+                    });
+                }
+            } else if (cmd === 'openFilePanel') {
+                if (!t) {
+                    ELEMENT.Message.warning('当前没有打开的连接');
+                } else {
+                    this.panelVisible = true;
+                    this.panelTab = 'file';
+                }
+            } else if (cmd === 'toggleDangerConfirm') {
+                this.dangerConfirmEnabled = !this.dangerConfirmEnabled;
+                ELEMENT.Message.success(this.dangerConfirmEnabled
+                    ? '已开启危险命令确认' : '已关闭危险命令确认');
             } else if (cmd === 'help') {
                 this.helpVisible = true;
             } else if (cmd === 'about') {
@@ -5881,6 +5962,8 @@ new Vue({
             } else if (cmd === 'ai') {
                 this.loadAiConfig();
                 this.aiSetVisible = true;
+            } else if (cmd === 'desktop') {
+                this.openDesktopInNewTab(t);
             }
         },
         /* ---------- AI 设置（厂商预设 + 模型列表实时获取） ---------- */
@@ -19136,6 +19219,13 @@ new Vue({
             }
         },
         confirmDangerousCommand: function (command, proceed, forcedRule) {
+            if (!this.dangerConfirmEnabled) {
+                if (this._dangerPromptOpen) {
+                    return false;
+                }
+                proceed();
+                return true;
+            }
             var rule = forcedRule || dangerousCommandRule(command);
             if (!rule) {
                 if (this._dangerPromptOpen) {
