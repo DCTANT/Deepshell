@@ -934,6 +934,7 @@
                 <template v-else-if="w.type === 'plugin'">
                     <div class="dsk-plugin-body">
                         <iframe class="dsk-plugin-frame" :src="w.pluginUrl"
+                                :ref="'plugin-frame-' + w.id"
                                 :title="w.pluginTitle || w.pluginName || '插件应用'"
                                 sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
                                 referrerpolicy="no-referrer"></iframe>

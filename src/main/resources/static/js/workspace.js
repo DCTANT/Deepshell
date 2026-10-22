@@ -3820,9 +3820,12 @@ new Vue({
         ],
         /* 已安装的桌面应用插件（由后端扫描数据目录） */
         desktopPlugins: [],
+        builtinPlugins: [],
         pluginMgrVisible: false,
         pluginMgrLoading: false,
+        pluginBuiltinLoading: false,
         pluginImporting: false,
+        pluginBuiltinInstalling: '',
         pluginMgrError: '',
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
@@ -5302,6 +5305,11 @@ new Vue({
                     plugin: p,
                     desc: p.description || ''
                 };
+            });
+        },
+        builtinAvailablePlugins: function () {
+            return (this.builtinPlugins || []).filter(function (p) {
+                return !p.installed;
             });
         },
         desktopStartAppMatches: function () {
@@ -14697,7 +14705,7 @@ new Vue({
         loadDesktopPlugins: function (showError) {
             var self = this;
             this.pluginMgrLoading = true;
-            http.get('/api/desktop/plugins', { silent: !showError }).then(function (list) {
+            return http.get('/api/desktop/plugins', { silent: !showError }).then(function (list) {
                 self.desktopPlugins = Array.isArray(list) ? list : [];
                 self.pluginMgrLoading = false;
                 self.pluginMgrError = '';
@@ -14708,6 +14716,41 @@ new Vue({
                 }
             });
         },
+        loadBuiltinPlugins: function (showError) {
+            var self = this;
+            this.pluginBuiltinLoading = true;
+            return http.get('/api/desktop/plugins/builtin', { silent: !showError }).then(function (list) {
+                self.builtinPlugins = Array.isArray(list) ? list : [];
+                self.pluginBuiltinLoading = false;
+            }).catch(function () {
+                self.pluginBuiltinLoading = false;
+            });
+        },
+        installBuiltinPlugin: function (p) {
+            if (!p || this.pluginBuiltinInstalling) {
+                return;
+            }
+            var self = this;
+            this.pluginBuiltinInstalling = p.key;
+            this.pluginMgrError = '';
+            http.post('/api/desktop/plugins/builtin/' + encodeURIComponent(p.key) + '/install')
+                .then(function (info) {
+                    ELEMENT.Message.success('已安装 ' + (info && info.name ? info.name : p.name));
+                    return self.loadDesktopPlugins(true).then(function () {
+                        return self.loadBuiltinPlugins(true);
+                    }).then(function () {
+                        if (info) {
+                            self.openDesktopPlugin(info);
+                        }
+                    });
+                })
+                .catch(function (err) {
+                    self.pluginMgrError = (err && err.message) ? err.message : '内置插件安装失败';
+                })
+                .then(function () {
+                    self.pluginBuiltinInstalling = '';
+                });
+        },
         openPluginManager: function () {
             this.desktop.startOpen = false;
             this.desktop.powerOpen = false;
@@ -14715,6 +14758,65 @@ new Vue({
             this.pluginMgrVisible = true;
             this.pluginMgrError = '';
             this.loadDesktopPlugins(true);
+            this.loadBuiltinPlugins(true);
+        },
+        /* 内置 Redis 插件的受限消息桥：沙箱 iframe 不接触 Cookie，只转发 Redis API 请求 */
+        onPluginBridgeMessage: function (ev) {
+            var msg = ev && ev.data;
+            if (!msg || msg.source !== 'deepshell-plugin' || msg.type !== 'redis.api') {
+                return;
+            }
+            var requestId = msg.requestId;
+            if (!requestId) {
+                return;
+            }
+            var sourceWin = null;
+            for (var i = 0; i < this.desktop.windows.length; i++) {
+                var w = this.desktop.windows[i];
+                if (w.type !== 'plugin' || w.pluginId !== 'com.deepshell.redis') {
+                    continue;
+                }
+                var ref = this.$refs['plugin-frame-' + w.id];
+                var frame = Array.isArray(ref) ? ref[0] : ref;
+                if (frame && frame.contentWindow === ev.source) {
+                    sourceWin = frame.contentWindow;
+                    break;
+                }
+            }
+            if (!sourceWin) {
+                return;
+            }
+            var reply = function (ok, data, error) {
+                try {
+                    sourceWin.postMessage({
+                        source: 'deepshell-host',
+                        type: 'redis.api.result',
+                        requestId: requestId,
+                        ok: !!ok,
+                        data: data,
+                        error: error || ''
+                    }, '*');
+                } catch (e) { /* 窗口已关闭 */ }
+            };
+            var method = String(msg.method || '').toUpperCase();
+            var path = String(msg.path || '');
+            if (['GET', 'POST', 'DELETE'].indexOf(method) < 0
+                    || !/^\/api\/desktop\/redis\/[A-Za-z0-9/_-]+$/.test(path)
+                    || path.indexOf('..') >= 0) {
+                reply(false, null, '不允许的插件请求');
+                return;
+            }
+            http.request({
+                method: method,
+                url: path,
+                data: msg.body == null ? undefined : msg.body,
+                silent: true,
+                timeout: 35000
+            }).then(function (data) {
+                reply(true, data);
+            }).catch(function (err) {
+                reply(false, null, (err && err.message) ? err.message : 'Redis 请求失败');
+            });
         },
         pickPluginZip: function () {
             var el = this.$refs.pluginZipInput;
@@ -14766,6 +14868,7 @@ new Vue({
             }).then(function () {
                 self.closePluginWindows(p.id);
                 self.loadDesktopPlugins(true);
+                self.loadBuiltinPlugins(true);
                 ELEMENT.Message.success('已卸载 ' + p.name);
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
@@ -19996,6 +20099,8 @@ new Vue({
         self.loadSnippets();
         self.loadAppInfo();
         self.loadDesktopPlugins(false);
+        self.loadBuiltinPlugins(false);
+        window.addEventListener('message', self.onPluginBridgeMessage);
         self.loadLocalDownloadStatus();
         self.loadAuthStatus();
         self.loadAiRuntimeConfig();

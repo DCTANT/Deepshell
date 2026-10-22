@@ -5,11 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.itdct.deepshell.common.DataDir;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.PostConstruct;
 import java.io.BufferedInputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -121,6 +123,45 @@ public class DesktopPluginService {
         if (zip.getSize() > MAX_TOTAL_BYTES) {
             throw new IllegalArgumentException("插件包不能超过 50MB");
         }
+        try (InputStream in = zip.getInputStream()) {
+            return installStream(in, zip.getSize(), false);
+        }
+    }
+
+    /** 安装随程序分发的内置插件（例如 Redis 管理器）。 */
+    public PluginInfo installBundled(String bundleId) throws Exception {
+        if (bundleId == null || !bundleId.matches("[A-Za-z0-9._-]{1,64}")) {
+            throw new IllegalArgumentException("内置插件 ID 不合法");
+        }
+        ClassPathResource resource = new ClassPathResource("desktop-plugins/" + bundleId + ".zip");
+        if (!resource.exists()) {
+            throw new IllegalArgumentException("内置插件包不存在");
+        }
+        try (InputStream in = resource.getInputStream()) {
+            return installStream(in, resource.contentLength(), true);
+        }
+    }
+
+    public List<BuiltinPluginInfo> listBuiltin() {
+        List<BuiltinPluginInfo> out = new ArrayList<>();
+        boolean installed = list().stream()
+                .anyMatch(p -> "com.deepshell.redis".equals(p.getId()));
+        out.add(new BuiltinPluginInfo(
+                "redis",
+                "com.deepshell.redis",
+                "Redis 管理器",
+                "1.0.0",
+                "面向 AI 桌面的 Redis 浏览与调试工具：列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
+                "DeepShell",
+                "/plugin-icons/redis.svg",
+                installed));
+        return out;
+    }
+
+    private PluginInfo installStream(InputStream zip, long size, boolean builtin) throws Exception {
+        if (size > MAX_TOTAL_BYTES) {
+            throw new IllegalArgumentException("插件包不能超过 50MB");
+        }
         if (root == null) {
             throw new IllegalStateException("插件目录尚未初始化");
         }
@@ -164,7 +205,8 @@ public class DesktopPluginService {
             info.updated = hadExisting;
             committed = true;
             audit.record("PLUGIN_INSTALL", id, "OK",
-                    info.getName() + " v" + info.getVersion() + (hadExisting ? "（更新）" : ""));
+                    info.getName() + " v" + info.getVersion()
+                            + (builtin ? "（内置）" : "") + (hadExisting ? "（更新）" : ""));
             return info;
         } catch (IllegalArgumentException e) {
             throw e;
@@ -214,12 +256,12 @@ public class DesktopPluginService {
         audit.record("PLUGIN_DELETE", id, "OK", name);
     }
 
-    private void extract(MultipartFile zip, Path staging) throws Exception {
+    private void extract(InputStream zip, Path staging) throws Exception {
         int files = 0;
         long total = 0;
         byte[] buf = new byte[64 * 1024];
         try (ZipInputStream zin = new ZipInputStream(
-                new BufferedInputStream(zip.getInputStream()), StandardCharsets.UTF_8)) {
+                new BufferedInputStream(zip), StandardCharsets.UTF_8)) {
             ZipEntry entry;
             while ((entry = zin.getNextEntry()) != null) {
                 String raw = entry.getName();
@@ -523,6 +565,30 @@ public class DesktopPluginService {
         public Integer width;
         public Integer height;
         public String title;
+    }
+
+    @Getter
+    public static class BuiltinPluginInfo {
+        private final String key;
+        private final String id;
+        private final String name;
+        private final String version;
+        private final String description;
+        private final String author;
+        private final String iconUrl;
+        private final boolean installed;
+
+        BuiltinPluginInfo(String key, String id, String name, String version, String description,
+                          String author, String iconUrl, boolean installed) {
+            this.key = key;
+            this.id = id;
+            this.name = name;
+            this.version = version;
+            this.description = description;
+            this.author = author;
+            this.iconUrl = iconUrl;
+            this.installed = installed;
+        }
     }
 
     @Getter

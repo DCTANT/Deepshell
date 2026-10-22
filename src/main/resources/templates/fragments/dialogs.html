@@ -1098,7 +1098,7 @@
                custom-class="plugin-dialog" append-to-body :close-on-click-modal="false">
         <div class="plugin-mgr-hint">
             <i class="el-icon-info"></i>
-            导入 ZIP 后，应用会出现在 AI 可视化桌面的「开始菜单 → 已安装应用」。插件在隔离沙箱 iframe 中运行，无法访问 DeepShell 页面内容与登录令牌。
+            导入 ZIP 或安装内置应用后，应用会出现在 AI 可视化桌面的「开始菜单 → 已安装应用」。插件在隔离沙箱 iframe 中运行，无法访问 DeepShell 页面内容与登录令牌。
         </div>
         <div class="plugin-mgr-actions">
             <el-button size="small" type="primary" icon="el-icon-upload2"
@@ -1107,6 +1107,32 @@
                    class="plugin-zip-input" style="display: none" @change="onPluginZipPick">
             <span class="dim">ZIP 根目录需包含 plugin.json、入口 HTML 与图标</span>
         </div>
+
+        <div class="plugin-builtin" v-if="builtinAvailablePlugins.length">
+            <div class="plugin-builtin-head">
+                <span>内置应用</span>
+                <em>由 DeepShell 提供 · 仅 AI 可视化桌面可用 · 支持安装与卸载</em>
+            </div>
+            <div class="plugin-builtin-card" v-for="p in builtinAvailablePlugins" :key="'builtin-' + p.id">
+                <span class="plugin-builtin-icon">
+                    <img v-if="p.iconUrl" :src="p.iconUrl" alt="">
+                    <i v-else class="el-icon-s-grid"></i>
+                </span>
+                <div class="plugin-builtin-main">
+                    <div class="plugin-builtin-name">
+                        {{ p.name }}
+                        <span class="plugin-builtin-ver">v{{ p.version }}</span>
+                        <span class="plugin-builtin-tag">内置</span>
+                    </div>
+                    <div class="plugin-builtin-desc" :title="p.description">{{ p.description }}</div>
+                    <div class="plugin-builtin-meta">{{ p.author }} · Redis 客户端 · 安装后从开始菜单打开</div>
+                </div>
+                <el-button size="mini" type="primary"
+                           :loading="pluginBuiltinInstalling === p.key"
+                           @click="installBuiltinPlugin(p)">安装</el-button>
+            </div>
+        </div>
+
         <div class="plugin-mgr-error" v-if="pluginMgrError">{{ pluginMgrError }}</div>
         <div class="plugin-mgr-list" v-loading="pluginMgrLoading">
             <div v-for="p in desktopPlugins" :key="'plgm' + p.id" class="plugin-mgr-item">
@@ -1127,7 +1153,7 @@
                 <el-button size="mini" type="text" class="danger-text" @click="deletePlugin(p)">卸载</el-button>
             </div>
             <div v-if="!pluginMgrLoading && !desktopPlugins.length" class="plugin-mgr-empty">
-                还没有安装插件。导入 ZIP 后即可在开始菜单找到它。
+                还没有安装插件。<template v-if="builtinAvailablePlugins.length">安装上方内置应用，</template>或导入 ZIP 后即可在开始菜单找到它。
             </div>
         </div>
         <div class="plugin-mgr-tip">

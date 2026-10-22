@@ -29,8 +29,19 @@ public class DesktopPluginController {
         return R.ok(service.install(file));
     }
 
+    @GetMapping("/builtin")
+    public R<List<DesktopPluginService.BuiltinPluginInfo>> builtin() {
+        return R.ok(service.listBuiltin());
+    }
+
+    @PostMapping("/builtin/{id}/install")
+    public R<DesktopPluginService.PluginInfo> installBuiltin(@PathVariable("id") String id)
+            throws Exception {
+        return R.ok(service.installBundled(id));
+    }
+
     @DeleteMapping("/{id}")
-    public R<Void> delete(@PathVariable String id) throws Exception {
+    public R<Void> delete(@PathVariable("id") String id) throws Exception {
         service.delete(id);
         return R.ok();
     }

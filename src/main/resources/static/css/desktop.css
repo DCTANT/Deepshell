@@ -2600,6 +2600,108 @@
     font-size: 11.5px;
 }
 
+.plugin-builtin {
+    margin: 4px 0 10px;
+    padding: 10px 12px 11px;
+    border: 1px solid #dbe7fb;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f6f9ff, #eef4ff);
+}
+
+.plugin-builtin-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.plugin-builtin-head span {
+    color: #2b3442;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.plugin-builtin-head em {
+    overflow: hidden;
+    color: #8a96a6;
+    font-size: 10.5px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plugin-builtin-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px;
+    border: 1px solid #e1eaf8;
+    border-radius: 7px;
+    background: #ffffff;
+}
+
+.plugin-builtin-icon {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 9px;
+    background: #f0f4fb;
+}
+
+.plugin-builtin-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.plugin-builtin-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.plugin-builtin-name {
+    color: #2b3442;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.plugin-builtin-ver {
+    margin-left: 5px;
+    color: #8a96a6;
+    font-size: 10.5px;
+    font-weight: 400;
+}
+
+.plugin-builtin-tag {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #e8f0ff;
+    color: #4c7ed6;
+    font-size: 9px;
+    font-weight: 500;
+}
+
+.plugin-builtin-desc {
+    margin-top: 2px;
+    overflow: hidden;
+    color: #6b7280;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plugin-builtin-meta {
+    margin-top: 2px;
+    color: #9aa7bd;
+    font-size: 10.5px;
+}
+
 .plugin-mgr-error {
     margin: 6px 0;
     color: var(--err);
