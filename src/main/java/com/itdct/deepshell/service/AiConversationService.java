@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
 public class AiConversationService {
 
     public static final int MAX_CONVS_PER_CONN = 15;
-    /** 单轮 30 步约产生 60 条消息，保留多轮长任务的完整现场 */
+    /** 单轮 50 步约产生 100 条消息，保留多轮长任务的完整现场 */
     public static final int MAX_MSGS = 160;
     public static final int MAX_CHARS = 4000;
     /** 命令输出与思考过程单独放宽，避免长输出在刷新后只剩开头 */

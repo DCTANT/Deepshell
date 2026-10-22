@@ -680,10 +680,10 @@ function consumeFirstConnect() {
 
 /* ---------- AI 终端对话（服务端 SQLite 持久化；这里只保留浏览器旧数据的一次性迁移） ---------- */
 var AI_CHAT_MAX = 160;              // 每个对话保留的消息数上限（与后端一致，迁移时裁剪）
-var AI_MAX_STEPS_DEFAULT = 30;      // 单轮默认最大步数（可在 AI 设置中调整，1-100）
+var AI_MAX_STEPS_DEFAULT = 50;      // 单轮默认最大步数（可在 AI 设置中调整，1-100）
 var AI_MAX_STEPS_LIMIT = 100;
 var AI_HISTORY_MAX = 50;            // 输入框 ↑↓ 历史条数
-var AI_CONTEXT_WINDOW_DEFAULT = 128000; // 上下文窗口默认值（AI 设置中按模型调整）
+var AI_CONTEXT_WINDOW_DEFAULT = 400000; // 上下文窗口默认值（AI 设置中按模型调整）
 var AI_CONTEXT_WINDOW_MIN = 4096;
 var AI_CONTEXT_WINDOW_MAX = 2000000;
 var AI_CONTEXT_RETAIN_RATIO = 0.16; // 压缩时保留最近约 16% 的上下文窗口（与 DSH 默认一致）
@@ -1503,9 +1503,13 @@ Vue.component('ai-chat-panel', {
             return '上下文估算 ' + this.contextUsageText + ' / ' + this.contextWindowText
                 + '（' + this.contextPercent + '%），点击查看用量与压缩';
         },
-        queuedText: function () {
+        queueItems: function () {
             var c = this.activeConv;
-            return (c && c._queued) || '';
+            return (c && c._queue) || [];
+        },
+        canCompact: function () {
+            return !!(this.activeConv && !this.activeBusy && !this.compacting
+                && this.contextPercent > 50);
         },
         slashItems: function () {
             if (!this.slashOpen) {
@@ -1617,6 +1621,11 @@ Vue.component('ai-chat-panel', {
                 }
             }
             var plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+                e.preventDefault();
+                this.$root.aiChatSteer(null, this.activeConv);
+                return;
+            }
             if (plain && e.key === 'ArrowUp' && e.target && e.target.selectionStart === 0
                     && this.$root.aiHistoryPrev(this.tab)) {
                 e.preventDefault();
@@ -1630,7 +1639,7 @@ Vue.component('ai-chat-panel', {
             }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                this.$root.aiChatSend();
+                this.$root.aiChatSend(this.tab);
             }
         },
         chooseSlash: function (item) {
@@ -1666,10 +1675,10 @@ Vue.component('ai-chat-panel', {
             return this.$root.aiUsageTitle(u);
         },
         send: function () {
-            this.$root.aiChatSend();
+            this.$root.aiChatSend(this.tab);
         },
         stop: function () {
-            this.$root.aiChatStop();
+            this.$root.aiChatStop(this.tab);
         },
         confirm: function (m, allow) {
             this.$root.aiChatConfirm(m, allow);
@@ -1708,23 +1717,27 @@ Vue.component('ai-chat-panel', {
         copyOutput: function (m) {
             this.$root.copyText(m.output || '');
         },
-        cancelQueue: function () {
-            var c = this.activeConv;
-            if (c) {
-                this.$set(c, '_queued', '');
-            }
+        steer: function () {
+            this.$root.aiChatSteer(null, this.activeConv);
+        },
+        removeQueue: function (q) {
+            this.$root.aiQueueRemove(this.activeConv, q);
+        },
+        restoreQueue: function (q) {
+            this.$root.aiQueueRestore(this.activeConv, q);
+            this.resizeInput();
+        },
+        sendQueued: function (q) {
+            this.$root.aiQueueSend(this.activeConv, q);
+        },
+        steerQueued: function (q) {
+            this.$root.aiQueueSteer(this.activeConv, q);
+        },
+        clearQueue: function () {
+            this.$root.aiQueueClear(this.activeConv);
         },
         useExample: function (text) {
             this.tab.chatInput = text;
-            this.resizeInput();
-        },
-        restoreQueue: function () {
-            var c = this.activeConv;
-            if (!c || this.activeBusy || !c._queued) {
-                return;
-            }
-            this.tab.chatInput = c._queued;
-            this.$set(c, '_queued', '');
             this.resizeInput();
         },
         /* 程序化改写输入框内容后同步高度并聚焦（历史 / 排队恢复） */
@@ -6553,7 +6566,7 @@ new Vue({
                 return;
             }
             if (id === 'stop') {
-                this.aiChatStop();
+                this.aiChatStop(t);
                 return;
             }
             if (id === 'help') {
@@ -6615,8 +6628,8 @@ new Vue({
             if (conv._histIdx == null) {
                 this.$set(conv, '_histIdx', -1);
             }
-            if (conv._queued == null) {
-                this.$set(conv, '_queued', '');
+            if (!conv._queue) {
+                this.$set(conv, '_queue', []);
             }
             return conv;
         },
@@ -6720,6 +6733,17 @@ new Vue({
         aiEstimateContextTokens: function (conv) {
             return this.aiEstimateContextTokensForMsgs((conv && conv.msgs) || []);
         },
+        /* 当前上下文占用：取最近真实 Prompt 用量与对话估算的较大值，供压缩阈值与提示复用 */
+        aiContextStats: function (conv) {
+            var estimate = this.aiEstimateContextTokens(conv);
+            var u = this.aiLastUsage(conv);
+            var exact = u && u.promptTokens != null ? Number(u.promptTokens) : 0;
+            var tokens = Math.max(estimate, exact);
+            var windowSize = this.aiContextWindow || AI_CONTEXT_WINDOW_DEFAULT;
+            var percent = windowSize > 0
+                ? Math.max(0, Math.min(100, Math.round(tokens * 100 / windowSize))) : 0;
+            return { tokens: tokens, window: windowSize, percent: percent };
+        },
         /* 选择较早消息用于压缩：保留最近约 35%（且不超过窗口 16%），优先在用户消息边界切分 */
         aiBuildCompactPlan: function (conv) {
             var msgs = (conv && conv.msgs) || [];
@@ -6811,6 +6835,11 @@ new Vue({
             }
             if (conv._compacting) {
                 ELEMENT.Message.info('正在压缩上下文，请稍候');
+                return;
+            }
+            var stats = this.aiContextStats(conv);
+            if (stats.percent <= 50) {
+                ELEMENT.Message.info('上下文使用未超过 50%，暂不需要压缩');
                 return;
             }
             var run = this.aiConvRun(conv);
@@ -7063,10 +7092,8 @@ new Vue({
             t.chatConvId = c.id;
             t.chatMsgs = c.msgs || [];
             t.chatInput = c.input || '';
-            // 之前排队但未发出的消息，回到该对话时变成输入框草稿
-            if (c._queued && !(c._run && c._run.busy)) {
-                t.chatInput = c._queued;
-                this.$set(c, '_queued', '');
+            if (c._queue && c._queue.length && !(c._run && c._run.busy)) {
+                ELEMENT.Message.info('该对话有 ' + c._queue.length + ' 条排队消息，可在输入框上方发送');
             }
             // 服务端记住当前对话（纯切换不刷新时间，失败不影响使用）
             http.put('/api/ai/convs/' + c.id, { active: true }).catch(function () { /* ignore */ });
@@ -7110,8 +7137,8 @@ new Vue({
                 })
                 .catch(function () { /* 取消或失败（已提示） */ });
         },
-        aiChatSend: function () {
-            var t = this.activeTab;
+        aiChatSend: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -7140,23 +7167,36 @@ new Vue({
                 if (!text) {
                     return;
                 }
-                this.$set(conv, '_queued', text);
+                this.aiEnqueue(conv, text);
                 conv.input = '';
                 t.chatInput = '';
-                ELEMENT.Message.success('已排队，本轮结束后自动发送');
+                ELEMENT.Message.success('已排队（' + conv._queue.length + ' 条），本轮结束后自动发送');
                 return;
             }
             if (!text) {
                 return;
             }
-            conv.msgs.push({ role: 'user', text: text });
+            t.chatInput = '';
+            this.aiChatStartRun(t, conv, text, false);
+        },
+        /* 真正开始一轮对话：追加用户消息、重置运行态并进入 AI 循环 */
+        aiChatStartRun: function (t, conv, text, steer) {
+            if (!t || !conv || !text) {
+                return;
+            }
+            this.aiEnsureConvState(conv);
+            var run = conv._run;
+            var userMsg = { role: 'user', text: text };
+            if (steer) {
+                userMsg.steer = true;
+            }
+            conv.msgs.push(userMsg);
             if (!conv.title || conv.title === '新对话') {
                 conv.title = text.slice(0, 20);
             }
             this.aiPushHistory(conv, text);
             conv.updatedAt = Date.now();
             conv.input = '';
-            t.chatInput = '';
             run.stop = false;
             run.step = 0;
             run.phase = '';
@@ -7171,8 +7211,156 @@ new Vue({
             this.scrollAiChat(true);
             this.aiChatLoop(t, conv, run, run.seq);
         },
-        aiChatStop: function () {
+        /* 插话：中断当前生成/命令，立即以新要求开始下一轮；不进入排队 */
+        aiChatSteer: function (text, conv) {
+            var t;
+            if (conv) {
+                t = this.aiTabOfConv(conv);
+            } else {
+                t = this.activeTab;
+                conv = this.aiActiveConv(t);
+            }
+            if (!t || !conv) {
+                return;
+            }
+            this.aiEnsureConvState(conv);
+            var fromInput = text == null;
+            var value = (fromInput ? (t.chatInput || '') : text).trim();
+            if (!value) {
+                ELEMENT.Message.info('请输入要插话的内容');
+                return;
+            }
+            if (conv._compacting) {
+                ELEMENT.Message.info('正在压缩上下文，请稍后再插话');
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var run = conv._run;
+            if (!run.busy) {
+                if (fromInput) {
+                    t.chatInput = value;
+                    this.aiChatSend(t);
+                } else {
+                    if ((t.chatInput || '').trim() === value) {
+                        t.chatInput = '';
+                    }
+                    this.aiChatStartRun(t, conv, value, false);
+                }
+                return;
+            }
+            // 先让旧一轮的异步回调全部失效，再通知服务端取消模型/命令
+            run.stop = true;
+            run.seq = (run.seq || 0) + 1;
+            if (run.requestId) {
+                var runId = run.requestId;
+                run.requestId = '';
+                http.post('/api/ai/agent/cancel', { runId: runId }).catch(function () { /* ignore */ });
+            }
+            var abortStream = run.abortController;
+            run.abortController = null;
+            if (abortStream) {
+                try { abortStream.abort(); } catch (e) { /* ignore */ }
+            }
+            var abortExec = run.execController;
+            run.execController = null;
+            if (abortExec) {
+                try { abortExec.abort(); } catch (e) { /* ignore */ }
+            }
+            run.busy = false;
+            run.stop = false;
+            run.phase = '';
+            run.streamText = '';
+            run.reasonText = '';
+            (conv.msgs || []).forEach(function (m) {
+                if (m.role === 'ai' && m.cmd && (m.state === 'confirm' || m.state === 'running')) {
+                    m.state = 'skipped';
+                    m.error = '已插话，本轮已中断';
+                }
+            });
+            if (fromInput) {
+                t.chatInput = '';
+            } else if ((t.chatInput || '').trim() === value) {
+                t.chatInput = '';
+            }
+            this.aiChatStartRun(t, conv, value, true);
+            ELEMENT.Message.success('已插话，上一轮已中断');
+        },
+        aiTabOfConv: function (conv) {
             var t = this.activeTab;
+            if (!conv) {
+                return t;
+            }
+            if (t && (t.chatConvs || []).some(function (x) { return x.id === conv.id; })) {
+                return t;
+            }
+            return this.tabs.find(function (tab) {
+                return (tab.chatConvs || []).some(function (x) { return x.id === conv.id; });
+            }) || t;
+        },
+        aiEnqueue: function (conv, text) {
+            if (!conv || !text) {
+                return null;
+            }
+            this.aiEnsureConvState(conv);
+            var item = {
+                id: 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+                text: text
+            };
+            conv._queue.push(item);
+            return item;
+        },
+        aiQueueRemove: function (conv, item) {
+            if (!conv || !conv._queue || !item) {
+                return;
+            }
+            var i = conv._queue.indexOf(item);
+            if (i >= 0) {
+                conv._queue.splice(i, 1);
+            }
+        },
+        aiQueueRestore: function (conv, item) {
+            if (!conv || !item) {
+                return;
+            }
+            var t = this.aiTabOfConv(conv);
+            this.aiQueueRemove(conv, item);
+            if (t) {
+                t.chatInput = item.text;
+            }
+            ELEMENT.Message.info('已放回输入框，可编辑后重新发送');
+        },
+        aiQueueSend: function (conv, item) {
+            if (!conv || !item) {
+                return;
+            }
+            if (conv._run && conv._run.busy) {
+                this.aiQueueSteer(conv, item);
+                return;
+            }
+            var t = this.aiTabOfConv(conv);
+            this.aiQueueRemove(conv, item);
+            if (t) {
+                t.chatInput = item.text;
+                this.aiChatSend(t);
+            }
+        },
+        aiQueueSteer: function (conv, item) {
+            if (!conv || !item) {
+                return;
+            }
+            this.aiQueueRemove(conv, item);
+            this.aiChatSteer(item.text, conv);
+        },
+        aiQueueClear: function (conv) {
+            if (conv) {
+                this.$set(conv, '_queue', []);
+            }
+        },
+        aiChatStop: function (tab) {
+            var t = tab || this.activeTab;
             if (!t) {
                 return;
             }
@@ -7634,17 +7822,21 @@ new Vue({
             if (t && conv && t.chatConvId === conv.id) {
                 this.scrollAiChat();
             }
-            // 本轮正常结束后自动发送排队消息；停止 / 失败 / 达上限时保留，交给用户决定
-            if (conv && !note && conv._queued && t && t.chatConvId === conv.id
+            // 本轮正常结束后自动发送队首消息；输入框里新打的草稿会追加到队尾，不覆盖
+            if (conv && !note && conv._queue && conv._queue.length && t && t.chatConvId === conv.id
                     && t.sessionId && run && !run.busy) {
-                var queued = conv._queued;
-                this.$set(conv, '_queued', '');
-                t.chatInput = queued;
+                var draft = (t.chatInput || '').trim();
+                if (draft) {
+                    this.aiEnqueue(conv, draft);
+                    t.chatInput = '';
+                }
+                var queued = conv._queue.shift();
+                t.chatInput = queued.text;
                 var self = this;
                 this.$nextTick(function () {
-                    if (t.chatConvId === conv.id && t.chatInput === queued
+                    if (t.chatConvId === conv.id && t.chatInput === queued.text
                             && conv._run && !conv._run.busy) {
-                        self.aiChatSend();
+                        self.aiChatSend(t);
                     }
                 });
             }

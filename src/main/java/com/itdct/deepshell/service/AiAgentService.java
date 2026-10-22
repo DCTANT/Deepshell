@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -25,7 +26,7 @@ public class AiAgentService {
     public static final int EXEC_TIMEOUT_MS = 120_000;
     public static final int MAX_OUTPUT_BYTES = 256 * 1024;
 
-    /** 一次请求最多携带的历史消息数（30 步约产生 60 条，留足余量） */
+    /** 一次请求最多携带的历史消息数（50 步约产生 100 条，留足余量） */
     private static final int MAX_HISTORY = 160;
     private static final int MAX_CONTENT_CHARS = 12000;
     /** 单次请求的上下文字符预算：超出的更早消息会被舍弃，但保留当前任务原始描述 */
@@ -254,7 +255,9 @@ public class AiAgentService {
                 .append("输出要求（必须严格遵守，不要输出任何多余内容）：\n")
                 .append("- 需要执行命令时，只输出一个 JSON 对象：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n")
                 .append("- 任务完成、需要说明结果或需要向用户确认/提问时，输出：{\"reply\":\"展示给用户的内容\"}\n")
-                .append("- 不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n\n")
+                .append("- 不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n")
+                .append("- 严禁输出 DSML、<|| DSLM ||>、tool_calls、function_call 等任何工具调用协议或 XML 包装；"
+                        + "即使你的训练数据习惯使用这些格式，也必须改写成上面的 JSON。\n\n")
                 .append("工作方式：\n")
                 .append("- 每次只提交一条命令，等执行结果返回后再决定下一步；不要臆测命令输出。\n")
                 .append("- 先观察再行动：修改、删除或重启前，先用只读命令确认当前状态，优先使用保守写法。\n")
@@ -288,6 +291,9 @@ public class AiAgentService {
      */
     static String visibleReplyText(String content) {
         if (content == null || content.isEmpty()) {
+            return "";
+        }
+        if (containsDsml(content)) {
             return "";
         }
         String reply = partialJsonString(content, "reply");
@@ -394,7 +400,7 @@ public class AiAgentService {
         return t;
     }
 
-    /** 解析模型输出：优先 JSON 的 cmd / reply；解析失败时整段作为回复展示 */
+    /** 解析模型输出：优先 JSON 的 cmd / reply；兼容 DeepSeek Harness 风格的 DSML 工具调用 */
     private Parsed parse(String content) {
         Parsed p = new Parsed();
         String raw = content == null ? "" : content.trim();
@@ -427,11 +433,68 @@ public class AiAgentService {
                     return p;
                 }
             } catch (Exception ignore) {
-                // 非 JSON，走兜底
+                // 非 JSON，继续尝试 DSML
             }
+        }
+        String dsmlCmd = dsmlParameter(t, "cmd");
+        if (dsmlCmd != null && !dsmlCmd.trim().isEmpty()) {
+            p.command = dsmlCmd.trim();
+            String dsmlNote = dsmlParameter(t, "note");
+            p.note = dsmlNote == null ? "" : dsmlNote.trim();
+            return p;
+        }
+        if (containsDsml(t)) {
+            p.reply = "模型返回了未识别的 DSML 工具调用格式，本轮已停止。请点击重试，或到 AI 设置中切换模型后再试。";
+            return p;
         }
         p.reply = raw;
         return p;
+    }
+
+    /* ---------- DSML 工具调用格式兼容 ---------- */
+
+    private static final Pattern DSML_PARAMETER = Pattern.compile(
+            "<\\|{1,}\\s*DSLM\\s*\\|{1,}\\s*parameter\\b([^>]*)>(.*?)"
+                    + "</\\|{1,}\\s*DSLM\\s*\\|{1,}\\s*parameter>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    private static final Pattern DSML_NAME_CMD = Pattern.compile(
+            "name\\s*=\\s*[\"']cmd[\"']", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern DSML_NAME_NOTE = Pattern.compile(
+            "name\\s*=\\s*[\"']note[\"']", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern DSML_MARKER = Pattern.compile(
+            "<\\s*\\|{1,2}\\s*DSLM\\s*\\|{1,2}", Pattern.CASE_INSENSITIVE);
+
+    static boolean containsDsml(String content) {
+        return content != null && !content.isEmpty() && DSML_MARKER.matcher(content).find();
+    }
+
+    /** 从 DSML 参数块中提取 cmd / note；未闭合或不是 DSML 时返回 null */
+    static String dsmlParameter(String content, String name) {
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        Pattern namePattern = "cmd".equals(name) ? DSML_NAME_CMD : DSML_NAME_NOTE;
+        Matcher matcher = DSML_PARAMETER.matcher(content);
+        while (matcher.find()) {
+            if (!namePattern.matcher(matcher.group(1)).find()) {
+                continue;
+            }
+            String value = matcher.group(2);
+            return unescapeXml(value == null ? "" : value.trim());
+        }
+        return null;
+    }
+
+    private static String unescapeXml(String s) {
+        return s.replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&#39;", "'")
+                .replace("&amp;", "&");
     }
 
     /* ---------- 高危命令识别（自动模式下的二次确认） ---------- */

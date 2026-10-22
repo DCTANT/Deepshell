@@ -669,6 +669,10 @@
                                 <i class="el-icon-loading"></i> {{ activeRun.phase }}
                             </span>
                             <span class="spacer"></span>
+                            <el-button size="mini" icon="el-icon-s-fold"
+                                       :title="contextPercent <= 50 ? '上下文使用未超过 50%，暂不需要压缩' : '压缩较早上下文'"
+                                       :disabled="!canCompact"
+                                       @click="compact"></el-button>
                             <el-button size="mini" icon="el-icon-top"
                                        :class="{ pinned: activeConv && activeConv.pinned }"
                                        :title="activeConv && activeConv.pinned ? '取消置顶当前对话' : '置顶当前对话'"
@@ -747,7 +751,9 @@
                                         </div>
                                         <div v-if="m.text && m.role === 'ai'" class="aichat-bubble aichat-md"
                                              v-html="renderMd(m.text)"></div>
-                                        <div v-else-if="m.text && m.role !== 'compact'" class="aichat-bubble">{{ m.role === 'note' ? noteText(m) : m.text }}</div>
+                                        <div v-else-if="m.text && m.role !== 'compact'" class="aichat-bubble">
+                                            <span v-if="m.steer" class="aichat-steer-tag">插话</span>{{ m.role === 'note' ? noteText(m) : m.text }}
+                                        </div>
                                         <div v-if="m.role === 'ai' && m.text" class="aichat-actions">
                                             <span @click="copy(m.text)" title="复制这条回复">
                                                 <i class="el-icon-document-copy"></i> 复制
@@ -836,11 +842,25 @@
                                     <i class="el-icon-bottom"></i> 回到底部
                                 </div>
                                 <div class="aichat-composer">
-                                    <div v-if="queuedText" class="aichat-queue"
-                                         :title="activeBusy ? '本轮结束后自动发送' : '本轮已结束，点击放入输入框'">
-                                        <i class="el-icon-time"></i>
-                                        <span class="aichat-queue-text" @click="restoreQueue">{{ activeBusy ? '已排队：' : '未发送：' }}{{ queuedText }}</span>
-                                        <i class="el-icon-close aichat-queue-x" title="取消" @click="cancelQueue"></i>
+                                    <div v-if="queueItems.length" class="aichat-queue-list">
+                                        <div class="aichat-queue-head">
+                                            <span>
+                                                <i class="el-icon-time"></i>
+                                                {{ queueItems.length }} 条排队消息 · {{ activeBusy ? '本轮结束后自动发送' : '等待发送' }}
+                                            </span>
+                                            <span class="aichat-queue-clear" @click="clearQueue">清空</span>
+                                        </div>
+                                        <div v-for="q in queueItems" :key="q.id" class="aichat-queue-item">
+                                            <span class="aichat-queue-text" :title="q.text"
+                                                  @click="restoreQueue(q)">{{ q.text }}</span>
+                                            <button type="button" class="aichat-queue-act" v-if="activeBusy"
+                                                    title="中断当前任务并立即插话发送"
+                                                    @click="steerQueued(q)">插话</button>
+                                            <button type="button" class="aichat-queue-act" v-else
+                                                    title="发送这条排队消息" @click="sendQueued(q)">发送</button>
+                                            <i class="el-icon-close aichat-queue-x" title="删除这条排队消息"
+                                               @click="removeQueue(q)"></i>
+                                        </div>
                                     </div>
                                     <div v-if="slashItems.length" class="aichat-slash">
                                         <div v-for="(c, i) in slashItems" :key="c.id"
@@ -855,12 +875,16 @@
                                         <el-input ref="chatInput" type="textarea" size="mini" v-model="tab.chatInput"
                                                   :autosize="{ minRows: 2, maxRows: 6 }"
                                                   :placeholder="activeBusy
-                                                      ? 'AI 正在执行，Enter 可将新要求排入队列（Shift+Enter 换行）'
+                                                      ? 'AI 正在执行 · Enter 排队 · Ctrl+Enter 插话 · Shift+Enter 换行'
                                                       : '描述你要做的事，例如：看看哪个目录占用空间最大（Enter 发送 ｜ Shift+Enter 换行 ｜ / 命令）'"
                                                   @keydown.native="keydown" @input="onInput"></el-input>
                                         <el-button v-if="activeBusy && (tab.chatInput || '').trim()"
                                                    size="mini" class="aichat-queue-btn"
                                                    title="在本轮结束后自动发送" @click="send">排队</el-button>
+                                        <el-button v-if="activeBusy && (tab.chatInput || '').trim()"
+                                                   size="mini" class="aichat-queue-btn aichat-steer-btn"
+                                                   title="中断当前生成/命令并立即发送新要求（Ctrl+Enter）"
+                                                   @click="steer">插话</el-button>
                                         <el-button v-if="!activeBusy" size="mini" type="primary"
                                                    class="aichat-send" @click="send">发送</el-button>
                                         <el-button v-else size="mini" type="danger" class="aichat-send"
@@ -924,9 +948,11 @@
                                                     <div class="aichat-ctx-actions">
                                                         <el-button size="mini" type="primary" icon="el-icon-s-fold"
                                                                    :loading="compacting"
-                                                                   :disabled="activeBusy || !activeConv"
+                                                                   :disabled="!canCompact"
                                                                    @click="compact">压缩上下文</el-button>
-                                                        <span class="aichat-ctx-hint">保留最近消息，较早内容生成摘要</span>
+                                                        <span class="aichat-ctx-hint">
+                                                            {{ contextPercent > 50 ? '保留最近消息，较早内容生成摘要' : '上下文超过 50% 后可压缩' }}
+                                                        </span>
                                                     </div>
                                                 </div>
                                                 <span slot="reference" class="aichat-foot-ctx" :class="contextLevel"

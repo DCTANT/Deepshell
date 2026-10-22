@@ -19,7 +19,7 @@
         activeMatchBackground: 'rgba(255, 176, 46, .55)',
         activeMatchColorOverviewRuler: '#ffb02e'
     };
-    var MAX_AI_STEPS_FALLBACK = 30;
+    var MAX_AI_STEPS_FALLBACK = 50;
     var MAX_PREVIEW_BYTES = 512 * 1024;
 
     var APPS = [
@@ -720,6 +720,7 @@
                     model: '',
                     apiKey: '',
                     maxSteps: MAX_AI_STEPS_FALLBACK,
+                    contextWindow: 400000,
                     hasKey: false,
                     backTo: ''
                 },
@@ -3266,6 +3267,7 @@
                     self.aiConfig.baseUrl = cfg.baseUrl || '';
                     self.aiConfig.model = cfg.model || '';
                     self.aiConfig.maxSteps = cfg.maxSteps || MAX_AI_STEPS_FALLBACK;
+                    self.aiConfig.contextWindow = cfg.contextWindow || 400000;
                     self.aiConfig.hasKey = !!cfg.hasKey;
                     self.aiConfig.loaded = true;
                     self.aiConfig.loading = false;
@@ -3300,7 +3302,8 @@
                     baseUrl: c.baseUrl,
                     apiKey: c.apiKey || '',
                     model: c.model,
-                    maxSteps: parseInt(c.maxSteps, 10) || MAX_AI_STEPS_FALLBACK
+                    maxSteps: parseInt(c.maxSteps, 10) || MAX_AI_STEPS_FALLBACK,
+                    contextWindow: parseInt(c.contextWindow, 10) || 400000
                 }, { silent: true }).then(function (saved) {
                     c.saving = false;
                     if (saved) {
