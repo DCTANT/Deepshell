@@ -195,7 +195,7 @@ public interface DesktopPluginModule {
 ```
 
 - 前端通过宿主消息桥调用当前插件自己的 `/api/desktop/plugins/runtime/{id}/invoke`，不能调用其他插件
-- 含后端 JAR 的插件安装 / 更新后会显示「待重启」，重启 DeepShell 后加载新模块；卸载后已加载的旧模块也需要重启才完全停止。重启前旧模块的插件窗口会被关闭，避免前后端版本错位
+- 含后端 JAR 的插件安装 / 更新后会显示「待重启」，重启 DeepShell 后加载新模块；卸载时会立即释放已加载模块并关闭插件窗口，再次安装后仍需重启加载
 - 未签名的后端插件同样可以安装（用户自行承担来源风险），但会显示「未验证」；后端 JAR 拥有 DeepShell 服务端权限，请只安装可信插件
 - 官方 Redis 管理器已经使用该机制：RESP2 客户端编译在插件的 `backend/redis-backend.jar` 中，主程序不再包含 Redis 专用 Controller / Service
 

@@ -14933,8 +14933,8 @@ new Vue({
                 if (p.hasBackend) {
                     ELEMENT.Message({
                         type: 'success',
-                        message: '已卸载 ' + p.name + '，重启 DeepShell 后后端模块停止运行',
-                        duration: 7000,
+                        message: '已卸载 ' + p.name + '，后端模块已停止运行',
+                        duration: 5000,
                         showClose: true
                     });
                 } else {
