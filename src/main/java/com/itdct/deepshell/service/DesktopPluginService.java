@@ -170,7 +170,7 @@ public class DesktopPluginService {
                 break;
             }
         }
-        String bundledVersion = "2.0.0";
+        String bundledVersion = "2.1.0";
         boolean officialInstalled = installed != null && installed.isVerified();
         String installedVersion = installed == null ? "" : installed.getVersion();
         boolean updateAvailable = officialInstalled && versionGreater(bundledVersion, installedVersion);
@@ -179,7 +179,7 @@ public class DesktopPluginService {
                 "com.deepshell.redis",
                 "Redis 管理器",
                 bundledVersion,
-                "面向 AI 桌面的 Redis 浏览与调试工具：列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
+                "面向 AI 桌面的 Redis 浏览与调试工具：保存连接（密码加密）、列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
                 "DeepShell",
                 "/plugin-icons/redis.svg",
                 officialInstalled,

@@ -49,6 +49,8 @@
 
     var params = new URLSearchParams(window.location.search || '');
     var sessionId = params.get('sessionId') || '';
+    var localMode = params.get('local') === '1';
+    var apiBase = localMode ? '/api/local/fs' : '/api/sftp';
     var sortBy = params.get('sortBy') || 'name';
     var sortDir = params.get('sortDir') === 'desc' ? 'desc' : 'asc';
     var showHidden = params.get('hidden') !== '0';
@@ -79,11 +81,11 @@
                 return this.path + ':' + this.stamp;
             },
             videoUrl: function () {
-                if (!sessionId || !this.path) {
+                if ((!localMode && !sessionId) || !this.path) {
                     return '';
                 }
-                return '/api/sftp/video?sessionId=' + encodeURIComponent(sessionId)
-                    + '&path=' + encodeURIComponent(this.path)
+                return apiBase + '/video?path=' + encodeURIComponent(this.path)
+                    + (localMode ? '' : '&sessionId=' + encodeURIComponent(sessionId))
                     + '&v=' + this.stamp;
             },
             durationText: function () {
@@ -105,9 +107,9 @@
         mounted: function () {
             document.title = (this.name || '视频预览') + ' · DeepShell';
             window.addEventListener('keydown', this.onKeydown);
-            if (!sessionId || !this.path) {
+            if ((!localMode && !sessionId) || !this.path) {
                 this.loading = false;
-                this.error = '缺少会话或文件参数，请从 AI 可视化桌面重新打开视频';
+                this.error = '缺少会话或文件参数，请从可视化桌面重新打开视频';
                 return;
             }
             this.loadSiblings();
@@ -118,8 +120,8 @@
         methods: {
             loadSiblings: function () {
                 var self = this;
-                fetch('/api/sftp/list?sessionId=' + encodeURIComponent(sessionId)
-                        + '&path=' + encodeURIComponent(parentPath(this.path)),
+                fetch(apiBase + '/list?path=' + encodeURIComponent(parentPath(this.path))
+                        + (localMode ? '' : '&sessionId=' + encodeURIComponent(sessionId)),
                     { credentials: 'same-origin' })
                     .then(function (resp) {
                         if (!resp.ok) {
@@ -263,11 +265,11 @@
                 v.currentTime = Math.max(0, Math.min(max, (v.currentTime || 0) + delta));
             },
             download: function () {
-                if (!sessionId || !this.path) {
+                if ((!localMode && !sessionId) || !this.path) {
                     return;
                 }
-                var url = '/api/sftp/download?sessionId=' + encodeURIComponent(sessionId)
-                    + '&path=' + encodeURIComponent(this.path);
+                var url = apiBase + '/download?path=' + encodeURIComponent(this.path)
+                    + (localMode ? '' : '&sessionId=' + encodeURIComponent(sessionId));
                 var a = document.createElement('a');
                 a.href = url;
                 document.body.appendChild(a);

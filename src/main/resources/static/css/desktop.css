@@ -1909,6 +1909,22 @@
     white-space: nowrap;
 }
 
+.dsk-tray-local {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid rgba(90, 162, 255, 0.32);
+    border-radius: 999px;
+    background: rgba(90, 162, 255, 0.10);
+    color: #8ab8f5;
+    font-size: 11px;
+}
+
+.dsk-tray-local > i {
+    font-size: 12px;
+}
+
 .dsk-tray-stat {
     display: flex;
     align-items: center;
@@ -2939,6 +2955,26 @@
 }
 
 .dsk-start-tip > i {
+    flex: 0 0 auto;
+    margin-top: 2px;
+    color: #6ea8ff;
+}
+
+.dsk-start-local-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 13px 4px 0;
+    padding: 8px 9px;
+    border: 1px dashed rgba(90, 162, 255, 0.45);
+    border-radius: 6px;
+    color: var(--dsk-panel-fg-dim, #8b95a4);
+    background: rgba(90, 162, 255, 0.07);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.dsk-start-local-note > i {
     flex: 0 0 auto;
     margin-top: 2px;
     color: #6ea8ff;

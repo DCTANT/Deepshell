@@ -121,10 +121,16 @@
                 </div>
                 <div v-if="!tabs.length" class="ws-empty">
                     <div class="empty-logo">Deep<b>Shell</b></div>
-                    <p>点击下方按钮，选择一个已保存的连接开始</p>
-                    <el-button type="primary" icon="el-icon-monitor" @click="openConnectDialog">
-                        打开连接
-                    </el-button>
+                    <p>选择一个已保存的连接开始，或直接进入本地桌面</p>
+                    <div class="ws-empty-actions">
+                        <el-button type="primary" icon="el-icon-monitor" @click="openConnectDialog">
+                            打开连接
+                        </el-button>
+                        <el-button icon="el-icon-files" @click="enterLocalDesktop">
+                            直接进入桌面
+                        </el-button>
+                    </div>
+                    <p class="ws-empty-hint">没有服务器也可以使用本地桌面目录、桌面插件与帮助手册</p>
                 </div>
             </div>
 

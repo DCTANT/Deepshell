@@ -238,6 +238,9 @@
                             <el-button size="mini" icon="el-icon-folder-add"
                                        @click="newFolderQuick(null)">新建文件夹</el-button>
                             <span class="spacer"></span>
+                            <el-button v-if="!desktopIsLocal" size="mini" icon="el-icon-monitor"
+                                       title="不连接服务器，打开 DeepShell 本机桌面"
+                                       @click="enterLocalDesktop">本地桌面</el-button>
                             <el-button size="mini" type="primary" icon="el-icon-plus"
                                        @click="openNewConnDialog">新建连接</el-button>
                         </div>
@@ -1215,8 +1218,9 @@
             </el-button-group>
             <div class="dsk-address">
                 <button class="dsk-fav-btn" :class="{ on: isDeskFavorite(w) }"
-                        :disabled="!w.path || w.pathEditing || !desktopTab"
-                        :title="isDeskFavorite(w) ? '从常用目录移除' : '收藏到常用目录'"
+                        :disabled="!w.path || w.pathEditing || !desktopTab || desktopIsLocal"
+                        :title="desktopIsLocal ? '本地桌面不支持常用目录'
+                            : (isDeskFavorite(w) ? '从常用目录移除' : '收藏到常用目录')"
                         @click.stop="toggleDeskFavorite(w)">
                     <i :class="isDeskFavorite(w) ? 'el-icon-star-on' : 'el-icon-star-off'"></i>
                 </button>
@@ -1261,13 +1265,15 @@
                        @click="desktopNewFile(w)"></el-button>
             <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"
                        @click="pickDesktopUpload"></el-button>
-            <el-button size="mini" icon="el-icon-sort" :disabled="!desktopSelectionHasFile(w)"
+            <el-button v-if="!desktopIsLocal" size="mini" icon="el-icon-sort"
+                       :disabled="!desktopSelectionHasFile(w)"
                        title="跨服务器传输选中文件（不下载到本机）"
                        @click="openCrossTransferDialog(w)"></el-button>
         </div>
 
         <div class="dsk-body">
             <aside class="dsk-side">
+                <template v-if="!desktopIsLocal">
                 <div class="dsk-side-sec"><i class="el-icon-cpu"></i>工作目录</div>
                 <div class="dsk-side-item" :class="{ active: desktopAiDir && w.path === desktopAiDir,
                                                      disabled: !desktopAiDir }"
@@ -1276,21 +1282,26 @@
                     <i class="el-icon-location-information"></i>
                     <span class="dsk-side-name">当前目录</span>
                 </div>
+                </template>
                 <div class="dsk-side-sec"><i class="el-icon-star-off"></i>快速访问</div>
-                <div class="dsk-side-item" :class="{ active: w.path === desktopHomeDir }"
+                <div class="dsk-side-item" v-if="!desktopIsLocal"
+                     :class="{ active: w.path === desktopHomeDir }"
                      @click="desktopGoHome">
                     <i class="el-icon-user"></i><span class="dsk-side-name">主目录</span>
                 </div>
                 <div class="dsk-side-item" :class="{ active: w.path === '/' }" @click="desktopGo('/')">
-                    <i class="el-icon-office-building"></i><span class="dsk-side-name">根目录</span>
+                    <i :class="desktopIsLocal ? 'el-icon-monitor' : 'el-icon-office-building'"></i>
+                    <span class="dsk-side-name">{{ desktopIsLocal ? '本地桌面' : '根目录' }}</span>
                     <span class="dsk-side-path">/</span>
                 </div>
+                <template v-if="!desktopIsLocal">
                 <div class="dsk-side-item" v-for="q in desktopQuickDirs" :key="q.path"
                      :class="{ active: w.path === q.path }" :title="q.path"
                      @click="desktopGo(q.path)">
                     <i class="el-icon-folder"></i><span class="dsk-side-name">{{ q.label }}</span>
                     <span class="dsk-side-path">{{ q.path }}</span>
                 </div>
+                </template>
                 <template v-if="desktopCommonDirs.length">
                     <div class="dsk-side-sec"><i class="el-icon-star-on"></i>常用目录</div>
                     <div class="dsk-side-item" v-for="d in desktopCommonDirs" :key="'cd' + d.id"
@@ -1465,7 +1476,7 @@
                 <span>{{ desktop.startSearch || '搜索应用、连接、文件或操作' }}</span>
             </button>
             <div class="dsk-task-apps" @wheel.prevent="onDesktopTaskAppsWheel">
-                <button class="dsk-task-app dsk-ai-app"
+                <button v-if="!desktopIsLocal" class="dsk-task-app dsk-ai-app"
                         :class="{ active: desktopAiWin && desktop.activeWinId === desktopAiWin.id && !desktopAiWin.min,
                                   'is-min': desktopAiWin && desktopAiWin.min }"
                         title="打开 AI 终端窗口" @click.stop="toggleDesktopAiApp">
@@ -1476,7 +1487,7 @@
                     <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
                 </button>
-                <button class="dsk-task-app dsk-terminal-app"
+                <button v-if="!desktopIsLocal" class="dsk-task-app dsk-terminal-app"
                         title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow()">
                     <img v-if="desktopAppImageByAction('terminal')" :src="desktopAppImageByAction('terminal')"
                          class="dsk-task-upload-icon" alt="">
@@ -1502,7 +1513,12 @@
             </div>
             <span class="spacer"></span>
             <div class="dsk-tray" v-if="desktopTab">
-                <div class="dsk-tray-stat"
+                <div class="dsk-tray-local" v-if="desktopIsLocal"
+                     title="文件保存在 DeepShell 数据目录的 Desktop 子目录中；服务器专属功能已隐藏">
+                    <i class="el-icon-monitor"></i>
+                    <span>本地桌面 · 未连接服务器</span>
+                </div>
+                <div class="dsk-tray-stat" v-if="!desktopIsLocal"
                      :title="desktopTab.stats ? statTooltip(desktopTab) : '点击查看系统信息'"
                      @click.stop="openDesktopSysInfo">
                     <i class="el-icon-cpu"></i>
@@ -1523,7 +1539,7 @@
                         ↓ {{ fmtRate(desktopTab.stats.rxRate) }} ↑ {{ fmtRate(desktopTab.stats.txRate) }}
                     </span>
                 </div>
-                <div class="dsk-tray-conn" :class="{ 'is-down': desktopConnDown }"
+                <div class="dsk-tray-conn" v-if="!desktopIsLocal" :class="{ 'is-down': desktopConnDown }"
                      :title="connAddress(desktopTab) + ' · 点击或右键管理连接'"
                      @click.stop="openDesktopTrayMenu($event)"
                      @contextmenu.prevent.stop="openDesktopTrayMenu($event)">
@@ -1621,7 +1637,8 @@
                 <div class="dsk-start-user">
                     <div class="dsk-start-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
                     <div class="dsk-start-host" :title="desk.path || desktopHomeDir">
-                        {{ desktopTab ? desktopTab.host : '' }} · {{ desk.path || desktopHomeDir || '/' }}
+                        {{ desktopIsLocal ? 'DeepShell 本机 · 本地桌面'
+                            : ((desktopTab ? desktopTab.host : '') + ' · ' + (desk.path || desktopHomeDir || '/')) }}
                     </div>
                 </div>
                 <button class="dsk-start-x" title="关闭" @click="desktop.startOpen = false">
@@ -1631,7 +1648,7 @@
             <div class="dsk-start-searchbox" @click="desktop.powerOpen = false">
                 <el-input ref="desktopStartSearch" v-model="desktop.startSearch" size="small"
                           prefix-icon="el-icon-search" clearable
-                          placeholder="搜索应用、当前目录或服务器文件"
+                          :placeholder="desktopIsLocal ? '搜索应用或本地桌面文件' : '搜索应用、当前目录或服务器文件'"
                           @keyup.enter.native="desktopStartEnter"
                           @keydown.esc.native.stop="desktop.startOpen = false"></el-input>
             </div>
@@ -1639,7 +1656,7 @@
                 <template v-if="!desktopStartQuery">
                     <div class="dsk-start-sec">固定应用</div>
                     <div class="dsk-start-apps">
-                        <button v-for="a in desktopStartApps" :key="a.id" class="dsk-start-app"
+                        <button v-for="a in desktopStartAppsView" :key="a.id" class="dsk-start-app"
                                 @click="desktopLaunchApp(a.id)">
                             <span class="dsk-start-appico"
                                   :class="{ 'has-upload': !!desktopAppIconImage(a) }"
@@ -1679,6 +1696,9 @@
                             <span class="dsk-start-placename">{{ p.label }}</span>
                             <span class="dsk-start-placepath">{{ p.path }}</span>
                         </button>
+                    </div>
+                    <div class="dsk-start-local-note" v-if="desktopIsLocal">
+                        <i class="el-icon-info"></i> 本地桌面不需要服务器：文件保存在 DeepShell 数据目录，终端、AI 终端、任务管理器等服务器功能已隐藏
                     </div>
                     <div class="dsk-start-tip">
                         <i class="el-icon-info"></i> 输入关键字搜索应用、连接、文件与快捷操作，回车打开第一项；Ctrl+Shift+K 可随时呼出
@@ -1751,6 +1771,7 @@
                             </button>
                         </div>
                     </template>
+                    <template v-if="!desktopIsLocal">
                     <div class="dsk-start-sec">服务器搜索</div>
                     <button class="dsk-start-searchgo" :disabled="desktop.startSearching"
                             @click="desktopSearchServer">
@@ -1778,14 +1799,16 @@
                             <i class="el-icon-arrow-right dsk-start-result-go"></i>
                         </button>
                     </div>
+                    </template>
                 </template>
             </div>
             <div class="dsk-start-footer">
-                <button class="dsk-start-foot-btn" @click="openDesktopSysInfo">
+                <button class="dsk-start-foot-btn" v-if="!desktopIsLocal" @click="openDesktopSysInfo">
                     <i class="el-icon-cpu"></i>系统信息
                 </button>
                 <span class="spacer"></span>
-                <button class="dsk-start-foot-btn" title="在新标签页打开工作台，当前桌面保持不变"
+                <button class="dsk-start-foot-btn" v-if="!desktopIsLocal"
+                        title="在新标签页打开工作台，当前桌面保持不变"
                         @click="openTerminalInNewTab">
                     <i class="el-icon-top-right"></i>新标签页工作台
                 </button>
@@ -1799,23 +1822,27 @@
                         <i class="el-icon-switch-button"></i>
                     </button>
                     <div class="dsk-power-menu" v-if="desktop.powerOpen">
-                        <button class="dsk-power-item danger" @click="desktopPowerShutdown">
-                            <i class="el-icon-switch-button"></i>服务器关机
-                        </button>
-                        <button class="dsk-power-item danger" @click="desktopPowerReboot">
-                            <i class="el-icon-refresh-right"></i>服务器重启
-                        </button>
-                        <div class="dsk-power-sep"></div>
+                        <template v-if="!desktopIsLocal">
+                            <button class="dsk-power-item danger" @click="desktopPowerShutdown">
+                                <i class="el-icon-switch-button"></i>服务器关机
+                            </button>
+                            <button class="dsk-power-item danger" @click="desktopPowerReboot">
+                                <i class="el-icon-refresh-right"></i>服务器重启
+                            </button>
+                            <div class="dsk-power-sep"></div>
+                        </template>
                         <button class="dsk-power-item" @click="askAppLifecycle('restart')">
                             <i class="el-icon-refresh-right"></i>重启 DeepShell
                         </button>
                         <button class="dsk-power-item danger" @click="askAppLifecycle('shutdown')">
                             <i class="el-icon-switch-button"></i>关闭 DeepShell
                         </button>
-                        <div class="dsk-power-sep"></div>
-                        <button class="dsk-power-item" @click="desktopPowerDisconnect">
-                            <i class="el-icon-connection"></i>断开连接
-                        </button>
+                        <template v-if="!desktopIsLocal">
+                            <div class="dsk-power-sep"></div>
+                            <button class="dsk-power-item" @click="desktopPowerDisconnect">
+                                <i class="el-icon-connection"></i>断开连接
+                            </button>
+                        </template>
                     </div>
                 </div>
             </div>
@@ -1843,15 +1870,27 @@
                                 @click="desktop.settingsSection = s.id">
                             <i :class="s.icon"></i><span>{{ s.label }}</span>
                         </button>
-                        <div class="dsk-settings-nav-sec">当前会话</div>
-                        <div class="dsk-settings-session">
-                            <div class="dsk-settings-session-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
-                            <div class="dsk-settings-session-host">{{ desktopTab ? desktopTab.host : '' }}</div>
-                            <div class="dsk-settings-session-status">
-                                <span class="dot" :class="'dot-' + (desktopTab ? desktopTab.status : 'closed')"></span>
-                                {{ desktopTab ? statusText(desktopTab) : '未连接' }}
+                        <template v-if="!desktopIsLocal">
+                            <div class="dsk-settings-nav-sec">当前会话</div>
+                            <div class="dsk-settings-session">
+                                <div class="dsk-settings-session-name">{{ desktopTab ? desktopTab.title : '未连接' }}</div>
+                                <div class="dsk-settings-session-host">{{ desktopTab ? desktopTab.host : '' }}</div>
+                                <div class="dsk-settings-session-status">
+                                    <span class="dot" :class="'dot-' + (desktopTab ? desktopTab.status : 'closed')"></span>
+                                    {{ desktopTab ? statusText(desktopTab) : '未连接' }}
+                                </div>
                             </div>
-                        </div>
+                        </template>
+                        <template v-else>
+                            <div class="dsk-settings-nav-sec">当前模式</div>
+                            <div class="dsk-settings-session">
+                                <div class="dsk-settings-session-name">本地桌面</div>
+                                <div class="dsk-settings-session-host">DeepShell 本机 · 未连接服务器</div>
+                                <div class="dsk-settings-session-status">
+                                    <span class="dot dot-open"></span>本地模式
+                                </div>
+                            </div>
+                        </template>
                     </aside>
                     <section class="dsk-settings-main">
                         <template v-if="desktop.settingsSection === 'appearance'">
@@ -2235,14 +2274,14 @@
                                         立即返回
                                     </el-button>
                                 </div>
-                                <div class="dsk-set-row">
+                                <div class="dsk-set-row" v-if="!desktopIsLocal">
                                     <div class="dsk-set-info">
                                         <b>重新连接</b><span>保持桌面并重新建立当前 SSH 会话，恢复后自动刷新</span>
                                     </div>
                                     <el-button size="mini" icon="el-icon-refresh-right"
                                                @click="desktopReconnectSession">重新连接</el-button>
                                 </div>
-                                <div class="dsk-set-row">
+                                <div class="dsk-set-row" v-if="!desktopIsLocal">
                                     <div class="dsk-set-info">
                                         <b>断开连接</b><span>关闭桌面并断开当前 SSH 会话，正在执行的命令会中断</span>
                                     </div>
@@ -2317,7 +2356,8 @@
                                 </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info"><b>当前连接</b>
-                                        <span>{{ desktopTab ? desktopTab.title + ' · ' + desktopTab.host : '未连接' }}</span>
+                                        <span>{{ desktopIsLocal ? '本地桌面 · 未连接服务器'
+                                            : (desktopTab ? desktopTab.title + ' · ' + desktopTab.host : '未连接') }}</span>
                                     </div>
                                     <el-button size="mini" @click="openDesktopConnectionWindow">连接管理</el-button>
                                 </div>
@@ -2556,7 +2596,7 @@
                      @click="desktopMenuAction('shortcut')">
                     <i class="el-icon-monitor"></i>发送到桌面快捷方式
                 </div>
-                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir && !desktopIsLocal"
                      @click="desktopMenuAction('terminal')">
                     <i class="el-icon-position"></i>在终端中打开
                 </div>
@@ -2572,7 +2612,7 @@
                     <i class="el-icon-edit-outline"></i>在线编辑
                 </div>
                 <div class="dsk-menu-item"
-                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !isDesktopVideo(desktop.menu.target) && !isDesktopAudio(desktop.menu.target) && !desktopArchiveFormat(desktop.menu.target.name)"
+                     v-if="!desktopMenuMulti && !desktop.menu.target.dir && !desktopIsLocal && !isDesktopVideo(desktop.menu.target) && !isDesktopAudio(desktop.menu.target) && !desktopArchiveFormat(desktop.menu.target.name)"
                      @click="desktopMenuAction('vscode')">
                     <i class="el-icon-edit"></i>用 VSCode 编辑
                 </div>
@@ -2580,7 +2620,7 @@
                      @click="desktopMenuAction('download')">
                     <i class="el-icon-download"></i>下载
                 </div>
-                <div class="dsk-menu-item" v-if="desktopMenuHasFile"
+                <div class="dsk-menu-item" v-if="desktopMenuHasFile && !desktopIsLocal"
                      @click="desktopMenuAction('crossTransfer')">
                     <i class="el-icon-sort"></i>跨服务器传输
                 </div>
@@ -2605,11 +2645,12 @@
                 <div class="dsk-menu-item" @click="desktopMenuAction('copyPath')">
                     <i class="el-icon-document-copy"></i>{{ desktopMenuMulti ? '复制选中路径' : '复制路径' }}
                 </div>
-                <div class="dsk-menu-item has-sub" @click.stop="openDesktopCompressSub($event)">
+                <div class="dsk-menu-item has-sub" v-if="!desktopIsLocal"
+                     @click.stop="openDesktopCompressSub($event)">
                     <i class="el-icon-box"></i>压缩
                     <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
                 </div>
-                <div class="dsk-menu-item has-sub" v-if="desktopMenuCanExtract"
+                <div class="dsk-menu-item has-sub" v-if="desktopMenuCanExtract && !desktopIsLocal"
                      @click.stop="openDesktopExtractSub($event)">
                     <i class="el-icon-folder-opened"></i>解压
                     <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>
@@ -2618,10 +2659,14 @@
                     <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
                 </div>
                 <div class="dsk-menu-item danger" @click="desktopMenuAction('delete')">
-                    <i class="el-icon-delete"></i>{{ desktopMenuMulti ? ('移入回收站 ' + desktopMenuSelectionCount + ' 项') : '移入回收站' }}
+                    <i class="el-icon-delete"></i>
+                    {{ desktopIsLocal
+                        ? (desktopMenuMulti ? ('删除选中 ' + desktopMenuSelectionCount + ' 项') : '删除')
+                        : (desktopMenuMulti ? ('移入回收站 ' + desktopMenuSelectionCount + ' 项') : '移入回收站') }}
                     <span class="dsk-menu-key">Del</span>
                 </div>
-                <div class="dsk-menu-item danger" @click="desktopMenuAction('deletePermanent')">
+                <div class="dsk-menu-item danger" v-if="!desktopIsLocal"
+                     @click="desktopMenuAction('deletePermanent')">
                     <i class="el-icon-delete-solid"></i>彻底删除
                     <span class="dsk-menu-key">Shift+Del</span>
                 </div>
@@ -2645,7 +2690,7 @@
                     <i class="el-icon-upload2"></i>上传文件
                 </div>
                 <div class="dsk-menu-sep"></div>
-                <div class="dsk-menu-item" @click="desktopMenuAction('terminalHere')">
+                <div class="dsk-menu-item" v-if="!desktopIsLocal" @click="desktopMenuAction('terminalHere')">
                     <i class="el-icon-position"></i>在终端中打开当前目录
                 </div>
                 <div class="dsk-menu-item" @click="desktopMenuAction('copyCurrentPath')">
@@ -2707,7 +2752,7 @@
              :style="{ left: desktop.downloadSub.x + 'px', top: desktop.downloadSub.y + 'px' }"
              @click.stop @contextmenu.prevent>
             <div class="dsk-menu-title">下载 {{ desktopMenuSelectionCount }} 项</div>
-            <div class="dsk-menu-item" @click="desktopMenuAction('downloadBundle')">
+            <div class="dsk-menu-item" v-if="!desktopIsLocal" @click="desktopMenuAction('downloadBundle')">
                 <i class="el-icon-box"></i>
                 <span class="dsk-menu-sub-name">打包下载</span>
                 <span class="dsk-menu-key">.zip</span>
@@ -2717,7 +2762,7 @@
                 <span class="dsk-menu-sub-name">逐个下载</span>
                 <span class="dsk-menu-key">仅文件</span>
             </div>
-            <div class="dsk-menu-item" v-if="localDownloadReady" @click="desktopMenuAction('downloadLocal')">
+            <div class="dsk-menu-item" v-if="localDownloadReady && !desktopIsLocal" @click="desktopMenuAction('downloadLocal')">
                 <i class="el-icon-folder-opened"></i>
                 <span class="dsk-menu-sub-name">下载到本机…</span>
             </div>
@@ -2745,7 +2790,7 @@
             <div class="dsk-menu-item" @click="desktopWallMenuAction('upload')">
                 <i class="el-icon-upload2"></i>上传文件
             </div>
-            <div class="dsk-menu-item" @click="desktopWallMenuAction('openTerminal')">
+            <div class="dsk-menu-item" v-if="!desktopIsLocal" @click="desktopWallMenuAction('openTerminal')">
                 <i class="el-icon-monitor"></i>在此打开终端
             </div>
             <div class="dsk-menu-sep"></div>
@@ -2757,7 +2802,7 @@
                 <i class="el-icon-setting"></i>个性化
             </div>
             <div class="dsk-menu-sep"></div>
-            <div class="dsk-menu-item" @click="desktopWallMenuAction('return')">
+            <div class="dsk-menu-item" v-if="!desktopIsLocal" @click="desktopWallMenuAction('return')">
                 <i class="el-icon-top-right"></i>在新标签页打开工作台
             </div>
         </div>

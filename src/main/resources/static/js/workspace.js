@@ -2462,6 +2462,9 @@ Vue.component('desktop-text-editor', {
         sessionId: function () {
             return this.tab && this.tab.sessionId;
         },
+        isLocal: function () {
+            return !!(this.tab && this.tab.local);
+        },
         initEditor: function () {
             var self = this;
             var host = this.$refs.editorHost;
@@ -2664,7 +2667,7 @@ Vue.component('desktop-text-editor', {
                 }
             }
             var sid = this.sessionId();
-            if (!sid) {
+            if (!this.isLocal() && !sid) {
                 ELEMENT.Message.warning('请先连接服务器后再打开文件');
                 if (!this.docs.length) {
                     this.createUntitled();
@@ -2680,7 +2683,10 @@ Vue.component('desktop-text-editor', {
             this._openingPaths[path] = true;
             var self = this;
             this.opening = true;
-            http.get('/api/sftp/read', { params: { sessionId: sid, path: path } })
+            var readReq = this.isLocal()
+                ? http.get('/api/local/fs/read', { params: { path: path } })
+                : http.get('/api/sftp/read', { params: { sessionId: sid, path: path } });
+            readReq
                 .then(function (content) {
                     if (self._destroyed) {
                         return;
@@ -2898,7 +2904,7 @@ Vue.component('desktop-text-editor', {
         },
         /* ---------- 打开 / 保存 / 另存为 ---------- */
         openPicker: function (mode, keepCloseAfter) {
-            if (!this.sessionId()) {
+            if (!this.isLocal() && !this.sessionId()) {
                 ELEMENT.Message.warning('请先连接服务器后再打开或保存文件');
                 return;
             }
@@ -2928,7 +2934,7 @@ Vue.component('desktop-text-editor', {
                 return;
             }
             var sid = this.sessionId();
-            if (!sid) {
+            if (!this.isLocal() && !sid) {
                 this.picker.error = '会话未就绪';
                 return;
             }
@@ -2939,7 +2945,10 @@ Vue.component('desktop-text-editor', {
             this._pickerSeq = (this._pickerSeq || 0) + 1;
             var seq = this._pickerSeq;
             var self = this;
-            http.get('/api/sftp/list', { params: { sessionId: sid, path: d }, silent: true })
+            var listReq = this.isLocal()
+                ? http.get('/api/local/fs/list', { params: { path: d }, silent: true })
+                : http.get('/api/sftp/list', { params: { sessionId: sid, path: d }, silent: true });
+            listReq
                 .then(function (list) {
                     if (self._destroyed || seq !== self._pickerSeq || !self.picker.visible) {
                         return;
@@ -3037,7 +3046,7 @@ Vue.component('desktop-text-editor', {
         saveDocTo: function (doc, path) {
             var self = this;
             var sid = this.sessionId();
-            if (!sid) {
+            if (!this.isLocal() && !sid) {
                 return Promise.reject(new Error('会话未就绪'));
             }
             var cmDoc = this._docMap[doc.id];
@@ -3046,11 +3055,14 @@ Vue.component('desktop-text-editor', {
             }
             var content = cmDoc.getValue(doc.lineSep || '\n');
             this.saving = true;
-            return http.post('/api/sftp/write', {
-                sessionId: sid,
-                path: path,
-                content: content
-            }).then(function () {
+            var writeReq = this.isLocal()
+                ? http.post('/api/local/fs/write', { path: path, content: content })
+                : http.post('/api/sftp/write', {
+                    sessionId: sid,
+                    path: path,
+                    content: content
+                });
+            return writeReq.then(function () {
                 self.saving = false;
                 doc.path = path;
                 doc.title = self.baseName(path);
@@ -3076,7 +3088,7 @@ Vue.component('desktop-text-editor', {
             if (!doc) {
                 return;
             }
-            if (!this.sessionId()) {
+            if (!this.isLocal() && !this.sessionId()) {
                 ELEMENT.Message.warning('请先连接服务器后再保存文件');
                 return;
             }
@@ -3096,7 +3108,7 @@ Vue.component('desktop-text-editor', {
             if (this.saving) {
                 return;
             }
-            if (!this.sessionId()) {
+            if (!this.isLocal() && !this.sessionId()) {
                 ELEMENT.Message.warning('请先连接服务器后再保存文件');
                 return;
             }
@@ -4006,8 +4018,20 @@ new Vue({
             { id: 'system', label: '系统信息', icon: 'el-icon-cpu' }
         ],
         desktopResizeDirs: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
+        /* 无 SSH 会话的本地桌面：数据目录 Desktop 沙箱，服务器专属功能禁用 */
+        localDesktopTab: {
+            key: '__local_desktop__',
+            title: '本地桌面',
+            connId: null,
+            sessionId: '',
+            sftpHome: '/',
+            status: 'local',
+            local: true,
+            stats: null
+        },
         desktop: {
             visible: false,
+            local: false,
             wallDropActive: false,
             tabKey: '',
             windows: [],
@@ -5175,7 +5199,9 @@ new Vue({
             var map = {};
             var self = this;
             this.desktopAppIcons.forEach(function (a) {
-                map[a.key] = a;
+                if (!self.desktopAppBlocked(a.action)) {
+                    map[a.key] = a;
+                }
             });
             var dir = this.desktop.surface.dir;
             (this.desktop.surface.entries || []).forEach(function (e) {
@@ -5247,9 +5273,15 @@ new Vue({
             return '桌面图标';
         },
         desktopTab: function () {
+            if (this.desktop.local) {
+                return this.localDesktopTab;
+            }
             var self = this;
             return this.tabs.find(function (t) { return t.key === self.desktop.tabKey; }, this)
                 || this.activeTab || null;
+        },
+        desktopIsLocal: function () {
+            return !!(this.desktop.visible && this.desktop.local);
         },
         desktopConnDown: function () {
             var t = this.desktopTab;
@@ -5477,12 +5509,18 @@ new Vue({
                 return !p.installed || p.updateAvailable;
             });
         },
+        desktopStartAppsView: function () {
+            var self = this;
+            return this.desktopStartApps.filter(function (a) {
+                return !self.desktopAppBlocked(a.id);
+            });
+        },
         desktopStartAppMatches: function () {
             var q = this.desktopStartQuery.toLowerCase();
             if (!q) {
                 return [];
             }
-            return this.desktopStartApps.concat(this.desktopStartPluginApps).filter(function (a) {
+            return this.desktopStartAppsView.concat(this.desktopStartPluginApps).filter(function (a) {
                 var text = [a.label, a.id,
                     a.plugin ? a.plugin.description : '',
                     a.plugin ? a.plugin.author : ''].join(' ').toLowerCase();
@@ -5504,8 +5542,10 @@ new Vue({
             if (!q) {
                 return [];
             }
+            var self = this;
             return this.desktopStartActions.filter(function (a) {
-                return (a.label + ' ' + a.desc + ' ' + a.id).toLowerCase().indexOf(q) >= 0;
+                return !self.desktopAppBlocked(a.id)
+                    && (a.label + ' ' + a.desc + ' ' + a.id).toLowerCase().indexOf(q) >= 0;
             }).slice(0, 6);
         },
         desktopStartEntryMatches: function () {
@@ -5522,6 +5562,9 @@ new Vue({
             }).slice(0, 8);
         },
         desktopStartPlaces: function () {
+            if (this.desktop.local) {
+                return [{ label: '本地桌面', path: '/', icon: 'el-icon-monitor' }];
+            }
             var out = [];
             var seen = {};
             var add = function (label, path, icon) {
@@ -7910,6 +7953,7 @@ new Vue({
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
                 return;
             }
+            this.desktop.local = false;
             // 终端页的气泡是 body 级浮层，进入桌面后会盖在桌面上，先关闭
             this.transferCenterOpen = false;
             // 同一连接可能在多个标签打开，进入桌面时以存储中的最新背景为准
@@ -7937,6 +7981,59 @@ new Vue({
             }
             // 已经在该连接的桌面里：再开一个资源管理器窗口
             this.openDesktopWindow(this.desk.path || p);
+        },
+        /* 直接进入本地桌面：不建立 SSH 会话，文件都放在数据目录的 Desktop 沙箱 */
+        openLocalDesktop: function () {
+            var t = this.localDesktopTab;
+            this.transferCenterOpen = false;
+            t.desktopBg = loadDesktopBgSettings(null);
+            this.desktop.local = true;
+            this.resetDesktopShell(t);
+            this.desktop.visible = true;
+            if (window.history && history.replaceState) {
+                history.replaceState(null, '', '/workspace?local=1');
+            }
+            this.startDesktopClock();
+            this.loadDesktopSurface();
+            var self = this;
+            this.$nextTick(function () {
+                if (!self.desktop.visible) {
+                    return;
+                }
+                self.restoreDesktopExplorerSession('/');
+                self.applyDesktopStartupApps();
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+        },
+        enterLocalDesktop: function () {
+            this.connectDialogVisible = false;
+            if (this.desktop.visible) {
+                if (this.desktop.local) {
+                    ELEMENT.Message.info('当前已经是本地桌面');
+                    return;
+                }
+                if (!window.open('/workspace?local=1', 'deepshell-desktop-local')) {
+                    ELEMENT.Message.warning('浏览器拦截了新标签页，请允许弹出窗口后重试');
+                }
+                return;
+            }
+            this.openLocalDesktop();
+        },
+        desktopServerReady: function () {
+            if (this.desktop.local) {
+                ELEMENT.Message.warning('本地桌面未连接服务器，该功能需要先连接服务器');
+                return false;
+            }
+            return true;
+        },
+        desktopAppBlocked: function (id) {
+            if (!this.desktop.local) {
+                return false;
+            }
+            return ['ai', 'terminal', 'taskmgr', 'services', 'nettool', 'batchcmd',
+                'dirs', 'cmd', 'disk', 'trash', 'sysinfo', 'newTerminal'].indexOf(id) >= 0;
         },
         resetDesktopShell: function (t) {
             var self = this;
@@ -8034,6 +8131,10 @@ new Vue({
                 }
             });
             this._deskSearchSeq = (this._deskSearchSeq || 0) + 1;
+            if (this.desktop.local && window.history && history.replaceState) {
+                history.replaceState(null, '', '/workspace');
+            }
+            this.desktop.local = false;
             this.desktop.visible = false;
             this.desktop.windows = [];
             this.desktop.activeWinId = '';
@@ -8426,7 +8527,7 @@ new Vue({
         },
         openDesktopWindow: function (path, first) {
             var t = this.desktopTab;
-            if (!t || !t.sessionId || !this.desktop.visible) {
+            if (!t || (!t.local && !t.sessionId) || !this.desktop.visible) {
                 return null;
             }
             var w = this.addDesktopWindow('explorer', first);
@@ -8442,6 +8543,9 @@ new Vue({
         },
         openAiDesktopWindow: function () {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             var existing = this.desktopAiWin;
@@ -8566,6 +8670,9 @@ new Vue({
             if (!this.desktop.visible) {
                 return null;
             }
+            if (!this.desktopServerReady()) {
+                return null;
+            }
             var t = this.desktopTab;
             if (t && t.connId != null) {
                 this.loadCommonDirs(t.connId);
@@ -8590,6 +8697,9 @@ new Vue({
             if (!this.desktop.visible) {
                 return null;
             }
+            if (!this.desktopServerReady()) {
+                return null;
+            }
             this.loadSnippets();
             var existing = this.desktopWindowOfType('cmd');
             if (existing) {
@@ -8609,6 +8719,9 @@ new Vue({
         },
         openDiskDesktopWindow: function () {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             var existing = this.desktopDiskWin;
@@ -8647,6 +8760,9 @@ new Vue({
         /* ---------- 服务与计划任务 ---------- */
         openDesktopServicesWindow: function () {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             var t = this.desktopTab;
@@ -8846,6 +8962,9 @@ new Vue({
             if (!this.desktop.visible) {
                 return null;
             }
+            if (!this.desktopServerReady()) {
+                return null;
+            }
             var t = this.desktopTab;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
@@ -8909,6 +9028,9 @@ new Vue({
         /* ---------- 多机命令 ---------- */
         openDesktopBatchCommandWindow: function () {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             this.loadConnections();
@@ -8991,6 +9113,9 @@ new Vue({
         },
         openDesktopTerminalWindow: function (startDir) {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             var src = this.desktopTab;
@@ -9627,7 +9752,9 @@ new Vue({
             } else if (action === 'upload') {
                 this.pickDesktopUpload(surfaceWin);
             } else if (action === 'openTerminal') {
-                this.openDesktopTerminalWindow(dir);
+                if (this.desktopServerReady()) {
+                    this.openDesktopTerminalWindow(dir);
+                }
             } else if (action === 'paste') {
                 this.pasteDesktop({
                     id: '__surface__',
@@ -9639,7 +9766,9 @@ new Vue({
             } else if (action === 'personalize') {
                 this.openDesktopSettings();
             } else if (action === 'return') {
-                this.openTerminalInNewTab();
+                if (!this.desktop.local) {
+                    this.openTerminalInNewTab();
+                }
             }
         },
         isDeskFavorite: function (w) {
@@ -9861,6 +9990,9 @@ new Vue({
         },
         openTaskManager: function () {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             this.desktop.taskbarMenu.visible = false;
@@ -10647,19 +10779,19 @@ new Vue({
         },
         applyDesktopStartupApps: function () {
             var cfg = this.taskmgr.startup || {};
-            if (cfg.ai) {
+            if (cfg.ai && !this.desktopAppBlocked('ai')) {
                 this.openAiDesktopWindow();
             }
             if (cfg.transfers) {
                 this.openTransferDesktopWindow();
             }
-            if (cfg.disk) {
+            if (cfg.disk && !this.desktopAppBlocked('disk')) {
                 this.openDiskDesktopWindow();
             }
-            if (cfg.terminal) {
+            if (cfg.terminal && !this.desktopAppBlocked('terminal')) {
                 this.openDesktopTerminalWindow();
             }
-            if (cfg.taskmgr) {
+            if (cfg.taskmgr && !this.desktopAppBlocked('taskmgr')) {
                 this.openTaskManager();
             }
         },
@@ -10695,6 +10827,9 @@ new Vue({
         /* ---------- 桌面目录 / 桌面图标 ---------- */
         loadDesktopSurface: function () {
             var t = this.desktopTab;
+            if (t && t.local) {
+                return this.loadLocalDesktopSurface();
+            }
             if (!t || !t.sessionId) {
                 return Promise.resolve();
             }
@@ -10760,6 +10895,41 @@ new Vue({
                 self.rebuildDesktopIconOrder();
             });
         },
+        loadLocalDesktopSurface: function () {
+            var self = this;
+            var surf = this.desktop.surface;
+            this.resetSurfaceThumbs();
+            surf.loading = true;
+            surf.error = '';
+            return http.get('/api/local/fs/list', {
+                params: { path: '/' },
+                silent: true
+            }).then(function (list) {
+                var rows = list || [];
+                rows.sort(function (a, b) {
+                    if (a.dir !== b.dir) {
+                        return a.dir ? -1 : 1;
+                    }
+                    return String(a.name).localeCompare(String(b.name), 'zh-CN', {
+                        numeric: true,
+                        sensitivity: 'base'
+                    });
+                });
+                surf.dir = '/';
+                surf.entries = rows;
+                surf.loaded = true;
+                surf.loading = false;
+                self.loadSurfaceThumbs();
+                self.parseSurfaceShortcuts();
+                return self.loadDesktopIconLayout();
+            }).catch(function (e) {
+                surf.loading = false;
+                surf.loaded = false;
+                surf.error = '无法读取本地桌面：' + ((e && e.message) || '请检查数据目录权限');
+                self.loadDesktopIconLayout();
+                self.rebuildDesktopIconOrder();
+            });
+        },
         refreshDesktopSurface: function () {
             this.desktop.taskMenu.visible = false;
             this.desktop.wallMenu.visible = false;
@@ -10793,7 +10963,7 @@ new Vue({
         },
         parseSurfaceShortcuts: function () {
             var t = this.desktopTab;
-            if (!t || !t.sessionId) {
+            if (!t || (!t.local && !t.sessionId)) {
                 return;
             }
             var self = this;
@@ -10812,10 +10982,13 @@ new Vue({
                 }
                 var e = entries[i++];
                 var path = self.pathJoin(self.desktop.surface.dir, e.name);
-                http.get('/api/sftp/read', {
-                    params: { sessionId: t.sessionId, path: path },
-                    silent: true
-                }).then(function (text) {
+                var readReq = t.local
+                    ? http.get('/api/local/fs/read', { params: { path: path }, silent: true })
+                    : http.get('/api/sftp/read', {
+                        params: { sessionId: t.sessionId, path: path },
+                        silent: true
+                    });
+                readReq.then(function (text) {
                     var data = null;
                     try {
                         data = JSON.parse(text);
@@ -10833,7 +11006,7 @@ new Vue({
         },
         loadSurfaceThumbs: function () {
             var t = this.desktopTab;
-            if (!t || !t.sessionId || !this.desktop.thumbnailsEnabled) {
+            if (!t || (!t.local && !t.sessionId) || !this.desktop.thumbnailsEnabled) {
                 return;
             }
             var self = this;
@@ -10922,10 +11095,13 @@ new Vue({
                             }
                             self._surfaceThumbCtrls.push(ctrl);
                         }
-                        var url = (tk.video ? '/api/sftp/video' : '/api/sftp/thumbnail')
-                            + '?sessionId=' + encodeURIComponent(t.sessionId)
-                            + '&path=' + encodeURIComponent(tk.path)
+                        var apiBase = t.local ? '/api/local/fs/' : '/api/sftp/';
+                        var url = apiBase + (tk.video ? 'video' : 'thumbnail')
+                            + '?path=' + encodeURIComponent(tk.path)
                             + '&v=' + (tk.mtime || 0);
+                        if (!t.local) {
+                            url += '&sessionId=' + encodeURIComponent(t.sessionId);
+                        }
                         var promise;
                         if (tk.video) {
                             promise = new Promise(function (resolve, reject) {
@@ -10995,6 +11171,17 @@ new Vue({
         },
         loadDesktopIconLayout: function () {
             var t = this.desktopTab;
+            if (this.desktop.local) {
+                var saved = [];
+                try {
+                    saved = JSON.parse(localStorage.getItem('deepshell.local-desktop.icons') || '[]');
+                } catch (e) {
+                    saved = [];
+                }
+                this.desktop.iconLayout = Array.isArray(saved) ? saved : [];
+                this.rebuildDesktopIconOrder();
+                return Promise.resolve();
+            }
             if (!t || t.connId == null) {
                 this.desktop.iconLayout = [];
                 this.rebuildDesktopIconOrder();
@@ -11079,7 +11266,8 @@ new Vue({
         },
         saveDesktopIconLayoutNow: function () {
             var t = this.desktopTab;
-            if (!t || t.connId == null) {
+            var local = this.desktop.local;
+            if (!local && (!t || t.connId == null)) {
                 return;
             }
             var items = this.desktop.iconOrder.map(function (key, i) {
@@ -11091,6 +11279,12 @@ new Vue({
             }).forEach(function (key, i) {
                 items.push({ iconKey: key, sortOrder: base + i, hidden: true });
             });
+            if (local) {
+                try {
+                    localStorage.setItem('deepshell.local-desktop.icons', JSON.stringify(items));
+                } catch (e) { /* 存储不可用时忽略 */ }
+                return;
+            }
             http.put('/api/desktop-icons', { connId: t.connId, items: items })
                 .catch(function () { /* 拦截器已提示 */ });
         },
@@ -11320,6 +11514,10 @@ new Vue({
                 return;
             }
             if (item.type === 'app') {
+                if (this.desktopAppBlocked(item.action)) {
+                    this.desktopServerReady();
+                    return;
+                }
                 if (item.action === 'explorer') {
                     this.openDesktopExplorerWindow('/');
                 } else if (item.action === 'editor') {
@@ -11366,7 +11564,7 @@ new Vue({
                     });
                 } else if (this.desktopArchiveFormat(item.entry.name)) {
                     ELEMENT.Message.info('压缩包请右键选择「解压」');
-                } else if (this.desktopTab && this.desktopTab.sessionId) {
+                } else if (this.desktopTab && (this.desktopTab.sessionId || this.desktopTab.local)) {
                     this.openDesktopEditorWindow(this.desktopTab, item.path);
                 }
             }
@@ -11376,14 +11574,17 @@ new Vue({
         },
         openDesktopShortcut: function (item) {
             var t = this.desktopTab;
-            if (!t || !t.sessionId || !item) {
+            if (!t || (!t.local && !t.sessionId) || !item) {
                 return;
             }
             var self = this;
-            http.get('/api/sftp/read', {
-                params: { sessionId: t.sessionId, path: item.path },
-                silent: true
-            }).then(function (text) {
+            var readReq = t.local
+                ? http.get('/api/local/fs/read', { params: { path: item.path }, silent: true })
+                : http.get('/api/sftp/read', {
+                    params: { sessionId: t.sessionId, path: item.path },
+                    silent: true
+                });
+            readReq.then(function (text) {
                 var data = null;
                 try {
                     data = JSON.parse(text);
@@ -11430,7 +11631,7 @@ new Vue({
         createDesktopShortcut: function (row, win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId || !row) {
+            if (!t || (!t.local && !t.sessionId) || !row) {
                 return;
             }
             if (this.isLnkFile(row)) {
@@ -11466,11 +11667,17 @@ new Vue({
                     label: base,
                     createdAt: Date.now()
                 }, null, 2);
-                return http.post('/api/sftp/write', {
-                    sessionId: t.sessionId,
-                    path: self.pathJoin(dir, candidate),
-                    content: content
-                }).then(function () {
+                var writeReq = t.local
+                    ? http.post('/api/local/fs/write', {
+                        path: self.pathJoin(dir, candidate),
+                        content: content
+                    })
+                    : http.post('/api/sftp/write', {
+                        sessionId: t.sessionId,
+                        path: self.pathJoin(dir, candidate),
+                        content: content
+                    });
+                return writeReq.then(function () {
                     ELEMENT.Message.success('已发送到桌面快捷方式：' + candidate);
                     self.refreshDesktopSurface();
                 });
@@ -11480,7 +11687,7 @@ new Vue({
             var t = this.desktopTab;
             var d = win || this.desk;
             rows = rows || [];
-            if (!t || t.connId == null || !rows.length) {
+            if (!t || (!t.local && t.connId == null) || !rows.length) {
                 return;
             }
             var self = this;
@@ -11502,7 +11709,7 @@ new Vue({
             var t = this.desktopTab;
             var d = win || this.desk;
             rows = rows || [];
-            if (!t || t.connId == null || !rows.length) {
+            if (!t || (!t.local && t.connId == null) || !rows.length) {
                 return;
             }
             var self = this;
@@ -11531,7 +11738,7 @@ new Vue({
             var t = this.desktopTab;
             var d = win || this.desk;
             var c = this.desktopClipboard;
-            if (!t || !t.sessionId || !c || !c.paths || !c.paths.length) {
+            if (!t || (!t.local && !t.sessionId) || !c || !c.paths || !c.paths.length) {
                 ELEMENT.Message.info('剪贴板为空');
                 return;
             }
@@ -11569,11 +11776,14 @@ new Vue({
                 var movedNames = [];
                 sources.forEach(function (src) {
                     chain = chain.then(function () {
-                        return http.post('/api/sftp/move', {
-                            sessionId: t.sessionId,
-                            path: src,
-                            destDir: dest
-                        }).then(function () {
+                        var moveReq = t.local
+                            ? http.post('/api/local/fs/move', { path: src, destDir: dest })
+                            : http.post('/api/sftp/move', {
+                                sessionId: t.sessionId,
+                                path: src,
+                                destDir: dest
+                            });
+                        return moveReq.then(function () {
                             ok++;
                             movedNames.push(src.substring(src.lastIndexOf('/') + 1));
                         }).catch(function () {
@@ -11619,11 +11829,14 @@ new Vue({
                 });
                 return;
             }
-            http.post('/api/sftp/copy', {
-                sessionId: t.sessionId,
-                destDir: dest,
-                paths: sources
-            }).then(function (created) {
+            var copyReq = t.local
+                ? http.post('/api/local/fs/copy', { destDir: dest, paths: sources })
+                : http.post('/api/sftp/copy', {
+                    sessionId: t.sessionId,
+                    destDir: dest,
+                    paths: sources
+                });
+            copyReq.then(function (created) {
                 loading.close();
                 ELEMENT.Message.success('已粘贴 ' + sources.length + ' 项');
                 var pastedNames = Array.isArray(created) ? created.filter(function (n) { return !!n; }) : [];
@@ -12219,7 +12432,7 @@ new Vue({
             if (!p) {
                 return [];
             }
-            var out = [{ name: '/', path: '/' }];
+            var out = [{ name: this.desktop.local ? '本地桌面' : '/', path: '/' }];
             var segs = p.split('/').filter(function (s) { return !!s; });
             var acc = '';
             segs.forEach(function (s) {
@@ -12380,8 +12593,9 @@ new Vue({
         },
         loadDesktopDir: function (path, nav, win) {
             var t = this.desktopTab;
-            if (!t || !t.sessionId) {
-                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning(this.desktop.local
+                    ? '本地桌面尚未就绪' : '会话未就绪，请等连接建立后再试');
                 return;
             }
             var self = this;
@@ -12403,7 +12617,10 @@ new Vue({
             d.loading = true;
             d.error = '';
             d.pathEditing = false;
-            http.get('/api/sftp/list', { params: { sessionId: t.sessionId, path: target } }).then(function (list) {
+            var listReq = t.local
+                ? http.get('/api/local/fs/list', { params: { path: target } })
+                : http.get('/api/sftp/list', { params: { sessionId: t.sessionId, path: target } });
+            listReq.then(function (list) {
                 if (seq !== d.loadSeq) {
                     return;
                 }
@@ -12944,11 +13161,11 @@ new Vue({
         openDesktopImagePreview: function (row, win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId || !this.isDesktopImage(row)) {
+            if (!t || (!t.local && !t.sessionId) || !this.isDesktopImage(row)) {
                 return;
             }
-            var query = '?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d))
+            var query = '?' + (t.local ? 'local=1&' : 'sessionId=' + encodeURIComponent(t.sessionId) + '&')
+                + 'path=' + encodeURIComponent(this.desktopEntryPath(row, d))
                 + '&sortBy=' + encodeURIComponent(d.sortBy)
                 + '&sortDir=' + encodeURIComponent(d.sortDir)
                 + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
@@ -12960,11 +13177,11 @@ new Vue({
         openDesktopVideoPreview: function (row, win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId || !this.isDesktopVideo(row)) {
+            if (!t || (!t.local && !t.sessionId) || !this.isDesktopVideo(row)) {
                 return;
             }
-            var query = '?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d))
+            var query = '?' + (t.local ? 'local=1&' : 'sessionId=' + encodeURIComponent(t.sessionId) + '&')
+                + 'path=' + encodeURIComponent(this.desktopEntryPath(row, d))
                 + '&sortBy=' + encodeURIComponent(d.sortBy)
                 + '&sortDir=' + encodeURIComponent(d.sortDir)
                 + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
@@ -12976,11 +13193,11 @@ new Vue({
         openDesktopAudioPreview: function (row, win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId || !this.isDesktopAudio(row)) {
+            if (!t || (!t.local && !t.sessionId) || !this.isDesktopAudio(row)) {
                 return;
             }
-            var query = '?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(this.desktopEntryPath(row, d))
+            var query = '?' + (t.local ? 'local=1&' : 'sessionId=' + encodeURIComponent(t.sessionId) + '&')
+                + 'path=' + encodeURIComponent(this.desktopEntryPath(row, d))
                 + '&sortBy=' + encodeURIComponent(d.sortBy)
                 + '&sortDir=' + encodeURIComponent(d.sortDir)
                 + '&hidden=' + (this.desktop.showHidden ? '1' : '0');
@@ -13222,7 +13439,7 @@ new Vue({
             var self = this;
             var t = this.desktopTab;
             var d = item && item.w;
-            if (!t || !t.sessionId || !this.desktop.visible || !d
+            if (!t || (!t.local && !t.sessionId) || !this.desktop.visible || !d
                     || this.desktop.windows.indexOf(d) < 0
                     || d.thumbSrc[item.path] || d.thumbFailed[item.path]) {
                 if (this._thumbQueued) {
@@ -13243,10 +13460,13 @@ new Vue({
             if (isVideo) {
                 this._videoThumbActive = (this._videoThumbActive || 0) + 1;
             }
-            var url = (isVideo ? '/api/sftp/video' : '/api/sftp/thumbnail')
-                + '?sessionId=' + encodeURIComponent(t.sessionId)
-                + '&path=' + encodeURIComponent(item.path)
+            var apiBase = t.local ? '/api/local/fs/' : '/api/sftp/';
+            var url = apiBase + (isVideo ? 'video' : 'thumbnail')
+                + '?path=' + encodeURIComponent(item.path)
                 + '&v=' + item.mtime;
+            if (!t.local) {
+                url += '&sessionId=' + encodeURIComponent(t.sessionId);
+            }
             var promise;
             if (isVideo) {
                 promise = new Promise(function (resolve, reject) {
@@ -13403,6 +13623,20 @@ new Vue({
             this.desktop.menu.visible = false;
             this.closeDesktopSubMenus();
             var self = this;
+            if (this.desktop.local && ['vscode', 'crossTransfer', 'terminal', 'terminalHere',
+                'downloadBundle', 'downloadLocal'].indexOf(action) >= 0) {
+                this.desktopServerReady();
+                return;
+            }
+            if (this.desktop.local && (action.indexOf('compress') === 0
+                    || action.indexOf('extract') === 0)) {
+                this.desktopServerReady();
+                return;
+            }
+            if (this.desktop.local && action === 'delete') {
+                this.desktopDeleteRows(rows, ctxWin, true);
+                return;
+            }
             if (action === 'open') {
                 if (surface) {
                     this.openDesktopSurfaceRow(target || rows[0]);
@@ -13826,7 +14060,9 @@ new Vue({
             var d = win || this.desk;
             var files = rows.filter(function (r) { return !r.dir; });
             if (!files.length) {
-                ELEMENT.Message.info('所选项目都是文件夹，请使用「打包下载」');
+                ELEMENT.Message.info(this.desktop.local
+                    ? '所选项目都是文件夹，本地桌面暂不支持打包下载'
+                    : '所选项目都是文件夹，请使用「打包下载」');
                 return;
             }
             var skipped = rows.length - files.length;
@@ -13942,7 +14178,7 @@ new Vue({
         desktopDownloadOne: function (row, win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId) {
+            if (!t || (!t.local && !t.sessionId)) {
                 return;
             }
             this.downloadPath(t, this.desktopEntryPath(row, d));
@@ -13954,6 +14190,9 @@ new Vue({
         },
         openDesktopTrashWindow: function () {
             if (!this.desktop.visible) {
+                return null;
+            }
+            if (!this.desktopServerReady()) {
                 return null;
             }
             var t = this.desktopTab;
@@ -14183,19 +14422,25 @@ new Vue({
         desktopDeleteRows: function (rows, win, permanent) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId || !rows || !rows.length) {
+            if (!t || (!t.local && !t.sessionId) || !rows || !rows.length) {
                 return;
             }
             var self = this;
+            var local = this.desktop.local;
+            if (local) {
+                permanent = true;
+            }
             var label = rows.length === 1
                 ? ('「' + rows[0].name + '」' + (rows[0].dir ? '及其全部内容' : ''))
                 : (rows.length + ' 个项目');
-            var message = permanent
-                ? ('确定彻底删除' + label + '？删除后不可恢复。')
-                : ('确定将' + label + '移入回收站？可在回收站中恢复。');
-            this.$confirm(message, permanent ? '彻底删除' : '移入回收站', {
+            var message = local
+                ? ('确定删除' + label + '？本地桌面不提供回收站，删除后不可恢复。')
+                : (permanent
+                    ? ('确定彻底删除' + label + '？删除后不可恢复。')
+                    : ('确定将' + label + '移入回收站？可在回收站中恢复。'));
+            this.$confirm(message, local ? '删除本地文件' : (permanent ? '彻底删除' : '移入回收站'), {
                 type: 'warning',
-                confirmButtonText: permanent ? '彻底删除' : '移入回收站',
+                confirmButtonText: local ? '删除' : (permanent ? '彻底删除' : '移入回收站'),
                 cancelButtonText: '取消'
             }).then(function () {
                 if (!permanent) {
@@ -14243,10 +14488,13 @@ new Vue({
                 var fail = 0;
                 rows.forEach(function (r) {
                     chain = chain.then(function () {
-                        return http.post('/api/sftp/delete', {
-                            sessionId: t.sessionId,
-                            path: self.desktopEntryPath(r, d)
-                        }).then(function () {
+                        var delReq = t.local
+                            ? http.post('/api/local/fs/delete', { path: self.desktopEntryPath(r, d) })
+                            : http.post('/api/sftp/delete', {
+                                sessionId: t.sessionId,
+                                path: self.desktopEntryPath(r, d)
+                            });
+                        return delReq.then(function () {
                             ok++;
                         }).catch(function () {
                             fail++;
@@ -14407,8 +14655,8 @@ new Vue({
         desktopNewFolder: function (win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId) {
-                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning('桌面尚未就绪，请稍后再试');
                 return;
             }
             var self = this;
@@ -14420,10 +14668,13 @@ new Vue({
                 if (!name) {
                     return null;
                 }
-                return http.post('/api/sftp/mkdir', {
-                    sessionId: t.sessionId,
-                    path: self.pathJoin(d.path, name)
-                }).then(function () {
+                var mkdirReq = t.local
+                    ? http.post('/api/local/fs/mkdir', { path: self.pathJoin(d.path, name) })
+                    : http.post('/api/sftp/mkdir', {
+                        sessionId: t.sessionId,
+                        path: self.pathJoin(d.path, name)
+                    });
+                return mkdirReq.then(function () {
                     ELEMENT.Message.success('已创建文件夹：' + name);
                     self.desktopRefresh(d);
                 });
@@ -14432,8 +14683,8 @@ new Vue({
         desktopNewFile: function (win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId) {
-                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning('桌面尚未就绪，请稍后再试');
                 return;
             }
             var self = this;
@@ -14446,10 +14697,13 @@ new Vue({
                     return null;
                 }
                 var path = self.pathJoin(d.path, name);
-                return http.post('/api/sftp/touch', {
-                    sessionId: t.sessionId,
-                    path: path
-                }).then(function () {
+                var touchReq = t.local
+                    ? http.post('/api/local/fs/touch', { path: path })
+                    : http.post('/api/sftp/touch', {
+                        sessionId: t.sessionId,
+                        path: path
+                    });
+                return touchReq.then(function () {
                     ELEMENT.Message.success('已创建 ' + name);
                     self.desktopRefresh(d);
                     self.openDesktopEditorWindow(t, path);
@@ -14545,7 +14799,7 @@ new Vue({
         desktopOpenEdit: function (row, win) {
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId || !row) {
+            if (!t || (!t.local && !t.sessionId) || !row) {
                 return;
             }
             this.openDesktopEditorWindow(t, this.desktopEntryPath(row, d));
@@ -14594,8 +14848,8 @@ new Vue({
             }
             var t = this.desktopTab;
             var d = win || this.desk;
-            if (!t || !t.sessionId) {
-                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning('桌面尚未就绪，请稍后再试');
                 return Promise.reject(new Error('session not ready'));
             }
             var self = this;
@@ -15075,8 +15329,8 @@ new Vue({
                 return;
             }
             var t = this.desktopTab;
-            if (!t || !t.sessionId) {
-                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning('桌面尚未就绪，请稍后再试');
                 return;
             }
             var self = this;
@@ -15099,11 +15353,14 @@ new Vue({
                     .catch(finish);
                 return;
             }
-            http.post('/api/sftp/copy', {
-                sessionId: t.sessionId,
-                destDir: dd.dest,
-                paths: dd.paths.slice()
-            }).then(function () {
+            var copyReq = t.local
+                ? http.post('/api/local/fs/copy', { destDir: dd.dest, paths: dd.paths.slice() })
+                : http.post('/api/sftp/copy', {
+                    sessionId: t.sessionId,
+                    destDir: dd.dest,
+                    paths: dd.paths.slice()
+                });
+            copyReq.then(function () {
                 ELEMENT.Message.success('已复制 ' + dd.names.length + ' 项到 '
                     + (dd.isDesktop ? '桌面' : dd.dest));
                 if (dd.targetWin && self.desktop.windows.indexOf(dd.targetWin) >= 0) {
@@ -15118,7 +15375,7 @@ new Vue({
             var t = this.desktopTab;
             var d = win || this.desk;
             var target = targetWin || d;
-            if (!t || !t.sessionId || !sources.length) {
+            if (!t || (!t.local && !t.sessionId) || !sources.length) {
                 return Promise.resolve();
             }
             var self = this;
@@ -15147,11 +15404,14 @@ new Vue({
                 var fail = 0;
                 sources.forEach(function (src) {
                     chain = chain.then(function () {
-                        return http.post('/api/sftp/move', {
-                            sessionId: t.sessionId,
-                            path: src,
-                            destDir: dest
-                        }).then(function () {
+                        var moveReq = t.local
+                            ? http.post('/api/local/fs/move', { path: src, destDir: dest })
+                            : http.post('/api/sftp/move', {
+                                sessionId: t.sessionId,
+                                path: src,
+                                destDir: dest
+                            });
+                        return moveReq.then(function () {
                             ok++;
                         }).catch(function () {
                             fail++;
@@ -15989,7 +16249,9 @@ new Vue({
                 this.desktopOpenLocalSearchResult(entry);
                 return;
             }
-            this.desktopSearchServer();
+            if (!this.desktop.local) {
+                this.desktopSearchServer();
+            }
         },
         desktopStartOpenConnection: function (c) {
             if (!c || c.id == null) {
@@ -16004,6 +16266,10 @@ new Vue({
             this.openDesktopTabForConn(c.id, this.desktop.surface.dir || '');
         },
         desktopStartRunAction: function (id) {
+            if (this.desktopAppBlocked(id)) {
+                this.desktopServerReady();
+                return;
+            }
             this.desktop.startOpen = false;
             var dir = this.desktop.surface.dir;
             var win = this.desktopSurfaceContextWin();
@@ -16041,6 +16307,10 @@ new Vue({
         },
         desktopLaunchApp: function (id) {
             if (!id || id === 'desktop') {
+                return;
+            }
+            if (this.desktopAppBlocked(id)) {
+                this.desktopServerReady();
                 return;
             }
             this.desktop.startOpen = false;
@@ -16479,6 +16749,9 @@ new Vue({
             location.reload();
         },
         openDesktopSysInfo: function () {
+            if (!this.desktopServerReady()) {
+                return;
+            }
             this.desktop.startOpen = false;
             var t = this.desktopTab;
             if (!t || !t.sessionId) {
@@ -16494,6 +16767,9 @@ new Vue({
         desktopSearchServer: function () {
             var q = this.desktopStartQuery;
             if (!q) {
+                return;
+            }
+            if (!this.desktopServerReady()) {
                 return;
             }
             var t = this.desktopTab;
@@ -18269,11 +18545,16 @@ new Vue({
             this.downloadPath(t, this.pathJoin(t.sftpPath, row.name));
         },
         downloadPath: function (tab, path) {
-            if (!tab || !tab.sessionId) {
+            var local = !!(tab && tab.local);
+            if (!tab || (!local && !tab.sessionId)) {
                 return;
             }
             var self = this;
             var name = path.substring(path.lastIndexOf('/') + 1) || path;
+            if (local) {
+                this.triggerDownload('/api/local/fs/download?path=' + encodeURIComponent(path), name);
+                return;
+            }
             var url = '/api/sftp/download?sessionId=' + encodeURIComponent(tab.sessionId)
                 + '&path=' + encodeURIComponent(path);
             this.createDownloadTask(name).then(function (task) {
@@ -19211,8 +19492,11 @@ new Vue({
             if (!tab || !file) {
                 return Promise.reject(new Error('参数缺失'));
             }
+            var local = !!tab.local;
             var fd = new FormData();
-            fd.append('sessionId', tab.sessionId);
+            if (!local) {
+                fd.append('sessionId', tab.sessionId);
+            }
             fd.append('path', dir);
             fd.append('file', file);
             var item = {
@@ -19230,7 +19514,7 @@ new Vue({
                 clientKey: tab.clientKey
             };
             this.pushTransfer(item);
-            return http.post('/api/sftp/upload', fd, {
+            return http.post(local ? '/api/local/fs/upload' : '/api/sftp/upload', fd, {
                 onUploadProgress: function (e) {
                     if (e && e.total) {
                         item.offset = Math.min(e.loaded, e.total);
@@ -19738,14 +20022,26 @@ new Vue({
             }).catch(function () { /* 取消或失败（已提示） */ });
         },
         doRename: function () {
-            var t = this.activeTab;
             var f = this.renameForm;
+            var local = !!(f.desktop && this.desktop.local);
+            var t = local ? this.desktopTab : this.activeTab;
             if (!f.newName || !f.newName.trim()) {
                 ELEMENT.Message.warning('请输入新名称');
                 return;
             }
+            if (!local && (!t || !t.sessionId)) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
             var self = this;
-            http.post('/api/sftp/rename', { sessionId: t.sessionId, path: f.path, newName: f.newName.trim() })
+            var renameReq = local
+                ? http.post('/api/local/fs/rename', { path: f.path, newName: f.newName.trim() })
+                : http.post('/api/sftp/rename', {
+                    sessionId: t.sessionId,
+                    path: f.path,
+                    newName: f.newName.trim()
+                });
+            renameReq
                 .then(function () {
                     self.renameVisible = false;
                     if (f.desktop) {
@@ -21502,6 +21798,10 @@ new Vue({
         } catch (e) { /* ignore */ }
         self.loadConnections().then(function () {
             var params = new URLSearchParams(location.search);
+            if (params.get('local') === '1') {
+                self.openLocalDesktop();
+                return;
+            }
             var cid = params.get('connId');
             if (cid) {
                 // 带参打开（连接管理页「连接」/「返回终端」/ 新标签打开桌面）：仅本次生效，

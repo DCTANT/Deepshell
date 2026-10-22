@@ -146,6 +146,22 @@ button { border: 0; background: none; cursor: pointer; }
 .welcome-feats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 24px; }
 .welcome-feats span { padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); font-size: 10px; }
 
+.saved-profiles { margin: 20px auto 0; padding-top: 14px; border-top: 1px solid var(--line); text-align: left; }
+.saved-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10px; }
+.saved-head em { color: var(--dim); font-style: normal; font-size: 9px; }
+.saved-list { display: flex; flex-direction: column; gap: 6px; max-height: 176px; overflow-y: auto; margin-top: 9px; padding-right: 2px; }
+.saved-item { display: flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, 0.025); overflow: hidden; }
+.saved-item:hover { border-color: rgba(240, 82, 82, 0.34); background: rgba(240, 82, 82, 0.05); }
+.saved-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; padding: 8px 10px; text-align: left; }
+.saved-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+.saved-addr { color: var(--dim); font-family: ui-monospace, Consolas, monospace; font-size: 9px; }
+.saved-badge { padding: 1px 6px; border: 1px solid rgba(103, 213, 139, 0.25); border-radius: 999px; color: var(--green); font-size: 8px; }
+.saved-op { flex: 0 0 auto; padding: 0 9px; border-left: 1px solid var(--line); color: var(--dim); font-size: 9px; }
+.saved-op:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.saved-op.danger:hover { color: #ff8b86; background: rgba(240, 82, 82, 0.08); }
+.check-line { flex-direction: row !important; align-items: center; gap: 7px !important; color: var(--muted); font-size: 10px; cursor: pointer; }
+.check-line input { width: 13px; height: 13px; margin: 0; accent-color: var(--accent); }
+
 /* ---------------- workspace ---------------- */
 
 .workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; }

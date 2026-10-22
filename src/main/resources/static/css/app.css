@@ -735,6 +735,18 @@ a {
     font-weight: 700;
 }
 
+.ws-empty-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ws-empty-hint {
+    margin: -2px 0 0;
+    font-size: 12px;
+    color: #6f7d91;
+}
+
 .empty-logo b {
     color: var(--accent);
 }
@@ -1422,6 +1434,16 @@ body.resizing .term-host {
 .conn-dlg-actions {
     flex: 0 0 auto;
     white-space: nowrap;
+}
+
+.conn-dlg-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.conn-dlg-footer .spacer {
+    flex: 1;
 }
 
 .conn-dlg-list {

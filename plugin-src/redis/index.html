@@ -26,7 +26,7 @@
         <div class="side-spacer"></div>
         <button id="btnOpenConnectSide" class="btn btn-ghost side-connect">连接 Redis</button>
         <button id="btnDisconnect" class="btn btn-ghost side-disconnect hidden">断开连接</button>
-        <div class="side-foot"><span class="desktop-dot"></span> 仅 AI 可视化桌面可用</div>
+        <div class="side-foot"><span class="desktop-dot"></span> 仅 DeepShell 可视化桌面可用</div>
     </aside>
 
     <main class="main">
@@ -38,6 +38,13 @@
                 <h1>Redis 管理器</h1>
                 <p>连接 Redis，像浏览文件一样搜索键、查看与编辑数据、执行命令。连接由 DeepShell 本机代理建立，插件本身不直接接触网络。</p>
                 <button id="btnOpenConnect" class="btn btn-primary btn-lg">连接 Redis</button>
+                <div id="savedProfiles" class="saved-profiles hidden">
+                    <div class="saved-head">
+                        <span>已保存的连接</span>
+                        <em>密码使用本机密钥加密保存</em>
+                    </div>
+                    <div id="savedProfileList" class="saved-list"></div>
+                </div>
                 <div class="welcome-feats">
                     <span>SCAN 键搜索</span><span>类型化编辑</span><span>TTL 管理</span><span>命令控制台</span>
                 </div>
@@ -155,6 +162,7 @@
         <header><b>连接 Redis</b><button class="modal-x" data-close="connectModal" title="关闭">×</button></header>
         <form id="connectForm">
             <div class="form-grid">
+                <label class="field wide hidden" id="savedPickerWrap"><span>已保存的连接</span><select id="fSaved" class="input"><option value="">新建连接（手动填写）</option></select></label>
                 <label class="field wide"><span>连接名称（可选）</span><input id="fName" class="input" placeholder="本地 Redis"></label>
                 <label class="field wide"><span>主机</span><input id="fHost" class="input" value="127.0.0.1" required></label>
                 <label class="field"><span>端口</span><input id="fPort" class="input" type="number" value="6379" min="1" max="65535" required></label>
@@ -162,10 +170,11 @@
                 <label class="field"><span>用户名（ACL，可选）</span><input id="fUser" class="input" autocomplete="off"></label>
                 <label class="field"><span>密码（可选）</span><input id="fPassword" class="input" type="password" autocomplete="off"></label>
                 <label class="field"><span>连接超时</span><select id="fTimeout" class="input"><option value="3000">3 秒</option><option value="5000" selected>5 秒</option><option value="10000">10 秒</option></select></label>
+                <label class="field wide check-line"><input id="fSave" type="checkbox" checked> 保存连接信息，下次打开可直接连接（密码在本机加密存储）</label>
             </div>
             <div id="connectError" class="form-error hidden"></div>
             <div class="modal-foot">
-                <span class="modal-note">连接由 DeepShell 服务端建立，密码不会保存在浏览器。</span>
+                <span class="modal-note">连接由 DeepShell 服务端建立；浏览器不会接触保存的密码。</span>
                 <button type="button" class="btn btn-ghost" data-close="connectModal">取消</button>
                 <button type="submit" id="btnConnect" class="btn btn-primary">连接</button>
             </div>

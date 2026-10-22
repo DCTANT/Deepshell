@@ -44,7 +44,9 @@
         consoleLines: [],
         consoleHistory: [],
         consoleIndex: -1,
-        confirmResolve: null
+        confirmResolve: null,
+        profiles: [],
+        profileEditId: ''
     };
 
     var dom = {
@@ -102,6 +104,11 @@
         fUser: document.getElementById('fUser'),
         fPassword: document.getElementById('fPassword'),
         fTimeout: document.getElementById('fTimeout'),
+        fSave: document.getElementById('fSave'),
+        fSaved: document.getElementById('fSaved'),
+        savedPickerWrap: document.getElementById('savedPickerWrap'),
+        savedProfiles: document.getElementById('savedProfiles'),
+        savedProfileList: document.getElementById('savedProfileList'),
         renameForm: document.getElementById('renameForm'),
         renameInput: document.getElementById('renameInput'),
         confirmTitle: document.getElementById('confirmTitle'),
@@ -408,59 +415,121 @@
             showConnectError('数据库编号需在 0-255 之间');
             return;
         }
+        var name = dom.fName.value.trim();
+        var body = {
+            host: host,
+            port: port,
+            username: dom.fUser.value.trim(),
+            password: dom.fPassword.value,
+            db: db,
+            timeoutMs: parseInt(dom.fTimeout.value, 10) || 5000
+        };
+        if (state.profileEditId) {
+            body.profileId = state.profileEditId;
+        }
+        try {
+            var data = await performConnect(body, name);
+            if (dom.fSave.checked) {
+                try {
+                    var saveBody = {
+                        name: name || state.connName,
+                        host: data.host || host,
+                        port: data.port || port,
+                        username: body.username,
+                        db: Number(data.db) || db,
+                        timeoutMs: body.timeoutMs,
+                        password: dom.fPassword.value
+                    };
+                    if (state.profileEditId) {
+                        saveBody.id = state.profileEditId;
+                    }
+                    var saved = await api('profiles/save', saveBody);
+                    if (saved && saved.id) {
+                        state.profileEditId = saved.id;
+                    }
+                    await loadSavedProfiles();
+                } catch (saveErr) {
+                    toast('连接成功，但保存连接信息失败：' + errorText(saveErr), 'error');
+                }
+            }
+        } catch (err) {
+            showConnectError(errorText(err));
+        }
+    }
+
+    async function performConnect(body, name) {
         state.connecting = true;
         dom.btnConnect.disabled = true;
         dom.btnConnect.textContent = '连接中…';
         dom.connectError.classList.add('hidden');
         try {
-            var data = await api('connect', {
-                host: host,
-                port: port,
-                username: dom.fUser.value.trim(),
-                password: dom.fPassword.value,
-                db: db,
-                timeoutMs: parseInt(dom.fTimeout.value, 10) || 5000
-            });
+            var data = await api('connect', body);
             if (!data || !data.connectionId) {
                 throw new Error('连接返回数据异常');
             }
-            state.connected = true;
-            state.conn = data;
-            state.connName = dom.fName.value.trim() || (data.host + ':' + data.port);
-            state.db = Number(data.db) || 0;
-            state.dbSize = Number(data.dbSize) || 0;
-            state.databases = data.databases || [];
-            state.info = data.info || {};
-            state.keys = [];
-            state.keySeen = {};
-            state.cursor = '0';
-            state.keys = [];
-            state.current = null;
-            state.currentTab = 'value';
-            state.typeFilter = 'all';
-            state.viewMode = 'flat';
-            state.collapsed = {};
-            state.consoleLines = [];
-            dom.searchInput.value = '';
-            dom.searchInput.placeholder = '搜索键，支持 Redis 模式，如 user:*、cache:?';
-            closeModal('connectModal');
-            setHidden(dom.welcome, true);
-            setHidden(dom.workspace, false);
-            renderConnBox();
-            renderDbList();
-            renderTypeFilters();
-            renderKeys();
-            renderDetailEmpty();
-            renderConsole();
-            updateStatus();
-            await scan(true);
-            toast('已连接 ' + state.connName, 'success');
-        } catch (err) {
-            showConnectError(errorText(err));
+            await applyConnected(data, name);
+            return data;
         } finally {
             state.connecting = false;
             dom.btnConnect.disabled = false;
             dom.btnConnect.textContent = '连接';
+        }
+    }
+
+    async function applyConnected(data, name) {
+        state.connected = true;
+        state.conn = data;
+        state.connName = (name || '').trim() || (data.host + ':' + data.port);
+        state.db = Number(data.db) || 0;
+        state.dbSize = Number(data.dbSize) || 0;
+        state.databases = data.databases || [];
+        state.info = data.info || {};
+        state.keys = [];
+        state.keySeen = {};
+        state.cursor = '0';
+        state.keys = [];
+        state.current = null;
+        state.currentTab = 'value';
+        state.typeFilter = 'all';
+        state.viewMode = 'flat';
+        state.collapsed = {};
+        state.consoleLines = [];
+        dom.searchInput.value = '';
+        dom.searchInput.placeholder = '搜索键，支持 Redis 模式，如 user:*、cache:?';
+        closeModal('connectModal');
+        setHidden(dom.welcome, true);
+        setHidden(dom.workspace, false);
+        renderConnBox();
+        renderDbList();
+        renderTypeFilters();
+        renderKeys();
+        renderDetailEmpty();
+        renderConsole();
+        updateStatus();
+        await scan(true);
+        toast('已连接 ' + state.connName, 'success');
+    }
+
+    async function connectSaved(profile) {
+        if (!profile || state.connecting) {
+            return;
+        }
+        try {
+            await performConnect({
+                profileId: profile.id,
+                host: profile.host,
+                port: profile.port,
+                username: profile.username || '',
+                password: '',
+                db: profile.db,
+                timeoutMs: profile.timeoutMs || 5000
+            }, profile.name);
+            state.profileEditId = profile.id;
+            await loadSavedProfiles();
+        } catch (err) {
+            toast(errorText(err), 'error');
+            openConnectModal(profile);
+            showConnectError(errorText(err));
         }
     }
 
@@ -469,13 +538,178 @@
         dom.connectError.classList.remove('hidden');
     }
 
-    function openConnectModal() {
+    function findProfile(id) {
+        for (var i = 0; i < state.profiles.length; i++) {
+            if (state.profiles[i].id === id) {
+                return state.profiles[i];
+            }
+        }
+        return null;
+    }
+
+    function resetConnectForm() {
+        state.profileEditId = '';
+        dom.fName.value = '';
+        dom.fHost.value = '127.0.0.1';
+        dom.fPort.value = '6379';
+        dom.fDb.value = '0';
+        dom.fUser.value = '';
+        dom.fPassword.value = '';
+        dom.fPassword.placeholder = '';
+        dom.fTimeout.value = '5000';
+        dom.fSave.checked = true;
+        renderProfilePicker();
+    }
+
+    function fillConnectForm(profile) {
+        if (!profile) {
+            return;
+        }
+        state.profileEditId = profile.id;
+        dom.fName.value = profile.name || '';
+        dom.fHost.value = profile.host || '127.0.0.1';
+        dom.fPort.value = String(profile.port || 6379);
+        dom.fDb.value = String(profile.db || 0);
+        dom.fUser.value = profile.username || '';
+        dom.fPassword.value = '';
+        dom.fPassword.placeholder = profile.hasPassword ? '已保存，留空沿用原密码' : '未保存密码';
+        var timeout = String(profile.timeoutMs || 5000);
+        var hasOption = false;
+        for (var i = 0; i < dom.fTimeout.options.length; i++) {
+            if (dom.fTimeout.options[i].value === timeout) {
+                hasOption = true;
+                break;
+            }
+        }
+        if (!hasOption) {
+            var opt = document.createElement('option');
+            opt.value = timeout;
+            opt.textContent = (parseInt(timeout, 10) / 1000) + ' 秒';
+            dom.fTimeout.appendChild(opt);
+        }
+        dom.fTimeout.value = timeout;
+        dom.fSave.checked = true;
+        renderProfilePicker();
+    }
+
+    function openConnectModal(profile) {
         dom.connectError.classList.add('hidden');
         dom.connectError.textContent = '';
+        if (profile && profile.id) {
+            fillConnectForm(profile);
+        } else {
+            state.profileEditId = '';
+            dom.fPassword.placeholder = '';
+            renderProfilePicker();
+        }
         openModal('connectModal');
         setTimeout(function () {
-            try { dom.fHost.focus(); } catch (e) { /* ignore */ }
+            try {
+                if (profile && profile.id) {
+                    dom.fPassword.focus();
+                } else {
+                    dom.fHost.focus();
+                }
+            } catch (e) { /* ignore */ }
         }, 60);
+    }
+
+    function renderSavedProfiles() {
+        if (!dom.savedProfiles || !dom.savedProfileList) {
+            return;
+        }
+        clear(dom.savedProfileList);
+        var list = state.profiles || [];
+        if (!list.length) {
+            setHidden(dom.savedProfiles, true);
+            return;
+        }
+        setHidden(dom.savedProfiles, false);
+        list.forEach(function (profile) {
+            var row = el('div', 'saved-item');
+            var main = el('button', 'saved-main');
+            main.type = 'button';
+            main.title = '双击直接连接 ' + profile.host + ':' + profile.port;
+            main.appendChild(el('span', 'saved-name', profile.name || (profile.host + ':' + profile.port)));
+            var meta = el('span', 'saved-addr',
+                profile.host + ':' + profile.port + ' · DB ' + (profile.db || 0)
+                + (profile.username ? ' · ' + profile.username : ''));
+            main.appendChild(meta);
+            if (profile.hasPassword) {
+                main.appendChild(el('span', 'saved-badge', '密码已保存'));
+            }
+            main.addEventListener('click', function () {
+                connectSaved(profile);
+            });
+            row.appendChild(main);
+
+            var edit = el('button', 'saved-op', '编辑');
+            edit.type = 'button';
+            edit.title = '编辑并重新连接';
+            edit.addEventListener('click', function (e) {
+                e.stopPropagation();
+                openConnectModal(profile);
+            });
+            row.appendChild(edit);
+
+            var del = el('button', 'saved-op danger', '删除');
+            del.type = 'button';
+            del.title = '删除这个已保存的连接';
+            del.addEventListener('click', function (e) {
+                e.stopPropagation();
+                confirmAction('删除已保存连接',
+                    '确定删除「' + (profile.name || profile.host) + '」？不会影响 Redis 中的数据。',
+                    '删除').then(function (ok) {
+                    if (!ok) {
+                        return;
+                    }
+                    closeModal('confirmModal');
+                    api('profiles/delete', { id: profile.id }).then(function () {
+                        if (state.profileEditId === profile.id) {
+                            state.profileEditId = '';
+                        }
+                        return loadSavedProfiles();
+                    }).then(function () {
+                        toast('已删除保存的连接', 'success');
+                    }).catch(function (err) {
+                        toast(errorText(err), 'error');
+                    });
+                });
+            });
+            row.appendChild(del);
+            dom.savedProfileList.appendChild(row);
+        });
+    }
+
+    function renderProfilePicker() {
+        if (!dom.fSaved || !dom.savedPickerWrap) {
+            return;
+        }
+        clear(dom.fSaved);
+        var first = document.createElement('option');
+        first.value = '';
+        first.textContent = '新建连接（手动填写）';
+        dom.fSaved.appendChild(first);
+        (state.profiles || []).forEach(function (profile) {
+            var opt = document.createElement('option');
+            opt.value = profile.id;
+            opt.textContent = (profile.name || profile.host) + ' · ' + profile.host + ':' + profile.port;
+            dom.fSaved.appendChild(opt);
+        });
+        dom.fSaved.value = state.profileEditId || '';
+        setHidden(dom.savedPickerWrap, !(state.profiles || []).length);
+    }
+
+    async function loadSavedProfiles() {
+        try {
+            var list = await api('profiles/list');
+            state.profiles = Array.isArray(list) ? list : [];
+        } catch (err) {
+            // 旧版后端或数据目录不可写时静默降级为手动填写
+            state.profiles = [];
+        }
+        renderSavedProfiles();
+        renderProfilePicker();
     }
 
     async function disconnect() {
@@ -1599,8 +1833,23 @@
     /* ---------------- events ---------------- */
 
     function wireEvents() {
-        dom.btnOpenConnect.addEventListener('click', openConnectModal);
-        dom.btnOpenConnectSide.addEventListener('click', openConnectModal);
+        dom.btnOpenConnect.addEventListener('click', function () {
+            openConnectModal();
+        });
+        dom.btnOpenConnectSide.addEventListener('click', function () {
+            openConnectModal();
+        });
+        if (dom.fSaved) {
+            dom.fSaved.addEventListener('change', function () {
+                var id = dom.fSaved.value;
+                var profile = findProfile(id);
+                if (profile) {
+                    fillConnectForm(profile);
+                } else {
+                    resetConnectForm();
+                }
+            });
+        }
         dom.btnDisconnect.addEventListener('click', function () {
             confirmAction('断开连接', '断开后不会删除 Redis 中的数据。', '断开').then(function (ok) {
                 if (ok) {
@@ -1739,6 +1988,7 @@
         renderKeys();
         renderConsole();
         updateStatus();
+        loadSavedProfiles();
     }
 
     boot();

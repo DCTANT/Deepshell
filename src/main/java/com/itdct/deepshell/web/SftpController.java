@@ -223,7 +223,7 @@ public class SftpController {
      * 真实文件名（可能含中文）放到 RFC 5987 的 filename* 中。
      * Tomcat 收到非 ASCII 头值时会丢弃该头，导致浏览器把图片当页面内联打开。
      */
-    private static String contentDisposition(String disposition, String name) {
+    static String contentDisposition(String disposition, String name) {
         String raw = (name == null || name.trim().isEmpty()) ? "download" : name;
         String safe = raw.replace('\\', '_').replace('"', '_')
                 .replace("\r", "_").replace("\n", "_");
@@ -588,7 +588,7 @@ public class SftpController {
         }
     }
 
-    private static String imageContentType(String name) {
+    static String imageContentType(String name) {
         int idx = name.lastIndexOf('.');
         if (idx < 0 || idx == name.length() - 1) {
             return null;

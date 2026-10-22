@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.service.CryptoService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -37,6 +38,11 @@ public class PluginRuntimeService {
 
     private final Map<String, LoadedModule> modules = new ConcurrentHashMap<>();
     private final Map<String, String> loadErrors = new ConcurrentHashMap<>();
+    private final CryptoService crypto;
+
+    public PluginRuntimeService(CryptoService crypto) {
+        this.crypto = crypto;
+    }
 
     @EventListener(ApplicationReadyEvent.class)
     public void loadAll() {
@@ -182,7 +188,7 @@ public class PluginRuntimeService {
                 }
                 Path dataDir = DataDir.root().resolve("plugin-data").resolve(id);
                 Files.createDirectories(dataDir);
-                PluginContext context = new PluginContext(id, dir, dataDir);
+                PluginContext context = new PluginContext(id, dir, dataDir, crypto);
                 module.initialize(context);
                 LoadedModule old = modules.put(id, new LoadedModule(module, loader));
                 if (old != null) {
