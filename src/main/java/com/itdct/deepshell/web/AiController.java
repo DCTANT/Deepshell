@@ -7,6 +7,7 @@ import com.itdct.deepshell.service.AiCancellationToken;
 import com.itdct.deepshell.service.AiCommandService;
 import com.itdct.deepshell.service.AiCompactionService;
 import com.itdct.deepshell.service.AiConfigService;
+import com.itdct.deepshell.service.AiConnectivityService;
 import com.itdct.deepshell.service.AiConversationService;
 import com.itdct.deepshell.service.AiModelCatalogService;
 import lombok.Data;
@@ -36,6 +37,7 @@ public class AiController {
     private final AiConversationService convService;
     private final AiModelCatalogService catalog;
     private final AiCompactionService compactionService;
+    private final AiConnectivityService connectivityService;
 
     /** runId -> 取消令牌：前端停止时可直接取消服务端生成/命令执行 */
     private final Map<String, AiCancellationToken> activeRuns = new ConcurrentHashMap<>();
@@ -48,13 +50,15 @@ public class AiController {
 
     public AiController(AiConfigService config, AiCommandService commandService,
                         AiAgentService agentService, AiConversationService convService,
-                        AiModelCatalogService catalog, AiCompactionService compactionService) {
+                        AiModelCatalogService catalog, AiCompactionService compactionService,
+                        AiConnectivityService connectivityService) {
         this.config = config;
         this.commandService = commandService;
         this.agentService = agentService;
         this.convService = convService;
         this.catalog = catalog;
         this.compactionService = compactionService;
+        this.connectivityService = connectivityService;
     }
 
     @PreDestroy
@@ -85,9 +89,21 @@ public class AiController {
             m.put("baseUrl", p.getBaseUrl());
             m.put("keyUrl", p.getKeyUrl());
             m.put("fallbackModels", p.getFallbackModels());
+            m.put("recommendedModel", p.getRecommendedModel());
+            m.put("keySteps", p.getKeySteps());
+            m.put("costLevel", p.getCostLevel());
+            m.put("costHint", p.getCostHint());
+            m.put("pricingUrl", p.getPricingUrl());
             list.add(m);
         }
         return R.ok(list);
+    }
+
+    /** AI 配置向导：用临时参数（不保存）发一次极小的真实请求，返回延迟或可操作错误。 */
+    @PostMapping("/test")
+    public R<Map<String, Object>> test(@RequestBody AiTestForm form) {
+        return R.ok(connectivityService.test(form.getProvider(), form.getBaseUrl(),
+                form.getApiKey(), form.getModel()));
     }
 
     /** 实时获取指定厂商的模型列表（apiKey 为空时用已保存的；失败回退内置列表并附提示） */
@@ -361,6 +377,14 @@ public class AiController {
         private String provider;
         private String baseUrl;
         private String apiKey;
+    }
+
+    @Data
+    public static class AiTestForm {
+        private String provider;
+        private String baseUrl;
+        private String apiKey;
+        private String model;
     }
 
     @Data

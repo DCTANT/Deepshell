@@ -1634,8 +1634,8 @@ Vue.component('ai-chat-panel', {
             this.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 36;
         },
         noteText: function (m) {
-            if (m && m.code === 'noApiKey' && this.context === 'window') {
-                return '请求失败：尚未配置 API Key。请到左下角开始菜单 →「设置」→「AI 助手」中配置';
+            if (m && m.code === 'noApiKey') {
+                return 'AI 还没配置好。点下面的「打开 AI 配置向导」，跟着步骤拿一个 API Key，几分钟就能用。';
             }
             return m ? m.text : '';
         },
@@ -4394,7 +4394,14 @@ new Vue({
         tabMenu: { visible: false, x: 0, y: 0, tab: null },
         hostKeyVisible: false,
         hostKeyTrusting: false,
+        hostKeyChecked: false,
         hostKeyPrompt: null,
+        connHelpVisible: false,
+        connHelpError: null,
+        connHelpTab: null,
+        onboardingVisible: false,
+        onboardingChecking: false,
+        connImportTab: 'file',
         desktopDropDialog: {
             visible: false, paths: [], names: [], win: null, targetWin: null,
             dest: '', title: '', isDesktop: false, busy: false
@@ -6584,7 +6591,7 @@ new Vue({
             } else if (cmd === 'newConnection') {
                 this.openNewConnDialog();
             } else if (cmd === 'connImport') {
-                this.connImportVisible = true;
+                this.openConnImport();
             } else if (cmd === 'connExport') {
                 this.openConnExport();
             } else if (cmd === 'reconnectActive') {
@@ -6670,6 +6677,8 @@ new Vue({
             } else if (cmd === 'ai') {
                 this.loadAiConfig();
                 this.aiSetVisible = true;
+            } else if (cmd === 'aiWizard') {
+                this.openAiWizard();
             } else if (cmd === 'desktop') {
                 this.openDesktopInNewTab(t);
             } else if (cmd === 'backup') {
@@ -6681,6 +6690,22 @@ new Vue({
             }
         },
         /* ---------- AI 设置（厂商预设 + 模型列表实时获取） ---------- */
+        openAiWizard: function () {
+            if (this.$refs.aiWizard) {
+                this.$refs.aiWizard.open();
+            }
+        },
+        onAiWizardSaved: function (d) {
+            if (d) {
+                this.aiSetForm.provider = d.provider || this.aiSetForm.provider;
+                this.aiSetForm.baseUrl = d.baseUrl || this.aiSetForm.baseUrl;
+                this.aiSetForm.model = d.model || this.aiSetForm.model;
+                this.aiSetForm.hasKey = !!d.hasKey;
+                this.aiSetForm.apiKey = '';
+            }
+            this.loadAiProviders();
+            this.loadAiRuntimeConfig();
+        },
         aiProviderPreset: function (id) {
             for (var i = 0; i < this.aiProviders.length; i++) {
                 if (this.aiProviders[i].id === id) {
@@ -8244,6 +8269,7 @@ new Vue({
                     var noteItem = { role: 'note', text: note, action: action || '' };
                     if (note.indexOf('尚未配置 API Key') >= 0) {
                         noteItem.code = 'noApiKey';
+                        noteItem.action = 'aiSetup';
                     }
                     conv.msgs.push(noteItem);
                 }
@@ -18519,6 +18545,27 @@ new Vue({
                 }
             }).catch(function () { /* 忽略 */ });
         },
+        /* ---------- 绿色版首次运行引导 ---------- */
+        maybeShowOnboarding: function () {
+            var self = this;
+            http.get('/api/app-integration/status').then(function (d) {
+                if (d && d.local && d.firstRun) {
+                    self.onboardingVisible = true;
+                }
+            }).catch(function () { /* 忽略：非绿色版或非本机访问 */ });
+        },
+        onOnboardingDone: function () {
+            this.onboardingVisible = false;
+            this._onboardingMarked = true;
+        },
+        dismissOnboarding: function () {
+            this.onboardingVisible = false;
+            if (this._onboardingMarked) {
+                return;
+            }
+            this._onboardingMarked = true;
+            http.post('/api/app-integration/onboarding', {}).catch(function () { /* 忽略 */ });
+        },
         /* ---------- 外部调用 / 跳板机客户端（deepshell://） ---------- */
         openProtocolDialog: function () {
             this.protocolVisible = true;
@@ -18682,6 +18729,25 @@ new Vue({
                 this.loadConnections();
                 return;
             }
+            if (msg.type === 'update-available') {
+                var info = msg.info || {};
+                var self = this;
+                if (this.desktop.visible) {
+                    this.pushDesktopNotice('info', '发现 DeepShell 新版本',
+                        (info.latestVersion || '') + ' 可用，可在「设置 → 系统信息 → 应用与更新」中查看');
+                }
+                ELEMENT.Notification({
+                    title: '发现 DeepShell 新版本',
+                    message: 'v' + (info.latestVersion || '') + ' 可用。点击打开「关于 → 应用与更新」，再点「检查更新」查看说明。',
+                    type: 'info',
+                    duration: 0,
+                    onClick: function () {
+                        self.loadAppInfo();
+                        self.aboutVisible = true;
+                    }
+                });
+                return;
+            }
             if (msg.type !== 'open-connection') {
                 return;
             }
@@ -18731,6 +18797,16 @@ new Vue({
             document.body.appendChild(a);
             a.click();
             a.remove();
+        },
+        /* ---------- 连接导入（文件 / SSH config / PuTTY） ---------- */
+        openConnImport: function (tab) {
+            this.connImportTab = tab || 'file';
+            this.connImportVisible = true;
+        },
+        onExternalImported: function () {
+            this.connImportVisible = false;
+            this.loadConnections();
+            this.loadFolders();
         },
         /* ---------- 连接导入（支持一次多选多个文件） ---------- */
         onImportFilesChange: function (file) {
@@ -19391,6 +19467,7 @@ new Vue({
                         tab.explicitClose = false;
                         tab.hostKeyPending = false;
                         tab.reconnectAttempts = 0;
+                        tab.helpShown = false;
                         clearReconnectTimer(tab);
                         if (tab.notifyDisconnect) {
                             tab.notifyDisconnect = false;
@@ -19439,8 +19516,13 @@ new Vue({
                     } else if (msg.type === 'error') {
                         tab.status = 'error';
                         tab.serverClosed = true;
+                        tab.helpShown = tab.helpShown || false;
                         clearReconnectTimer(tab);
                         term.write('\r\n\x1b[31m● ' + msg.message + '\x1b[0m\r\n');
+                        if (msg.diagnosis && !tab.helpShown) {
+                            tab.helpShown = true;
+                            self.showConnectionHelp(tab, msg.diagnosis);
+                        }
                     } else if (msg.type === 'closed') {
                         tab.status = 'closed';
                         // 远端中断（如服务器重启）仍交给 onclose 按退避策略自动重连，避免只能手动恢复
@@ -19749,6 +19831,7 @@ new Vue({
                 tab.hostKeyPending = true;
                 clearReconnectTimer(tab);
             }
+            this.hostKeyChecked = false;
             this.hostKeyPrompt = { tab: tab, info: info || {} };
             this.hostKeyVisible = true;
         },
@@ -19763,11 +19846,16 @@ new Vue({
                 }
             }
             this.hostKeyVisible = false;
+            this.hostKeyChecked = false;
             this.hostKeyPrompt = null;
         },
         trustHostKey: function () {
             var p = this.hostKeyPrompt;
             if (!p || !p.info) {
+                return;
+            }
+            if (!this.hostKeyChecked) {
+                ELEMENT.Message.warning('请先核对指纹，并勾选“我已核对”');
                 return;
             }
             var info = p.info;
@@ -19780,6 +19868,7 @@ new Vue({
             }).then(function () {
                 self.hostKeyTrusting = false;
                 self.hostKeyVisible = false;
+                self.hostKeyChecked = false;
                 self.hostKeyPrompt = null;
                 if (p.tab) {
                     p.tab.hostKeyPending = false;
@@ -19788,6 +19877,23 @@ new Vue({
             }).catch(function () {
                 self.hostKeyTrusting = false;
             });
+        },
+        /* ---------- 连接失败按类型给步骤 ---------- */
+        showConnectionHelp: function (tab, diagnosis) {
+            if (!diagnosis) {
+                return;
+            }
+            this.connHelpTab = tab || null;
+            this.connHelpError = diagnosis;
+            this.connHelpVisible = true;
+        },
+        editConnectionFromHelp: function () {
+            var tab = this.connHelpTab;
+            this.connHelpVisible = false;
+            if (!tab || tab.connId == null) {
+                return;
+            }
+            this.editConnFromDialog(tab.connId);
         },
         /* ---------- 端口转发 ---------- */
         openPortForwards: function (tab) {
@@ -23986,6 +24092,7 @@ new Vue({
         self.loadFolders();
         self.loadSnippets();
         self.loadAppInfo();
+        self.maybeShowOnboarding();
         self.loadDesktopPlugins(false);
         self.loadBuiltinPlugins(false);
         window.addEventListener('message', self.onPluginBridgeMessage);

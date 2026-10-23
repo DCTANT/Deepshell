@@ -2,6 +2,7 @@ package com.itdct.deepshell.protocol;
 
 import com.itdct.deepshell.DeepShellApplication;
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.common.RuntimeSupport;
 import com.itdct.deepshell.config.LocalServerInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -89,9 +90,9 @@ public class ProtocolRegistrar {
             return fill(result);
         }
         File jar = resolvePackagedJar();
-        if (jar == null) {
+        if (jar == null && !RuntimeSupport.isPackaged()) {
             state = STATE_DEVELOPMENT;
-            detail = "当前以 classes / IDE 模式运行，未注册系统协议；使用分发包或 java -jar 启动后会自动注册";
+            detail = "当前以 classes / IDE 模式运行，未注册系统协议；使用绿色版或分发包启动后会自动注册";
             return fill(result);
         }
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -174,7 +175,9 @@ public class ProtocolRegistrar {
         }
         state = STATE_REGISTERED;
         detail = "已注册到当前用户：" + key + "（无需管理员权限）";
-        launcher = jar.getAbsolutePath();
+        launcher = RuntimeSupport.isPackaged() && RuntimeSupport.launcher() != null
+                ? RuntimeSupport.launcher().toAbsolutePath().toString()
+                : jar.getAbsolutePath();
     }
 
     private static void writeUtf16Le(Path file, String text) throws Exception {
@@ -191,12 +194,14 @@ public class ProtocolRegistrar {
     }
 
     private String windowsCommand(File jar) {
-        List<String> args = new ArrayList<>();
-        args.add(javaExecutable(true));
-        args.add("-Dfile.encoding=UTF-8");
-        args.add("-jar");
-        args.add(jar.getAbsolutePath());
-        addSharedArgs(args, jar);
+        List<String> args = RuntimeSupport.launchCommand(serverInfo.port(), false);
+        if (args.isEmpty()) {
+            args.add(javaExecutable(true));
+            args.add("-Dfile.encoding=UTF-8");
+            args.add("-jar");
+            args.add(jar.getAbsolutePath());
+            addSharedArgs(args, jar);
+        }
         args.add("--deepshell.protocol-uri=%1");
 
         StringBuilder sb = new StringBuilder();
@@ -272,12 +277,14 @@ public class ProtocolRegistrar {
         String desktopName = scheme.replaceAll("[^a-z0-9+.-]", "-") + "-protocol.desktop";
         Path desktopFile = applications.resolve(desktopName);
 
-        List<String> args = new ArrayList<>();
-        args.add(javaExecutable(false));
-        args.add("-Dfile.encoding=UTF-8");
-        args.add("-jar");
-        args.add(jar.getAbsolutePath());
-        addSharedArgs(args, jar);
+        List<String> args = RuntimeSupport.launchCommand(serverInfo.port(), false);
+        if (args.isEmpty()) {
+            args.add(javaExecutable(false));
+            args.add("-Dfile.encoding=UTF-8");
+            args.add("-jar");
+            args.add(jar.getAbsolutePath());
+            addSharedArgs(args, jar);
+        }
         args.add("--deepshell.protocol-uri");
         args.add("%u");
 

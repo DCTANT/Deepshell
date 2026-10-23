@@ -95,7 +95,7 @@
             <i class="el-icon-rank"></i> 拖动连接可调整同级顺序，拖到文件夹上可移动
         </div>
         <div slot="footer" class="conn-dlg-footer">
-            <el-button size="small" icon="el-icon-upload2" @click="connImportVisible = true">连接导入</el-button>
+            <el-button size="small" icon="el-icon-upload2" @click="openConnImport('file')">连接导入</el-button>
             <el-button size="small" icon="el-icon-folder-add" @click="newFolderQuick(null)">新建文件夹</el-button>
             <span class="spacer"></span>
             <el-button size="small" icon="el-icon-files" title="无需服务器，直接打开 DeepShell 本机桌面"
@@ -107,19 +107,30 @@
     <conn-form-dialog ref="connForm" @saved="onConnSaved"></conn-form-dialog>
 
     <!-- 连接导入 -->
-    <el-dialog title="连接导入" :visible.sync="connImportVisible" width="460px" append-to-body>
-        <div class="set-row">
-            <el-upload :show-file-list="false" :auto-upload="false" :multiple="true"
-                       :on-change="onImportFilesChange" action="#" accept=".json"
-                       style="display:inline-block">
-                <el-button size="small" type="primary" icon="el-icon-upload2">选择文件导入</el-button>
-            </el-upload>
-            <span class="set-hint">支持一次框选多个文件，导入后立即出现在连接列表</span>
-        </div>
-        <div class="set-hint" style="margin-top:10px;line-height:1.9">
-            · 支持 FinalShell 连接文件（finalshell_connections_*.json 或安装目录 conn 文件夹下的连接文件）<br>
-            · 兼容本工具「连接导出」生成的文件（含密码，导入后可直接连接）
-        </div>
+    <el-dialog title="连接导入" :visible.sync="connImportVisible" width="700px" append-to-body
+               custom-class="conn-import-dialog">
+        <el-tabs v-model="connImportTab">
+            <el-tab-pane label="文件导入" name="file">
+                <div class="set-row">
+                    <el-upload :show-file-list="false" :auto-upload="false" :multiple="true"
+                               :on-change="onImportFilesChange" action="#" accept=".json"
+                               style="display:inline-block">
+                        <el-button size="small" type="primary" icon="el-icon-upload2">选择文件导入</el-button>
+                    </el-upload>
+                    <span class="set-hint">支持一次框选多个文件，导入后立即出现在连接列表</span>
+                </div>
+                <div class="set-hint" style="margin-top:10px;line-height:1.9">
+                    · 支持 FinalShell 连接文件（finalshell_connections_*.json 或安装目录 conn 文件夹下的连接文件）<br>
+                    · 兼容本工具「连接导出」生成的文件（含密码，导入后可直接连接）
+                </div>
+            </el-tab-pane>
+            <el-tab-pane label="SSH 配置" name="ssh" lazy>
+                <external-import-panel source="ssh" @imported="onExternalImported"></external-import-panel>
+            </el-tab-pane>
+            <el-tab-pane label="PuTTY" name="putty" lazy>
+                <external-import-panel source="putty" @imported="onExternalImported"></external-import-panel>
+            </el-tab-pane>
+        </el-tabs>
     </el-dialog>
 
     <!-- 连接导出 -->
@@ -360,42 +371,59 @@
             · 上下文窗口用于计算占用比例和压缩保留量，请按所用模型填写；压缩会调用一次模型生成结构化摘要
         </div>
         <div slot="footer">
+            <el-button size="small" style="float:left" icon="el-icon-magic-stick"
+                       @click="openAiWizard">配置向导</el-button>
             <el-button size="small" @click="aiSetVisible = false">取消</el-button>
             <el-button size="small" type="primary" :loading="aiSetSaving" @click="saveAiConfig">保存</el-button>
         </div>
     </el-dialog>
 
     <!-- 主机指纹确认 -->
-    <el-dialog :title="hostKeyPrompt && hostKeyPrompt.info.changed ? '主机密钥已变更' : '确认主机指纹'"
-               :visible.sync="hostKeyVisible" width="560px" append-to-body :show-close="false"
+    <el-dialog :title="hostKeyPrompt && hostKeyPrompt.info.changed
+                       ? '服务器身份证变了，先别急着连' : '第一次见这台服务器，先认认身份证'"
+               :visible.sync="hostKeyVisible" width="620px" append-to-body :show-close="false"
                custom-class="host-key-dialog"
                :close-on-click-modal="false" :close-on-press-escape="false">
-        <div v-if="hostKeyPrompt">
-            <el-alert v-if="hostKeyPrompt.info.changed" type="error" :closable="false" show-icon
-                      title="主机密钥与已保存的不一致，可能存在中间人攻击"></el-alert>
-            <el-alert v-else type="warning" :closable="false" show-icon
-                      title="首次连接该主机，请与服务器管理员核对指纹"></el-alert>
-            <div class="hk-box">
-                <div class="hk-row"><span>目标</span><b>{{ hostKeyPrompt.info.roleLabel
-                    || (hostKeyPrompt.info.role === 'jump' ? '跳板机' : '目标主机') }}</b></div>
-                <div class="hk-row"><span>地址</span><b>{{ hostKeyPrompt.info.host }}:{{ hostKeyPrompt.info.port }}</b></div>
-                <div class="hk-row"><span>类型</span><b>{{ hostKeyPrompt.info.keyType }}</b></div>
-                <div class="hk-row"><span>指纹</span><b class="hk-fp">{{ hostKeyPrompt.info.fingerprint }}</b></div>
-                <div class="hk-row" v-if="hostKeyPrompt.info.knownFingerprint">
-                    <span>原指纹</span><b class="hk-fp hk-old">{{ hostKeyPrompt.info.knownFingerprint }}</b></div>
-            </div>
-            <p class="hk-tip">
-                指纹不一致时请不要直接信任，先在服务器上执行
-                <code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> 核对。
-            </p>
+        <host-key-details v-if="hostKeyPrompt" :info="hostKeyPrompt.info"></host-key-details>
+        <div class="hk-trust-check" v-if="hostKeyPrompt">
+            <el-checkbox v-model="hostKeyChecked">
+                {{ hostKeyPrompt.info.changed
+                    ? '我已通过云控制台 VNC 核对，确认这是重装系统 / 更换密钥导致的'
+                    : '我已核对指纹，确认这是我要连接的服务器' }}
+            </el-checkbox>
         </div>
         <div slot="footer">
-            <el-button size="small" @click="cancelHostKeyPrompt">取消连接</el-button>
+            <el-button size="small" @click="cancelHostKeyPrompt">先不连接</el-button>
             <el-button size="small" :type="hostKeyPrompt && hostKeyPrompt.info.changed ? 'danger' : 'primary'"
-                       :loading="hostKeyTrusting" @click="trustHostKey">
-                {{ hostKeyPrompt && hostKeyPrompt.info.changed ? '更新并信任' : '信任并连接' }}
+                       :disabled="!hostKeyChecked" :loading="hostKeyTrusting" @click="trustHostKey">
+                {{ hostKeyPrompt && hostKeyPrompt.info.changed ? '确认无误，更新并连接' : '确认无误，信任并连接' }}
             </el-button>
         </div>
+    </el-dialog>
+
+    <!-- 连接失败排查 -->
+    <el-dialog title="连不上？按这几步排查" :visible.sync="connHelpVisible" width="620px" append-to-body
+               :close-on-click-modal="false">
+        <issue-help :error="connHelpError"></issue-help>
+        <div slot="footer">
+            <el-button size="small" @click="connHelpVisible = false">知道了</el-button>
+            <el-button size="small" type="primary" v-if="connHelpTab && connHelpTab.connId != null"
+                       @click="editConnectionFromHelp">编辑这个连接</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- 绿色版首次运行引导 -->
+    <el-dialog title="欢迎使用 DeepShell" :visible.sync="onboardingVisible" width="620px"
+               append-to-body :show-close="true" :close-on-click-modal="false"
+               custom-class="onboarding-dialog" @closed="dismissOnboarding">
+        <div class="onboarding-head">
+            <div class="onboarding-logo">Deep<b>Shell</b></div>
+            <div>
+                <b>绿色版已经可以用了</b>
+                <p>不用安装 JDK，也不用记命令。把常用入口放好，下次从桌面或开始菜单点开就行。</p>
+            </div>
+        </div>
+        <app-runtime-panel onboarding @done="onOnboardingDone"></app-runtime-panel>
     </el-dialog>
 
     <!-- 端口转发 -->
@@ -1018,7 +1046,8 @@
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-monitor"></i>连接与工作台</div>
                 <ul>
-                    <li>右上角「＋」打开已保存连接，或点击「新建连接」直接创建后立即连接；连接右侧 ⚙ 可设置置顶 / 收藏 / <b>编辑连接</b>，也可以<b>把连接拖动到文件夹上</b>快速归入文件夹；<b>文件夹上右键「连接所有」</b>可批量打开其中（含子文件夹）的全部服务器</li>
+                    <li>右上角「＋」打开已保存连接，或点击「新建连接」直接创建后立即连接；<b>新建连接默认是首次连接向导</b>：选云厂商与系统镜像、按提示找 IP / 安全组 / 默认登录名，填写后用「测试并保存」。连接右侧 ⚙ 可设置置顶 / 收藏 / <b>编辑连接</b>，也可以<b>把连接拖动到文件夹上</b>快速归入文件夹；<b>文件夹上右键「连接所有」</b>可批量打开其中（含子文件夹）的全部服务器</li>
+                    <li><b>连不上时</b>：测试连接或终端连接失败会按错误类型给步骤（端口拒绝、超时、DNS、安全组、用户名 / 密码、私钥格式、代理 / 跳板机等）；首次连接或指纹变化时会用「服务器身份证」解释 SHA256 主机指纹，并给出在服务器上核对的命令。请先核对再信任，无法确认时不要更新指纹</li>
                     <li><b>直接进入桌面（无需服务器）</b>：工作台空状态或「打开连接」弹窗底部点「直接进入桌面」，会打开 DeepShell 本机的本地桌面，不建立 SSH 连接。文件保存在数据目录的 <b>Desktop</b> 子目录（可通过桌面任务栏「本地桌面」提示查看），支持资源管理器浏览、新建 / 上传 / 下载 / 重命名 / 删除 / 在线编辑、图片与视频预览以及桌面插件；<b>「终端」直接打开本机 Shell（Windows cmd / Unix $SHELL）</b>，无需 SSH 回本机；AI 终端、任务管理器、服务、网络工具、磁盘、常用目录、快捷键命令、服务器搜索等依赖服务器的功能会自动隐藏并禁用。除首次进入外，也可在连接管理窗口点「本地桌面」在新标签页打开；地址带 <code>local=1</code> 时刷新会回到本地桌面</li>
                     <li>页面刷新（F5）后会自动<b>恢复之前打开的会话标签并重新连接</b>，不会丢失工作现场</li>
                     <li>标签：<b>拖动</b>可排序；<b>右键</b>支持复制 IP / 系统信息 / 重新连接 / 断开 / 关闭（其他、左边、右边、全部）；中键点击快速关闭</li>
@@ -1050,7 +1079,7 @@
                 <ul>
                     <li><b>双击 Ctrl</b> 显示 / 隐藏；<b>Esc</b> 关闭；<b>Enter</b> 发送</li>
                     <li><b>Tab</b> 智能补全（路径 / 历史 / 快捷命令）；<b>Alt</b> 或 <b>↑↓</b> 调出历史命令</li>
-                    <li><b>AI 生成命令</b>：点击魔法棒图标展开 AI 输入框，用自然语言描述需求，自动翻译为 shell 命令并填入命令框（需先在右上角菜单「AI 设置」配置 API Key）</li>
+                    <li><b>AI 生成命令</b>：点击魔法棒图标展开 AI 输入框，用自然语言描述需求，自动翻译为 shell 命令并填入命令框。没配 API Key 时，点提示里的「打开 AI 配置向导」按步骤申请并测试，不需要自己查文档</li>
                     <li>右侧工具：历史、选项（发送后清空 / 追加回车 / 忽略空行）、<b>多会话下发</b>（一条命令同时发到多台）、复制 / 粘贴、搜索、连接编辑、全屏</li>
                 </ul>
             </div>
@@ -1122,7 +1151,7 @@
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-menu"></i>右上角菜单</div>
                 <ul>
-                    <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、终端背景设置、AI 设置（DeepSeek / 通义千问 / 智谱 GLM / MiniMax / Kimi / OpenAI 等厂商，模型列表实时获取、下拉选择）</li>
+                    <li>连接导入（<b>支持一次框选多个文件</b>，可导入 FinalShell 连接文件；也可扫描本机 <code>~/.ssh/config</code> 和 PuTTY 会话勾选导入）/ 连接导出（<b>弹窗勾选要导出的连接</b>）、字体设置、快捷键设置、终端背景设置、AI 设置与 <b>AI 配置向导</b>（含 API Key 获取步骤、推荐模型、费用提示和一键测试）</li>
                     <li>「DeepShell 服务 → 备份与还原」可把连接与密码、快捷命令、AI 对话、桌面外观与图标 / 字体、背景图、插件及插件数据打包为 ZIP；在新安装的 DeepShell 中导入即可恢复</li>
                 </ul>
             </div>
@@ -1139,7 +1168,8 @@
     </el-dialog>
 
     <!-- 关于 -->
-    <el-dialog title="关于" :visible.sync="aboutVisible" width="440px" append-to-body>
+    <el-dialog title="关于" :visible.sync="aboutVisible" width="620px" append-to-body
+               custom-class="about-dialog">
         <div class="about-box">
             <div class="about-logo">Deep<b>Shell</b></div>
             <div class="about-line">版本 {{ appInfo.version }} · 现代化 Web 终端工具</div>
@@ -1151,6 +1181,8 @@
             <div class="about-line dim">外部调用：{{ appInfo.protocolScheme || 'deepshell' }}:// · {{ protocolStateText(appInfo.protocolState) }}</div>
             <div class="about-line dim">本地工具 · 连接与账号信息仅保存在本机</div>
         </div>
+        <el-divider content-position="left">应用与更新</el-divider>
+        <app-runtime-panel></app-runtime-panel>
     </el-dialog>
 
     <el-dialog :title="editDialogTitle ? ('文本编辑器 · ' + editDialogTitle) : '文本编辑器'"

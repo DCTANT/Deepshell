@@ -36,14 +36,26 @@ public class AiModelCatalogService {
         private final String keyUrl;
         private final String modelsUrl;
         private final List<String> fallbackModels;
+        private final String recommendedModel;
+        private final List<String> keySteps;
+        private final String costLevel;
+        private final String costHint;
+        private final String pricingUrl;
 
-        Provider(String id, String name, String baseUrl, String keyUrl, String modelsUrl, List<String> fallbackModels) {
+        Provider(String id, String name, String baseUrl, String keyUrl, String modelsUrl,
+                 List<String> fallbackModels, String recommendedModel, List<String> keySteps,
+                 String costLevel, String costHint, String pricingUrl) {
             this.id = id;
             this.name = name;
             this.baseUrl = baseUrl;
             this.keyUrl = keyUrl;
             this.modelsUrl = modelsUrl;
             this.fallbackModels = fallbackModels;
+            this.recommendedModel = recommendedModel;
+            this.keySteps = keySteps;
+            this.costLevel = costLevel;
+            this.costHint = costHint;
+            this.pricingUrl = pricingUrl;
         }
 
         public String getId() {
@@ -69,6 +81,26 @@ public class AiModelCatalogService {
         public List<String> getFallbackModels() {
             return fallbackModels;
         }
+
+        public String getRecommendedModel() {
+            return recommendedModel;
+        }
+
+        public List<String> getKeySteps() {
+            return keySteps;
+        }
+
+        public String getCostLevel() {
+            return costLevel;
+        }
+
+        public String getCostHint() {
+            return costHint;
+        }
+
+        public String getPricingUrl() {
+            return pricingUrl;
+        }
     }
 
     /** 模型列表拉取结果：models 为可用模型；dynamic 表示是否来自厂商接口实时获取；note 为界面提示 */
@@ -91,30 +123,71 @@ public class AiModelCatalogService {
     static {
         add("deepseek", "DeepSeek", "https://api.deepseek.com",
                 "https://platform.deepseek.com/api_keys", null,
-                Arrays.asList("deepseek-v4-pro", "deepseek-flash", "deepseek-chat", "deepseek-reasoner"));
+                Arrays.asList("deepseek-v4-pro", "deepseek-flash", "deepseek-chat", "deepseek-reasoner"),
+                "deepseek-v4-pro",
+                Arrays.asList("打开 DeepSeek 开放平台，用手机号或邮箱注册 / 登录",
+                        "在「充值」中按需充值；通常充 10 元就足够日常使用很久",
+                        "进入「API keys」→「创建 API key」，复制 sk- 开头的 Key（只完整显示一次）"),
+                "低", "按 token 计费，整体便宜：普通问答约几分钱，AI 连续执行 10~20 步约几毛钱。日常任务可换 deepseek-flash 更省。",
+                "https://api-docs.deepseek.com/quick_start/pricing");
         add("qwen", "通义千问（Qwen）", "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 "https://bailian.console.aliyun.com/", "https://dashscope.aliyuncs.com/api/v1/models",
                 Arrays.asList("qwen3.8-max", "qwen3.7-plus", "qwen3.8-flash",
-                        "qwen-max", "qwen-plus", "qwen-turbo", "qwen-long"));
+                        "qwen-max", "qwen-plus", "qwen-turbo", "qwen-long"),
+                "qwen3.8-flash",
+                Arrays.asList("登录阿里云百炼控制台（bailian.console.aliyun.com）",
+                        "开通「模型服务」；新用户通常有免费额度，用完后按量付费",
+                        "进入「API-KEY 管理」→ 创建 API-KEY，复制到 DeepShell"),
+                "低", "flash 型号便宜且有免费额度；max 能力更强、价格更高。日常使用每月通常几元到几十元。",
+                "https://help.aliyun.com/zh/model-studio/models");
         add("glm", "智谱 GLM", "https://open.bigmodel.cn/api/paas/v4",
                 "https://open.bigmodel.cn/usercenter/apikeys", null,
-                Arrays.asList("glm-5.3", "glm-5.3-flash", "glm-4.7-flash", "glm-4-plus", "glm-4-flash"));
+                Arrays.asList("glm-5.3", "glm-5.3-flash", "glm-4.7-flash", "glm-4-plus", "glm-4-flash"),
+                "glm-5.3-flash",
+                Arrays.asList("打开智谱开放平台，注册并完成实名认证",
+                        "进入「API Keys」页面，创建一个新的 API Key",
+                        "复制 Key；如果页面提示资源包 / 余额，按需购买最小额度"),
+                "低", "flash 系列价格低，适合日常问答和命令翻译；plus 系列能力更强、费用更高。",
+                "https://open.bigmodel.cn/pricing");
         add("minimax", "MiniMax", "https://api.minimaxi.com/v1",
                 "https://platform.minimaxi.com/user-center/basic-information/interface-key", null,
-                Arrays.asList("MiniMax-M3", "MiniMax-M2", "MiniMax-Text-01", "abab6.5s"));
+                Arrays.asList("MiniMax-M3", "MiniMax-M2", "MiniMax-Text-01", "abab6.5s"),
+                "MiniMax-M2",
+                Arrays.asList("登录 MiniMax 开放平台并完成实名认证",
+                        "在「账户信息」→「接口密钥」中创建 Key",
+                        "复制 Key，并确认账户有可用额度"),
+                "中", "按 token 计费，价格中等；长上下文和长任务会明显增加费用。",
+                "https://platform.minimaxi.com/document/Price");
         add("kimi", "月之暗面 Kimi", "https://api.moonshot.cn/v1",
                 "https://platform.moonshot.cn/console/api-keys", null,
                 Arrays.asList("kimi-k3", "kimi-k2-0905-preview", "kimi-latest",
-                        "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"));
+                        "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"),
+                "kimi-latest",
+                Arrays.asList("打开 Moonshot 开放平台，注册并登录",
+                        "进入「API Key 管理」→ 新建 API Key",
+                        "复制 Key；新用户可能有体验额度，超出后按量计费"),
+                "中", "按 token 计费，长上下文模型更贵；日常问答通常几分钱一次。",
+                "https://platform.moonshot.cn/docs/pricing/chat");
         add("openai", "OpenAI", "https://api.openai.com/v1",
                 "https://platform.openai.com/api-keys", null,
-                Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"));
-        add("custom", "自定义（OpenAI 兼容）", "", "", null, new ArrayList<>());
+                Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"),
+                "gpt-4o-mini",
+                Arrays.asList("登录 OpenAI 平台（需要海外支付方式）",
+                        "在 Billing 中充值，并确认账户有可用额度",
+                        "进入「API keys」→「Create new secret key」，复制 sk- 开头的 Key"),
+                "中高", "按美元 token 计费；mini 型号较省，GPT-4 系列较贵。国内访问可能需要代理。",
+                "https://openai.com/api/pricing/");
+        add("custom", "自定义（OpenAI 兼容）", "", "", null, new ArrayList<>(),
+                "", new ArrayList<>(),
+                "未知", "由你的服务商决定；请确认接口兼容 /chat/completions 与 /models。", "");
     }
 
     private static void add(String id, String name, String baseUrl, String keyUrl,
-                            String modelsUrl, List<String> fallbackModels) {
-        PRESETS.put(id, new Provider(id, name, baseUrl, keyUrl, modelsUrl, fallbackModels));
+                            String modelsUrl, List<String> fallbackModels,
+                            String recommendedModel, List<String> keySteps,
+                            String costLevel, String costHint, String pricingUrl) {
+        PRESETS.put(id, new Provider(id, name, baseUrl, keyUrl, modelsUrl, fallbackModels,
+                recommendedModel, keySteps, costLevel, costHint, pricingUrl));
     }
 
     /** 过滤非对话类模型的名称片段（向量 / 语音 / 图像 / 视频等） */

@@ -1,5 +1,6 @@
 package com.itdct.deepshell.config;
 
+import com.itdct.deepshell.common.RuntimeSupport;
 import com.itdct.deepshell.common.SystemBrowser;
 import com.itdct.deepshell.protocol.ProtocolLaunchSupport;
 import com.itdct.deepshell.service.TlsService;
@@ -39,7 +40,7 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
             // 外部调用自己会打开工作台 / 错误提示页
             return;
         }
-        if (!openBrowser) {
+        if (!openBrowser || RuntimeSupport.isBackground()) {
             return;
         }
         openUrl(tls.localUrl() + "/", 600);

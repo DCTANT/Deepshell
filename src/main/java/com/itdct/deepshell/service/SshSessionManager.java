@@ -477,27 +477,38 @@ public class SshSessionManager {
                 msg.append("，服务端 ").append(version);
             }
             Map<String, Object> result = new LinkedHashMap<>();
+            result.put("ok", true);
             result.put("message", msg.toString());
             result.put("elapsedMs", elapsed);
             result.put("serverVersion", version);
             return result;
         } catch (HostKeyCheckException e) {
             Map<String, Object> result = new LinkedHashMap<>();
+            result.put("ok", false);
             result.put("needTrust", true);
             result.put("hostKey", e.getInfo());
             return result;
+        } catch (ConnectionFailure e) {
+            return failure(e.getDiagnosis());
         } catch (IllegalArgumentException e) {
-            throw e;
+            return failure(ConnectionDiagnostics.config(e.getMessage()));
         } catch (JSchException e) {
-            throw new IllegalArgumentException(friendlyError(e));
+            return failure(ConnectionDiagnostics.fromJSch(e, "目标主机"));
         } catch (Exception e) {
-            throw new IllegalArgumentException("连接失败: "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return failure(ConnectionDiagnostics.from(e, "目标主机"));
         } finally {
             if (transport != null) {
                 disconnectAll(transport.sessions);
             }
         }
+    }
+
+    private static Map<String, Object> failure(Map<String, Object> diagnosis) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ok", false);
+        result.put("message", diagnosis == null ? "连接失败" : diagnosis.get("title"));
+        result.put("error", diagnosis);
+        return result;
     }
 
     /* ---------- 连接链路：代理 / 多级跳板机 ---------- */
@@ -691,7 +702,7 @@ public class SshSessionManager {
                         throw new HostKeyCheckException(problem);
                     }
                     String who = h.target ? "目标主机" : ("跳板机 " + h.name);
-                    throw new IllegalArgumentException(who + "：" + friendlyError(e));
+                    throw new ConnectionFailure(ConnectionDiagnostics.fromJSch(e, who));
                 }
                 t.sessions.add(session);
                 if (i < hops.size() - 1) {

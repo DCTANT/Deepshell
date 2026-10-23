@@ -52,6 +52,11 @@
 
 - **外部调用（跳板机客户端）**：启动后自动把 `deepshell://` 注册为当前用户的 URL 协议（无需浏览器插件），网页 / 运维门户用 `deepshell://connect?id=...` 或 `host/username/password` 链接即可拉起本机 DeepShell 并打开对应连接；已运行时交给现有实例，不会重复启动，调用目标、来源与结果记入审计
 - **HTTP 集成接口（JumpServer / 门户）**：面向服务端的 `POST /api/integration/connections/open` 接口，使用集成 Token 鉴权；按 `id` 或 `host + port + username` 新增 / 更新连接（含密码、密钥），并通知所有已打开的 DeepShell 页面通过 WebSocket 自动打开连接标签；没有在线页面时返回 `workspaceUrl`，门户可直接跳转
+- **新手连接向导**：新建连接默认是分步向导——选阿里云 / 腾讯云 / 华为云 / 其他，选 Ubuntu / Debian / CentOS 等系统镜像并给出建议登录名（ubuntu / root），再填地址、端口、密码或私钥；每一步都说明 IP、安全组、默认用户去哪找。连不上时按错误类型给步骤（拒绝连接、超时、DNS、认证失败、私钥格式、代理 / 跳板机等），不再只报一句 Auth fail
+- **主机指纹“身份证”说明**：首次连接用“这是服务器的身份证”解释 SHA256 主机指纹，直接给出在服务器上核对的命令和逐字比对方法；指纹变化时说明可能是重装 / 换密钥，也可能是中间人攻击，必须先通过云控制台 VNC 核对才能更新
+- **AI 配置向导**：不知道 API Key 去哪拿时，从 AI 面板 / 设置打开向导：选厂商 → 按步骤去官网申请 Key → 选推荐模型（附费用说明）→ 一键测试 → 保存启用；测试失败会按 401 / 403 / 404 / 429 等原因给处理步骤
+- **连接导入（本机配置）**：除 FinalShell 连接文件外，可扫描运行 DeepShell 的这台电脑上的 `~/.ssh/config` 和 Windows PuTTY 会话，勾选后导入地址、用户、端口、私钥和代理；自动标记重复、提示 `.ppk` 需转换，扫描和导入只允许本机回环访问
+- **绿色版 / 托盘 / 自动更新**：内置 JRE，无安装程序；应用内创建桌面 / 开始菜单快捷方式、开机启动和托盘图标；从 Gitee Releases 检查更新，下载后校验 SHA256，退出并替换程序文件，保留 `data/` 与 `application.yml`
 - **连接管理**：主机/端口/用户名、密码或密钥认证、备注；**多级文件夹树**（新建/重命名/删除文件夹，删除后内容自动上移不丢数据；编辑连接时以级联选择器归入任意层级）；**置顶与收藏**（每个连接可独立设置，收藏支持筛选）；密码基于本机密钥 AES-GCM 加密存储；**主机指纹校验**——首次连接必须核对 SHA256 指纹，后续指纹变化默认拒绝并提示风险，信任记录存入 SQLite；**HTTP / SOCKS5 代理**与**多级跳板机**（跳板机直接选择已保存连接，可递归成链，目标指纹仍按原始 host:port 校验）
 - **多标签终端**：WebSocket 实时流式传输、窗口尺寸自适应（PTY Resize）、连接状态指示、断线提示；**左右 / 上下分屏**（见上）；**手敲命令审计**——终端通道里手动提交的命令会写入审计日志与数据目录 `logs/terminal-commands.log`，记录操作者、来源 IP、连接与完整命令，密码 / SSH 确认等交互提示自动跳过；标签右键支持**复制 IP / 查看服务器系统信息**（主机名、发行版、内核、CPU、内存、磁盘占用、IP、运行时长、负载、系统时间，经独立 exec 通道采集）；**会话保持与自动重连**——WebSocket 断开或刷新页面后，服务端保留 SSH 会话 10 分钟并缓冲最近 256KB 输出，浏览器自动退避重连、重新附着并把输出回放，前台正在运行的命令不会因为 F5 被直接杀掉；远端重启等被动断开时同样自动退避重连，重试期间可在桌面任务栏连接状态处手动重连；点击标签关闭或「断开」才立即结束会话；**tmux 持久会话**——连接默认使用 tmux（可在连接编辑中关闭），程序重启 / 升级后浏览器标签自动重连并附着回原 tmux 会话，前台命令不中断；服务器未安装 tmux 时自动回退为普通会话并提示；命令底栏「搜索」支持在终端输出中**高亮全部匹配**，并支持**区分大小写、全词匹配、正则表达式**（Alt+C / Alt+W / Alt+R），实时显示当前序号 / 匹配总数；上一个 / 下一个跳转并自动滚动到命中行
 - **端口转发**：按连接保存**本机监听（-L）**与**服务器监听（-R）**规则，支持自动启动、运行状态与错误提示、启动 / 停止 / 编辑 / 删除；监听地址默认 `127.0.0.1`，也可显式填写 `0.0.0.0` 对外开放；转发规则在每次会话建立后自动恢复，终端底栏最右侧的路线图标可随时管理
@@ -91,17 +96,50 @@
 
 ## 快速开始
 
-前置要求：JDK 8+、Maven。
+### Windows 绿色版（推荐给最终用户）
+
+不用安装 JDK，双击 `DeepShell.exe` 即可运行。构建绿色版需要 **JDK 17+**（提供 jlink / jpackage）和 Maven：
 
 ```bash
-# 构建（同时生成分发包 target/deepshell-1.4.0.zip）
+# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.4.0.zip）
+mvn -DskipTests package
+
+# 2. 生成内置精简 JRE 的 Windows 绿色版
+powershell -ExecutionPolicy Bypass -File tools/build-portable.ps1 -SkipMaven
+```
+
+产物：
+
+```
+target/deepshell-1.4.0-windows-x64-portable/        可直接运行的目录
+target/deepshell-1.4.0-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
+target/deepshell-1.4.0-windows-x64-portable.zip.sha256
+```
+
+绿色版特性：
+
+- **内置 JRE**：目标用户不用装 Java，也不用手写 `java -jar`；
+- **首次启动引导**：可一键创建桌面 / 开始菜单快捷方式、开启开机启动和托盘图标，之后也可在「关于 → 应用与更新」或桌面「设置 → 系统信息」中随时修改；
+- **托盘图标**：后台运行时双击托盘打开界面，右键可检查更新、重启或退出；
+- **开机启动**：登录系统后静默启动服务，不自动弹出浏览器；
+- **自动更新**：读取 Gitee Releases 最新版本，下载绿色包并校验发布方提供的 SHA256；更新保留 `data/` 与 `application.yml`，不会动连接和密码；
+- **deepshell:// 冷启动**：协议注册指向内置启动器，服务没运行时也能由链接拉起。
+
+发布新版本时请把 **ZIP 和同名 `.sha256` 文件一起上传到 Gitee Releases**，否则自动安装会被安全策略阻止，只提供手动下载入口。
+
+### 源码构建 / 传统分发包
+
+前置要求：JDK 8+、Maven（仅构建需要）。
+
+```bash
+# 构建（同时生成传统分发包 target/deepshell-1.4.0.zip）
 mvn -DskipTests package
 
 # 或直接运行 jar（开发调试）
 java -jar target/deepshell.jar
 ```
 
-### 分发包（推荐）
+### 分发包
 
 解压 `target/deepshell-1.4.0.zip` 后的目录结构：
 
@@ -139,10 +177,10 @@ DeepShell 可以作为被网页 / 运维门户拉起的本地 SSH 客户端，�
 
 ### 注册
 
-- 用分发包或 `java -jar` 启动一次后，会自动把 `deepshell://` 注册为**当前用户**的 URL 协议：Windows 写入 `HKCU\Software\Classes\deepshell`（无需管理员权限），Linux 写入 `~/.local/share/applications/deepshell-protocol.desktop` 并通过 `xdg-mime` 设为默认
+- 用绿色版、分发包或 `java -jar` 启动一次后，会自动把 `deepshell://` 注册为**当前用户**的 URL 协议：Windows 写入 `HKCU\Software\Classes\deepshell`（无需管理员权限），Linux 写入 `~/.local/share/applications/deepshell-protocol.desktop` 并通过 `xdg-mime` 设为默认。绿色版注册的是内置启动器 `DeepShell.exe`，**服务没运行时也能由链接直接拉起**，不依赖系统里是否还有 JDK
 - IDE / classes 模式不会注册；可打开工作台右上角菜单「安全与访问 → 外部调用（跳板机）」查看注册状态、复制调用链接或手动重新注册
 - 协议名与开关：`deepshell.protocol.scheme` / `deepshell.protocol.enabled`（修改后重启生效）；关闭只会停止自动注册，已写入系统的协议项需手动删除（Windows：`HKCU\Software\Classes\deepshell`）
-- 冷启动时会用当前 Java 与 jar 路径生成调用命令，并带上当前数据目录与当前生效的外置 `application.yml`（若存在）；升级 / 移动目录后启动一次会自动刷新
+- 冷启动命令会带上当前数据目录、端口与当前生效的外置 `application.yml`（若存在）；绿色版使用内置启动器，传统分发包回退到当前 Java 与 jar。升级 / 移动目录后启动一次会自动刷新
 
 ### 两种链接
 
