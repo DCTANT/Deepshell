@@ -13,7 +13,7 @@
 
     <groupId>com.itdct.deepshell</groupId>
     <artifactId>deepshell</artifactId>
-    <version>1.4.0</version>
+    <version>1.5.0</version>
     <name>deepshell</name>
     <description>现代化 Web 终端工具：SpringBoot + Thymeleaf + ElementUI + xterm.js</description>
     <url>https://gitee.com/decentant/deepshell</url>

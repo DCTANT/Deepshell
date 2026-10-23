@@ -41,7 +41,7 @@ logging:
 
 deepshell:
   # 当前版本号；构建绿色版 / 检查更新时使用
-  version: 1.4.0
+  version: 1.5.0
   # 自动更新：读取 Gitee Releases 最新版本；只接受同一仓库发布页里带有 SHA256 的绿色版 ZIP
   update:
     enabled: true
