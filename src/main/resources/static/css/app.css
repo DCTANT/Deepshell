@@ -785,27 +785,143 @@ a {
     padding: 6px 4px 2px 8px;
 }
 
-/* 终端分屏：上下 / 左右两个独立终端窗格，split-main 固定在左/上 */
-.term-area.split-row .term-host.split-main {
-    right: calc(50% + 2px);
+/* 终端分屏：可追加多个窗格，拖动分隔条调整占比，右上角 × 关闭单个分屏 */
+.term-panes {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
 }
 
-.term-area.split-row .term-host.split-secondary {
-    left: calc(50% + 2px);
-    border-left: 1px solid #2a3140;
+.term-panes.split-col {
+    flex-direction: column;
 }
 
-.term-area.split-col .term-host.split-main {
-    bottom: calc(50% + 2px);
+.term-pane {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
 }
 
-.term-area.split-col .term-host.split-secondary {
-    top: calc(50% + 2px);
-    border-top: 1px solid #2a3140;
-}
-
-.term-area .term-host.split-focused {
+.term-pane.split-focused .term-host {
     box-shadow: inset 0 0 0 1px rgba(76, 141, 255, .45);
+}
+
+.term-divider {
+    position: relative;
+    z-index: 5;
+    flex: 0 0 5px;
+    background: #1a212d;
+    cursor: col-resize;
+}
+
+.term-panes.split-col .term-divider {
+    cursor: row-resize;
+}
+
+.term-divider::after {
+    content: '';
+    position: absolute;
+    top: 12px;
+    bottom: 12px;
+    left: 50%;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity .15s ease, box-shadow .15s ease;
+}
+
+.term-panes.split-col .term-divider::after {
+    top: 50%;
+    left: 12px;
+    right: 12px;
+    bottom: auto;
+    width: auto;
+    height: 2px;
+    margin-left: 0;
+    margin-top: -1px;
+}
+
+.term-divider:hover::after,
+body.split-resizing .term-divider::after {
+    opacity: .8;
+    box-shadow: 0 0 8px rgba(76, 141, 255, .45);
+}
+
+.term-pane-close {
+    position: absolute;
+    top: 4px;
+    right: 10px;
+    z-index: 8;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: rgba(20, 26, 36, .78);
+    color: #c7d2e3;
+    font-family: Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: .82;
+    transition: background .12s ease, color .12s ease, opacity .12s ease;
+}
+
+.term-pane-close:hover {
+    background: #d9534f;
+    color: #fff;
+    opacity: 1;
+}
+
+body.split-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+body.split-resizing-col {
+    cursor: row-resize;
+}
+
+body.split-resizing .term-host {
+    pointer-events: none;
+}
+
+/* 分屏工具栏：自绘 SVG，左侧按钮为左右分屏，右侧按钮旋转 90° 表示上下分屏 */
+.split-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.split-toolbar-btn svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+.split-toolbar-btn.split-toolbar-disabled {
+    opacity: .34;
+    cursor: default;
+}
+
+.split-toolbar-btn.split-toolbar-disabled:hover {
+    color: #9aa7bd;
+    background: transparent;
+}
+
+@media (max-width: 640px) and (pointer: coarse) {
+    .split-toolbar-btn {
+        display: none !important;
+    }
 }
 
 .term-box {

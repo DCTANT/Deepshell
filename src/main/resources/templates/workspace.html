@@ -102,14 +102,32 @@
                    @click.stop="transferCenterOpen = !transferCenterOpen"></i>
             </el-popover>
             <i class="el-icon-full-screen tbtn" title="终端自适应" @click="fitActive"></i>
-            <i v-if="activeTab" class="tbtn el-icon-s-grid"
-               :class="{ 'menu-active': splitKey && splitDir === 'row' }"
-               :title="splitKey && splitDir === 'row' ? '取消左右分屏' : '左右分屏'"
-               @click="splitTerminal('row')"></i>
-            <i v-if="activeTab" class="tbtn el-icon-s-operation"
-               :class="{ 'menu-active': splitKey && splitDir === 'col' }"
-               :title="splitKey && splitDir === 'col' ? '取消上下分屏' : '上下分屏'"
-               @click="splitTerminal('col')"></i>
+            <i v-if="activeTab" class="tbtn split-toolbar-btn"
+               :class="{ 'split-toolbar-disabled': splitKeys.length > 1 && splitDir !== 'row' }"
+               :title="splitKeys.length > 1 && splitDir !== 'row'
+                   ? '已有上下分屏，不能切换为左右分屏' : '左右分屏（新增窗格）'"
+               @click="splitTerminal('row')">
+                <svg viewBox="0 0 20 16" aria-hidden="true">
+                    <rect x="1.5" y="2.5" width="7" height="11" rx="1.5"
+                          fill="none" stroke="currentColor" stroke-width="1.6"/>
+                    <rect x="11.5" y="2.5" width="7" height="11" rx="1.5"
+                          fill="none" stroke="currentColor" stroke-width="1.6"/>
+                </svg>
+            </i>
+            <i v-if="activeTab" class="tbtn split-toolbar-btn"
+               :class="{ 'split-toolbar-disabled': splitKeys.length > 1 && splitDir !== 'col' }"
+               :title="splitKeys.length > 1 && splitDir !== 'col'
+                   ? '已有左右分屏，不能切换为上下分屏' : '上下分屏（新增窗格）'"
+               @click="splitTerminal('col')">
+                <svg class="split-icon-v" viewBox="0 0 20 16" aria-hidden="true">
+                    <g transform="rotate(90 10 8)">
+                        <rect x="1.5" y="2.5" width="7" height="11" rx="1.5"
+                              fill="none" stroke="currentColor" stroke-width="1.6"/>
+                        <rect x="11.5" y="2.5" width="7" height="11" rx="1.5"
+                              fill="none" stroke="currentColor" stroke-width="1.6"/>
+                    </g>
+                </svg>
+            </i>
             <i class="tbtn" :class="panelVisible ? 'el-icon-s-fold' : 'el-icon-s-unfold'"
                :title="panelVisible ? '隐藏侧栏' : '显示侧栏'"
                @click="panelVisible = !panelVisible"></i>
@@ -120,16 +138,28 @@
 
     <div class="ws-content">
         <div class="ws-main">
-            <div class="term-area"
-                 :class="{ 'split-row': splitKey && splitDir === 'row',
-                           'split-col': splitKey && splitDir === 'col' }">
+            <div class="term-area">
                 <div class="term-bg" v-if="bgSettings.url"
                      :style="{ backgroundImage: 'url(' + bgSettings.url + ')', opacity: bgSettings.opacity,
                                filter: bgSettings.blur ? ('blur(' + bgSettings.blur + 'px)') : 'none' }"></div>
-                <div v-for="t in tabs" :key="t.key" class="term-host"
-                     :class="termPaneClass(t)" v-show="isTermVisible(t)"
-                     @mousedown.capture="onTermPaneMouseDown(t)">
-                    <div class="term-box" :ref="'term-' + t.key"></div>
+                <div class="term-panes" ref="termPanes"
+                     :class="{ 'split-row': splitKeys.length > 1 && splitDir === 'row',
+                               'split-col': splitKeys.length > 1 && splitDir === 'col' }">
+                    <div v-for="t in tabs" :key="t.key" class="term-pane"
+                         :class="{ 'split-focused': splitKeys.length > 1 && t.key === activeKey }"
+                         :style="termPaneStyle(t)" :data-term-key="t.key"
+                         v-show="isTermVisible(t)"
+                         @mousedown.capture="onTermPaneMouseDown(t)">
+                        <div class="term-host">
+                            <div class="term-box" :ref="'term-' + t.key"></div>
+                        </div>
+                        <button v-if="splitKeys.length > 1" type="button" class="term-pane-close"
+                                title="关闭此分屏" @mousedown.stop @click.stop="askCloseSplitPane(t)">×</button>
+                    </div>
+                    <div v-for="(key, idx) in splitDividerKeys" :key="'div-' + key"
+                         class="term-divider" title="拖动调整窗格大小"
+                         :style="{ order: idx * 2 + 1 }"
+                         @mousedown.prevent.stop="startSplitResize($event, idx)"></div>
                 </div>
                 <div v-if="!tabs.length" class="ws-empty">
                     <div class="empty-logo">Deep<b>Shell</b></div>

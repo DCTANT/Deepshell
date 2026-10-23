@@ -3891,9 +3891,9 @@ new Vue({
     data: {
         tabs: [],
         activeKey: '',
-        /* 终端分屏：splitMainKey 固定左侧/上方，splitKey 固定右侧/下方，activeKey 表示当前焦点 */
-        splitMainKey: '',
-        splitKey: '',
+        /* 终端分屏：splitKeys 按窗格位置保存 tab key，splitSizes 为弹性占比（总和 100） */
+        splitKeys: [],
+        splitSizes: [],
         splitDir: '',
         connections: [],
         folders: [],
@@ -4591,6 +4591,9 @@ new Vue({
                 + "  -d '{\"name\":\"生产服务器\",\"host\":\"10.0.0.10\",\"port\":22,"
                 + "\"username\":\"root\",\"password\":\"******\","
                 + "\"view\":\"desktop\",\"source\":\"jumpserver\"}'";
+        },
+        splitDividerKeys: function () {
+            return this.splitKeys.length > 1 ? this.splitKeys.slice(0, -1) : [];
         },
         appLifecycleTitle: function () {
             var s = this.appLifecycle;
@@ -5956,10 +5959,8 @@ new Vue({
         /* ---------- 标签与会话 ---------- */
         openTab: function (connId, clientKey, autoAfterConnect, forceDesktop) {
             var self = this;
-            if (!this._creatingSplitTab && this.splitKey) {
-                this.splitMainKey = '';
-                this.splitKey = '';
-                this.splitDir = '';
+            if (!this._creatingSplitTab && this.splitKeys.length) {
+                this.clearTerminalSplit();
             }
             // 只有本次启动的首个连接才按设置自动进入桌面；强制桌面（新标签打开）不受此限制
             var firstConnect = consumeFirstConnect();
@@ -18556,10 +18557,8 @@ new Vue({
         },
         activate: function (key) {
             var self = this;
-            if (this.splitKey && key !== this.splitMainKey && key !== this.splitKey) {
-                this.splitMainKey = '';
-                this.splitKey = '';
-                this.splitDir = '';
+            if (this.splitKeys.length > 1 && this.splitKeys.indexOf(key) < 0) {
+                this.clearTerminalSplit();
             }
             this.activeKey = key;
             if (this.activeTab && this.activeTab.sftpSelected && this.activeTab.sftpSelected.length) {
@@ -18573,7 +18572,7 @@ new Vue({
             saveOpenTabs(this);
             this.$nextTick(function () {
                 var t = self.activeTab;
-                if (self.splitKey) {
+                if (self.splitKeys.length > 1) {
                     self.fitSplitPanes();
                 } else if (t && t.fit) {
                     try { t.fit.fit(); } catch (e) { /* ignore */ }
@@ -18591,10 +18590,8 @@ new Vue({
             if (this.desktop.visible && tab.key === this.desktop.tabKey) {
                 this.closeAiDesktop();
             }
-            var splitClosing = !!this.splitKey
-                && (tab.key === this.splitMainKey || tab.key === this.splitKey);
-            var otherSplitKey = tab.key === this.splitMainKey ? this.splitKey
-                : (tab.key === this.splitKey ? this.splitMainKey : '');
+            var splitIdx = this.splitKeys.indexOf(tab.key);
+            var wasActive = this.activeKey === tab.key;
             this.cancelTransfersForTab(tab);
             clearReconnectTimer(tab);
             tab.explicitClose = true;
@@ -18614,23 +18611,43 @@ new Vue({
             if (idx >= 0) {
                 this.tabs.splice(idx, 1);
             }
-            if (splitClosing) {
-                this.splitMainKey = '';
-                this.splitKey = '';
-                this.splitDir = '';
-                this.activeKey = otherSplitKey;
-            }
-            if (this.activeKey === tab.key) {
-                var next = this.tabs[Math.max(0, idx - 1)];
-                if (next) {
-                    this.activate(next.key);
+            if (splitIdx >= 0) {
+                this.splitKeys.splice(splitIdx, 1);
+                this.splitSizes.splice(splitIdx, 1);
+                if (this.splitKeys.length > 1) {
+                    this.normalizeSplitSizes();
+                    if (wasActive) {
+                        this.activeKey = this.splitKeys[Math.min(splitIdx, this.splitKeys.length - 1)];
+                    }
                 } else {
-                    this.activeKey = '';
+                    var remaining = this.splitKeys[0] || '';
+                    this.splitKeys = [];
+                    this.splitSizes = [];
+                    this.splitDir = '';
+                    if (remaining) {
+                        this.activeKey = remaining;
+                    } else if (wasActive) {
+                        var next = this.tabs[Math.max(0, idx - 1)];
+                        this.activeKey = next ? next.key : '';
+                    }
                 }
-            } else if (splitClosing) {
-                this.$nextTick(function () { self.fitActive(); });
+            } else if (wasActive) {
+                if (this.splitKeys.length > 1) {
+                    this.splitKeys = [];
+                    this.splitSizes = [];
+                    this.splitDir = '';
+                }
+                var fallback = this.tabs[Math.max(0, idx - 1)];
+                this.activeKey = fallback ? fallback.key : '';
             }
             saveOpenTabs(this);
+            this.saveSplitState();
+            this.$nextTick(function () {
+                self.fitActive();
+                if (self.activeTab && self.activeTab.term) {
+                    try { self.activeTab.term.focus(); } catch (e) { /* ignore */ }
+                }
+            });
         },
         /* ---------- 刷新恢复上次打开的会话 ---------- */
         restoreOpenTabs: function () {
@@ -18682,6 +18699,7 @@ new Vue({
             if (missing > 0) {
                 ELEMENT.Message.warning(missing + ' 个连接已不存在，未恢复');
             }
+            this.restoreSplitState();
         },
         /* ---------- 标签右键菜单 ---------- */
         onTabContextMenu: function (ev, tab) {
@@ -18990,77 +19008,69 @@ new Vue({
             if (!t) {
                 return false;
             }
-            if (this.splitKey) {
-                return t.key === this.splitMainKey || t.key === this.splitKey;
+            if (this.splitKeys.length > 1) {
+                return this.splitKeys.indexOf(t.key) >= 0;
             }
             return t.key === this.activeKey;
         },
-        termPaneClass: function (t) {
-            if (!this.splitKey || !t) {
-                return '';
+        termPaneStyle: function (t) {
+            if (!t || this.splitKeys.length < 2) {
+                return {};
             }
-            var position = t.key === this.splitMainKey ? 'split-main'
-                : (t.key === this.splitKey ? 'split-secondary' : '');
-            if (!position) {
-                return '';
+            var idx = this.splitKeys.indexOf(t.key);
+            if (idx < 0) {
+                return {};
             }
-            return position + (t.key === this.activeKey ? ' split-focused' : '');
+            var size = Number(this.splitSizes[idx]) || 1;
+            return {
+                order: idx * 2,
+                flexGrow: size,
+                flexShrink: 1,
+                flexBasis: '0px'
+            };
         },
         onTermPaneMouseDown: function (t) {
-            if (!this.splitKey || !t) {
-                return;
-            }
-            if (t.key !== this.splitMainKey && t.key !== this.splitKey) {
+            if (!t || this.splitKeys.length < 2 || this.splitKeys.indexOf(t.key) < 0) {
                 return;
             }
             if (this.activeKey === t.key) {
                 return;
             }
-            this.activeKey = t.key;
-            saveOpenTabs(this);
-            var self = this;
-            this.$nextTick(function () {
-                self.fitSplitPanes();
-            });
+            this.activate(t.key);
         },
+        /** 分屏按钮 = 追加窗格；已有左右/上下分屏后不能切换方向。 */
         splitTerminal: function (dir) {
-            var main = this.activeTab;
-            if (!main) {
+            if (dir !== 'row' && dir !== 'col') {
                 return;
             }
-            if (this.splitKey) {
-                if (this.splitDir === dir) {
-                    this.closeTerminalSplit();
-                    return;
-                }
-                this.splitDir = dir;
-                var self = this;
-                this.$nextTick(function () {
-                    self.fitSplitPanes();
-                });
+            var main = this.activeTab;
+            if (!main) {
                 return;
             }
             if (main.connId == null || main.localShell) {
                 ELEMENT.Message.warning('当前终端不支持分屏');
                 return;
             }
+            if (this.splitKeys.length > 1) {
+                if (this.splitDir !== dir || this.splitKeys.indexOf(main.key) < 0) {
+                    return;
+                }
+            } else {
+                this.splitDir = dir;
+                this.splitKeys = [main.key];
+                this.splitSizes = [100];
+            }
             var secondary = null;
-            var nextTab = null;
             for (var i = 0; i < this.tabs.length; i++) {
                 var x = this.tabs[i];
-                if (x === main || x.desktopOnly) {
+                if (x === main || x.desktopOnly || x.connId !== main.connId) {
                     continue;
                 }
-                if (!nextTab) {
-                    nextTab = x;
+                if (this.splitKeys.indexOf(x.key) >= 0) {
+                    continue;
                 }
-                if (x.connId === main.connId) {
-                    secondary = x;
-                    break;
-                }
-            }
-            if (!secondary) {
-                secondary = nextTab;
+                secondary = x;
+                break;
             }
             if (!secondary) {
                 this._creatingSplitTab = true;
@@ -19071,53 +19081,262 @@ new Vue({
                 }
             }
             if (!secondary) {
+                if (this.splitKeys.length < 2) {
+                    this.splitKeys = [];
+                    this.splitSizes = [];
+                    this.splitDir = '';
+                }
                 ELEMENT.Message.warning('无法创建分屏终端');
                 return;
             }
-            this.splitMainKey = main.key;
-            this.splitKey = secondary.key;
+            if (this.splitKeys.indexOf(secondary.key) < 0) {
+                var count = this.splitKeys.length;
+                var nextSize = 100 / (count + 1);
+                var resized = [];
+                for (var j = 0; j < count; j++) {
+                    resized.push((Number(this.splitSizes[j]) || 0) * count / (count + 1));
+                }
+                resized.push(nextSize);
+                this.splitKeys.push(secondary.key);
+                this.splitSizes = resized;
+            }
             this.splitDir = dir;
-            this.activeKey = main.key;
+            this.normalizeSplitSizes();
+            this.activeKey = secondary.key;
             saveOpenTabs(this);
+            this.saveSplitState();
             var app = this;
             this.$nextTick(function () {
-                app.fitSplitPanes();
-                if (main.term) {
-                    try { main.term.focus(); } catch (e) { /* ignore */ }
-                }
+                setTimeout(function () {
+                    app.fitSplitPanes();
+                    if (secondary.term) {
+                        try { secondary.term.focus(); } catch (e) { /* ignore */ }
+                    }
+                }, 80);
             });
         },
-        closeTerminalSplit: function () {
-            if (!this.splitKey) {
+        askCloseSplitPane: function (tab) {
+            if (!tab || this.splitKeys.length < 2) {
                 return;
             }
-            this.splitMainKey = '';
-            this.splitKey = '';
+            var title = tab.title || ('连接 #' + tab.connId);
+            var self = this;
+            this.$confirm('确定关闭分屏「' + title + '」？对应终端会话将断开。', '关闭分屏',
+                { type: 'warning', confirmButtonText: '关闭分屏', cancelButtonText: '取消' })
+                .then(function () {
+                    self.closeTab(tab);
+                }).catch(function () { /* 取消 */ });
+        },
+        clearTerminalSplit: function () {
+            this.splitKeys = [];
+            this.splitSizes = [];
             this.splitDir = '';
+            this.saveSplitState();
+        },
+        normalizeSplitSizes: function () {
+            var count = this.splitKeys.length;
+            if (count <= 0) {
+                this.splitSizes = [];
+                return;
+            }
+            var sizes = [];
+            var total = 0;
+            for (var i = 0; i < count; i++) {
+                var size = Math.max(0.1, Number(this.splitSizes[i]) || 0);
+                sizes.push(size);
+                total += size;
+            }
+            if (total <= 0) {
+                var equal = 100 / count;
+                for (var j = 0; j < count; j++) {
+                    sizes[j] = equal;
+                }
+            } else {
+                for (var k = 0; k < count; k++) {
+                    sizes[k] = sizes[k] * 100 / total;
+                }
+            }
+            this.splitSizes = sizes;
+        },
+        saveSplitState: function () {
+            try {
+                if (this.splitKeys.length > 1
+                        && (this.splitDir === 'row' || this.splitDir === 'col')) {
+                    var keys = [];
+                    var sizes = [];
+                    for (var i = 0; i < this.splitKeys.length; i++) {
+                        var key = this.splitKeys[i];
+                        var tab = null;
+                        for (var j = 0; j < this.tabs.length; j++) {
+                            if (this.tabs[j].key === key) {
+                                tab = this.tabs[j];
+                                break;
+                            }
+                        }
+                        if (tab) {
+                            keys.push(tab.clientKey);
+                            sizes.push(Number(this.splitSizes[i]) || 1);
+                        }
+                    }
+                    if (keys.length > 1) {
+                        sessionStorage.setItem('deepshell.split', JSON.stringify({
+                            dir: this.splitDir,
+                            keys: keys,
+                            sizes: sizes
+                        }));
+                        return;
+                    }
+                }
+                sessionStorage.removeItem('deepshell.split');
+            } catch (e) { /* ignore */ }
+        },
+        restoreSplitState: function () {
+            var state = null;
+            try {
+                state = JSON.parse(sessionStorage.getItem('deepshell.split') || 'null');
+            } catch (e) {
+                state = null;
+            }
+            if (!state || !state.keys || state.keys.length < 2
+                    || (state.dir !== 'row' && state.dir !== 'col')) {
+                try { sessionStorage.removeItem('deepshell.split'); } catch (e) { /* ignore */ }
+                return;
+            }
+            var byClient = {};
+            this.tabs.forEach(function (t) {
+                if (t.clientKey) {
+                    byClient[t.clientKey] = t;
+                }
+            });
+            var keys = [];
+            var sizes = [];
+            for (var i = 0; i < state.keys.length; i++) {
+                var tab = byClient[state.keys[i]];
+                if (tab) {
+                    keys.push(tab.key);
+                    sizes.push(Number((state.sizes || [])[i]) || 1);
+                }
+            }
+            if (keys.length < 2) {
+                try { sessionStorage.removeItem('deepshell.split'); } catch (e) { /* ignore */ }
+                return;
+            }
+            this.splitDir = state.dir;
+            this.splitKeys = keys;
+            this.splitSizes = sizes;
+            this.normalizeSplitSizes();
+            if (this.splitKeys.indexOf(this.activeKey) < 0) {
+                this.activeKey = this.splitKeys[0];
+                saveOpenTabs(this);
+            }
+            this.saveSplitState();
             var self = this;
             this.$nextTick(function () {
-                self.fitActive();
+                setTimeout(function () {
+                    self.fitSplitPanes();
+                }, 120);
+            });
+        },
+        startSplitResize: function (ev, dividerIndex) {
+            if (!ev || (ev.button !== undefined && ev.button !== 0)
+                    || this.splitKeys.length < 2) {
+                return;
+            }
+            var container = this.$refs.termPanes;
+            var index = Number(dividerIndex);
+            if (!container || !(index >= 0 && index + 1 < this.splitKeys.length)) {
+                return;
+            }
+            var keyA = this.splitKeys[index];
+            var keyB = this.splitKeys[index + 1];
+            var elA = container.querySelector('[data-term-key="' + keyA + '"]');
+            var elB = container.querySelector('[data-term-key="' + keyB + '"]');
+            if (!elA || !elB) {
+                return;
+            }
+            var rectA = elA.getBoundingClientRect();
+            var rectB = elB.getBoundingClientRect();
+            var row = this.splitDir === 'row';
+            var pxA = row ? rectA.width : rectA.height;
+            var pxB = row ? rectB.width : rectB.height;
+            if (pxA <= 0 || pxB <= 0) {
+                return;
+            }
+            this._splitDrag = {
+                index: index,
+                row: row,
+                start: row ? ev.clientX : ev.clientY,
+                pxA: pxA,
+                pxB: pxB,
+                pxSum: pxA + pxB,
+                wA: Number(this.splitSizes[index]) || 1,
+                wB: Number(this.splitSizes[index + 1]) || 1
+            };
+            document.body.classList.add('split-resizing');
+            if (!row) {
+                document.body.classList.add('split-resizing-col');
+            }
+            window.addEventListener('mousemove', this.onSplitResizeMove);
+            window.addEventListener('mouseup', this.onSplitResizeEnd);
+            ev.preventDefault();
+        },
+        onSplitResizeMove: function (ev) {
+            var drag = this._splitDrag;
+            if (!drag) {
+                return;
+            }
+            var delta = (drag.row ? ev.clientX : ev.clientY) - drag.start;
+            var min = Math.min(120, Math.max(40, drag.pxSum * 0.2));
+            min = Math.min(min, drag.pxSum / 2);
+            var max = drag.pxSum - min;
+            var newA = Math.max(min, Math.min(max, drag.pxA + delta));
+            var totalWeight = drag.wA + drag.wB;
+            var wA = totalWeight * newA / drag.pxSum;
+            this.$set(this.splitSizes, drag.index, wA);
+            this.$set(this.splitSizes, drag.index + 1, totalWeight - wA);
+            if (ev.preventDefault) {
+                ev.preventDefault();
+            }
+        },
+        onSplitResizeEnd: function () {
+            if (!this._splitDrag) {
+                return;
+            }
+            this._splitDrag = null;
+            document.body.classList.remove('split-resizing');
+            document.body.classList.remove('split-resizing-col');
+            window.removeEventListener('mousemove', this.onSplitResizeMove);
+            window.removeEventListener('mouseup', this.onSplitResizeEnd);
+            this.saveSplitState();
+            var self = this;
+            this.$nextTick(function () {
+                self.fitSplitPanes();
             });
         },
         fitSplitPanes: function () {
-            var self = this;
-            var main = this.tabs.find(function (t) { return t.key === self.splitMainKey; });
-            var secondary = this.tabs.find(function (t) { return t.key === self.splitKey; });
-            if (main) {
-                this.fitTab(main);
+            if (this.splitKeys.length > 1) {
+                var self = this;
+                this.splitKeys.forEach(function (key) {
+                    var tab = null;
+                    for (var i = 0; i < self.tabs.length; i++) {
+                        if (self.tabs[i].key === key) {
+                            tab = self.tabs[i];
+                            break;
+                        }
+                    }
+                    if (tab) {
+                        self.fitTab(tab);
+                    }
+                });
+                return;
             }
-            if (secondary) {
-                this.fitTab(secondary);
-            }
-            if (!main && !secondary) {
-                var t = this.activeTab;
-                if (t) {
-                    this.fitTab(t);
-                }
+            var active = this.activeTab;
+            if (active) {
+                this.fitTab(active);
             }
         },
         fitActive: function () {
-            if (this.splitKey) {
+            if (this.splitKeys.length > 1) {
                 this.fitSplitPanes();
                 return;
             }
@@ -21973,7 +22192,7 @@ new Vue({
             t.cmdVisible = !t.cmdVisible;
             var self = this;
             this.$nextTick(function () {
-                if (self.splitKey) {
+                if (self.splitKeys.length > 1) {
                     self.fitSplitPanes();
                 } else {
                     self.fitTab(t);
