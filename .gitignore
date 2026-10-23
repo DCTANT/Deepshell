@@ -48,3 +48,6 @@ deepshell-plugin-private.pem
 *.private.pem
 .signing/
 *.signed.tmp
+
+### 插件构建中间产物
+plugin-src/*/backend/classes/

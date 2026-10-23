@@ -66,3 +66,17 @@ deepshell:
   # 可用 deepshell.browser-cmd 自定义打开命令，{url} 为地址占位符，如指定某浏览器完整路径）
   open-browser: true
   browser-cmd: ""
+  # 外部调用（跳板机客户端）：启动时把 deepshell:// 注册为当前用户的 URL 协议，
+  # 网页上的 <a href="deepshell://connect?..."> 即可拉起本机 DeepShell 并连接服务器。
+  # Windows 写入 HKCU，无需管理员权限；Linux 写入 xdg desktop 文件。IDE / classes 模式不注册。
+  protocol:
+    enabled: true
+    scheme: deepshell
+  # 本地桌面「终端」：留空使用系统默认 Shell（Windows cmd，Unix $SHELL）；
+  # 也可填本机 Shell 可执行文件绝对路径。仅本机回环 + 登录保护，不会暴露给局域网。
+  local-shell:
+    command: ""
+  # HTTP 集成接口（JumpServer / 门户）Token：留空自动生成到数据目录 integration.token，
+  # 在工作台「安全与访问 → 集成接口（HTTP）」中查看 / 重新生成；也可在此固定配置。
+  integration:
+    token: ""

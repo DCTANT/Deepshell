@@ -57,11 +57,17 @@ public class DownloadTaskService {
         return id == null ? null : tasks.get(id);
     }
 
-    /** 下载真正开始时由服务端补全总大小（单文件） */
+    /** 下载真正开始时由服务端补全总大小（单文件）；断点续传时让失败任务重新进入下载状态 */
     public void attach(String id, long totalBytes) {
         Task t = get(id);
         if (t != null) {
             t.totalBytes = Math.max(0, totalBytes);
+            if ("error".equals(t.status)) {
+                t.status = "downloading";
+                t.error = null;
+                t.finishedAt = 0;
+                t.doneBytes = 0;
+            }
         }
     }
 

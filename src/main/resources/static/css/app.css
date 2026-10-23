@@ -601,6 +601,78 @@ a {
     color: #24292f;
 }
 
+/* 外部调用（跳板机客户端）弹窗 */
+.protocol-dlg {
+    max-width: 94vw;
+}
+
+.protocol-dlg .el-dialog__body {
+    max-height: 68vh;
+    overflow-y: auto;
+}
+
+.protocol-box {
+    font-size: 12.5px;
+    color: #606266;
+}
+
+.protocol-grid {
+    display: grid;
+    grid-template-columns: 76px 1fr;
+    row-gap: 6px;
+    column-gap: 8px;
+    margin: 14px 0 12px;
+    padding: 10px 12px;
+    background: #f7f8fa;
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+}
+
+.protocol-k {
+    color: #909399;
+}
+
+.protocol-v {
+    color: #303133;
+    word-break: break-all;
+}
+
+.protocol-path {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+}
+
+.protocol-box code {
+    padding: 1px 5px;
+    background: #f0f2f5;
+    border-radius: 4px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+    word-break: break-all;
+}
+
+.protocol-tip {
+    margin-top: 10px;
+    line-height: 1.9;
+    color: #606266;
+}
+
+.protocol-example-head {
+    margin: 14px 0 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #303133;
+}
+
+.protocol-warn {
+    margin-top: 12px;
+    padding: 8px 10px;
+    background: #fdf6ec;
+    color: #b88230;
+    border-radius: 6px;
+    line-height: 1.7;
+}
+
 /* 局域网访问弹窗 */
 .lan-url {
     display: flex;
@@ -713,6 +785,145 @@ a {
     padding: 6px 4px 2px 8px;
 }
 
+/* 终端分屏：可追加多个窗格，拖动分隔条调整占比，右上角 × 关闭单个分屏 */
+.term-panes {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+}
+
+.term-panes.split-col {
+    flex-direction: column;
+}
+
+.term-pane {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.term-pane.split-focused .term-host {
+    box-shadow: inset 0 0 0 1px rgba(76, 141, 255, .45);
+}
+
+.term-divider {
+    position: relative;
+    z-index: 5;
+    flex: 0 0 5px;
+    background: #1a212d;
+    cursor: col-resize;
+}
+
+.term-panes.split-col .term-divider {
+    cursor: row-resize;
+}
+
+.term-divider::after {
+    content: '';
+    position: absolute;
+    top: 12px;
+    bottom: 12px;
+    left: 50%;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 2px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity .15s ease, box-shadow .15s ease;
+}
+
+.term-panes.split-col .term-divider::after {
+    top: 50%;
+    left: 12px;
+    right: 12px;
+    bottom: auto;
+    width: auto;
+    height: 2px;
+    margin-left: 0;
+    margin-top: -1px;
+}
+
+.term-divider:hover::after,
+body.split-resizing .term-divider::after {
+    opacity: .8;
+    box-shadow: 0 0 8px rgba(76, 141, 255, .45);
+}
+
+.term-pane-close {
+    position: absolute;
+    top: 4px;
+    right: 10px;
+    z-index: 8;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: rgba(20, 26, 36, .78);
+    color: #c7d2e3;
+    font-family: Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: .82;
+    transition: background .12s ease, color .12s ease, opacity .12s ease;
+}
+
+.term-pane-close:hover {
+    background: #d9534f;
+    color: #fff;
+    opacity: 1;
+}
+
+body.split-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+body.split-resizing-col {
+    cursor: row-resize;
+}
+
+body.split-resizing .term-host {
+    pointer-events: none;
+}
+
+/* 分屏工具栏：自绘 SVG，左侧按钮为左右分屏，右侧按钮旋转 90° 表示上下分屏 */
+.split-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.split-toolbar-btn svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+.split-toolbar-btn.split-toolbar-disabled {
+    opacity: .34;
+    cursor: default;
+}
+
+.split-toolbar-btn.split-toolbar-disabled:hover {
+    color: #9aa7bd;
+    background: transparent;
+}
+
+@media (max-width: 640px) and (pointer: coarse) {
+    .split-toolbar-btn {
+        display: none !important;
+    }
+}
+
 .term-box {
     width: 100%;
     height: 100%;
@@ -733,6 +944,18 @@ a {
     font-size: 30px;
     color: #dbe4f3;
     font-weight: 700;
+}
+
+.ws-empty-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ws-empty-hint {
+    margin: -2px 0 0;
+    font-size: 12px;
+    color: #6f7d91;
 }
 
 .empty-logo b {
@@ -1422,6 +1645,16 @@ body.resizing .term-host {
 .conn-dlg-actions {
     flex: 0 0 auto;
     white-space: nowrap;
+}
+
+.conn-dlg-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.conn-dlg-footer .spacer {
+    flex: 1;
 }
 
 .conn-dlg-list {
@@ -5583,6 +5816,22 @@ body.resizing .term-host {
 .dsk-grid.medium .dsk-thumb img {
     border-radius: 4px;
 }
+
+.dsk-thumb-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 22px;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, .7);
+    pointer-events: none;
+}
+
+.dsk-grid.medium .dsk-thumb-play {
+    font-size: 15px;
+}
 /* ---------- 传输中心（气泡深色，桌面窗口跟随窗口浅色主题） ---------- */
 .xfer-center-btn.active {
     color: #6ea8ff;
@@ -6458,4 +6707,24 @@ body.resizing .term-host {
 @keyframes app-service-slide {
     0% { left: -40%; }
     100% { left: 105%; }
+}
+
+/* HTTP 集成接口弹窗 */
+.integration-token .el-input__inner {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+}
+
+.integration-code textarea {
+    background: #f7f8fa;
+    color: #303133;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.ai-desktop.dsk-scheme-dark .integration-code textarea {
+    background: #111722;
+    color: #d7e1f0;
+    border-color: #2a3140;
 }

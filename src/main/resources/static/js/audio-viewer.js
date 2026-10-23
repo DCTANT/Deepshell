@@ -83,6 +83,8 @@
 
     var params = new URLSearchParams(window.location.search || '');
     var sessionId = params.get('sessionId') || '';
+    var localMode = params.get('local') === '1';
+    var apiBase = localMode ? '/api/local/fs' : '/api/sftp';
     var sortBy = params.get('sortBy') || 'name';
     var sortDir = params.get('sortDir') === 'desc' ? 'desc' : 'asc';
     var showHidden = params.get('hidden') !== '0';
@@ -116,11 +118,11 @@
                 return extOf(this.name);
             },
             audioUrl: function () {
-                if (!sessionId || !this.path) {
+                if ((!localMode && !sessionId) || !this.path) {
                     return '';
                 }
-                return '/api/sftp/audio?sessionId=' + encodeURIComponent(sessionId)
-                    + '&path=' + encodeURIComponent(this.path)
+                return apiBase + '/audio?path=' + encodeURIComponent(this.path)
+                    + (localMode ? '' : '&sessionId=' + encodeURIComponent(sessionId))
                     + '&v=' + this.stamp;
             },
             displayTitle: function () {
@@ -159,9 +161,9 @@
             window.addEventListener('keydown', this.onKeydown);
             this.applyVolume();
             this.updateMediaSession();
-            if (!sessionId || !this.path) {
+            if ((!localMode && !sessionId) || !this.path) {
                 this.loading = false;
-                this.error = '缺少会话或文件参数，请从 AI 可视化桌面重新打开音频';
+                this.error = '缺少会话或文件参数，请从可视化桌面重新打开音频';
                 return;
             }
             this.loadSiblings();
@@ -175,8 +177,8 @@
         methods: {
             loadSiblings: function () {
                 var self = this;
-                fetch('/api/sftp/list?sessionId=' + encodeURIComponent(sessionId)
-                        + '&path=' + encodeURIComponent(parentPath(this.path)),
+                fetch(apiBase + '/list?path=' + encodeURIComponent(parentPath(this.path))
+                        + (localMode ? '' : '&sessionId=' + encodeURIComponent(sessionId)),
                     { credentials: 'same-origin' })
                     .then(function (resp) {
                         if (!resp.ok) {
@@ -510,11 +512,11 @@
                 } catch (e) { /* 部分浏览器不支持全部动作 */ }
             },
             download: function () {
-                if (!sessionId || !this.path) {
+                if ((!localMode && !sessionId) || !this.path) {
                     return;
                 }
-                var url = '/api/sftp/download?sessionId=' + encodeURIComponent(sessionId)
-                    + '&path=' + encodeURIComponent(this.path);
+                var url = apiBase + '/download?path=' + encodeURIComponent(this.path)
+                    + (localMode ? '' : '&sessionId=' + encodeURIComponent(sessionId));
                 var a = document.createElement('a');
                 a.href = url;
                 document.body.appendChild(a);

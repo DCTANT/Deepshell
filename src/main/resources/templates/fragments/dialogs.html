@@ -71,6 +71,9 @@
                             <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
                                 <span><i class="el-icon-document-copy"></i> 复制连接</span>
                             </div>
+                            <div class="conn-set-row conn-set-action" @click="copyConnectionOpenLink(row.id)">
+                                <span><i class="el-icon-link"></i> 复制调用链接</span>
+                            </div>
                             <div class="conn-set-row conn-set-action conn-set-danger"
                                  @click="removeConnFromDialog(row.id)">
                                 <span><i class="el-icon-delete"></i> 删除连接</span>
@@ -91,9 +94,12 @@
         <div class="conn-dlg-tip" v-if="connFilter === 'all' && folders.length">
             <i class="el-icon-rank"></i> 拖动连接可调整同级顺序，拖到文件夹上可移动
         </div>
-        <div slot="footer">
+        <div slot="footer" class="conn-dlg-footer">
             <el-button size="small" icon="el-icon-upload2" @click="connImportVisible = true">连接导入</el-button>
             <el-button size="small" icon="el-icon-folder-add" @click="newFolderQuick(null)">新建文件夹</el-button>
+            <span class="spacer"></span>
+            <el-button size="small" icon="el-icon-files" title="无需服务器，直接打开 DeepShell 本机桌面"
+                       @click="enterLocalDesktop">直接进入桌面</el-button>
             <el-button size="small" type="primary" icon="el-icon-plus" @click="openNewConnDialog">新建连接</el-button>
         </div>
     </el-dialog>
@@ -894,16 +900,149 @@
         </div>
     </el-dialog>
 
+    <!-- 外部调用（跳板机客户端） -->
+    <el-dialog title="外部调用（跳板机客户端）" :visible.sync="protocolVisible" width="680px"
+               top="7vh" custom-class="protocol-dlg" append-to-body>
+        <div class="protocol-box" v-loading="protocolLoading">
+            <el-alert :title="'deepshell:// 协议 · ' + protocolStateText(protocolInfo.state)"
+                      :description="protocolInfo.detail || ''"
+                      :type="protocolStateType(protocolInfo.state)" :closable="false" show-icon>
+            </el-alert>
+            <div class="protocol-grid">
+                <div class="protocol-k">协议</div>
+                <div class="protocol-v"><code>{{ protocolInfo.scheme }}://</code></div>
+                <div class="protocol-k">调用程序</div>
+                <div class="protocol-v protocol-path">{{ protocolInfo.launcher || '—' }}</div>
+                <div class="protocol-k">运行平台</div>
+                <div class="protocol-v">{{ protocolInfo.platform || '—' }}</div>
+            </div>
+            <div class="protocol-tip">
+                在网页 / 运维门户中放入一个 <code>deepshell://connect?...</code> 链接，点击后由操作系统拉起本机
+                DeepShell：已运行时交给现有实例打开新标签页，未运行时自动启动。无需浏览器插件，也不会另起一个重复进程。
+            </div>
+            <div class="protocol-example-head">调用链接示例（推荐用已保存连接的 ID，链接不含密码）</div>
+            <el-input :value="protocolExampleLink" readonly size="small">
+                <el-button slot="append" icon="el-icon-document-copy" @click="copyProtocolLink">复制</el-button>
+            </el-input>
+            <div class="protocol-tip">
+                <b>按主机直连：</b><br>
+                <code>deepshell://connect?host=192.168.1.10&amp;port=22&amp;username=root&amp;name=Demo&amp;password=...</code><br>
+                参数：<code>id</code> / <code>host</code> / <code>port</code> / <code>username</code> /
+                <code>name</code> / <code>password</code> / <code>authType</code> / <code>keyPath</code> /
+                <code>passphrase</code> / <code>view</code>（desktop / workbench）/ <code>source</code>；
+                参数值需 URL 编码。已有相同主机、端口与用户名的连接会复用已保存凭据，否则新建并保存连接。
+            </div>
+            <div class="protocol-warn">
+                <i class="el-icon-warning"></i>
+                外部调用接口只接受本机回环请求并校验数据目录中的握手密钥；建议开启登录，不要把带密码的链接放到公开页面。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="protocolVisible = false">关闭</el-button>
+            <el-button size="small" type="primary" :loading="protocolLoading"
+                       :disabled="!protocolInfo.enabled" @click="reregisterProtocol">重新注册协议</el-button>
+        </div>
+    </el-dialog>
+
+    <!-- HTTP 集成接口（JumpServer / 门户） -->
+    <el-dialog title="HTTP 集成接口（JumpServer / 门户）" :visible.sync="integrationVisible"
+               width="740px" top="6vh" custom-class="protocol-dlg" append-to-body>
+        <div class="protocol-box" v-loading="integrationLoading">
+            <el-alert :title="'HTTP 接口可用 · 当前在线页面 ' + (integrationInfo.clients || 0) + ' 个'"
+                      :description="integrationInfo.configured
+                          ? 'Token 由 application.yml 固定配置；接口只接受服务端调用，不支持浏览器跨域。'
+                          : 'Token 自动保存在数据目录 integration.token；接口只接受服务端调用，不支持浏览器跨域。'"
+                      type="success" :closable="false" show-icon></el-alert>
+            <div class="protocol-grid">
+                <div class="protocol-k">接口地址</div>
+                <div class="protocol-v">
+                    <el-input :value="integrationEndpointUrl" readonly size="mini">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyIntegrationEndpoint">复制</el-button>
+                    </el-input>
+                </div>
+                <div class="protocol-k">调用 Token</div>
+                <div class="protocol-v">
+                    <el-input :value="integrationInfo.token" readonly size="mini" class="integration-token"
+                              placeholder="加载中…">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyIntegrationToken">复制</el-button>
+                    </el-input>
+                </div>
+            </div>
+            <div class="protocol-tip">
+                JumpServer / 门户后端调用该接口时，在请求头携带
+                <code>X-DeepShell-Integration-Token</code>（或 <code>Authorization: Bearer &lt;token&gt;</code>）。
+                接口会按 <code>host + port + username</code> 匹配并更新已有连接，匹配不到时新建连接，
+                随后通知已打开的 DeepShell 页面自动打开连接标签。
+                <b>没有在线页面时</b>响应会返回 <code>workspaceUrl</code>，门户可自行跳转；也可传
+                <code>openInBrowser=true</code> 让 DeepShell 所在机器打开浏览器。
+            </div>
+            <div class="protocol-example-head">请求示例（cURL）</div>
+            <el-input type="textarea" :rows="7" readonly :value="integrationCurl"
+                      class="integration-code"></el-input>
+            <div class="protocol-tip">
+                JSON 字段：<code>id</code>（更新已有连接）/ <code>name</code> / <code>host</code> /
+                <code>port</code> / <code>username</code> / <code>password</code> /
+                <code>authType</code>（PASSWORD / KEY）/ <code>keyPath</code> / <code>passphrase</code> /
+                <code>view</code>（desktop / workbench）/ <code>source</code> /
+                <code>open</code>（默认 true）/ <code>openInBrowser</code>。
+            </div>
+            <div class="protocol-warn">
+                <i class="el-icon-warning"></i>
+                接口会新增或更新连接凭据，请只在内网 / HTTPS 下调用，并像密码一样保管 Token；
+                重新生成 Token 后，已配置的 JumpServer / 门户需要同步更新。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="integrationVisible = false">关闭</el-button>
+            <el-button size="small" icon="el-icon-refresh" :loading="integrationLoading"
+                       @click="loadIntegrationStatus">刷新状态</el-button>
+            <el-button size="small" type="warning" :disabled="integrationInfo.configured"
+                       :title="integrationInfo.configured ? 'Token 已在 application.yml 配置，请修改配置后重启' : ''"
+                       @click="regenerateIntegrationToken">重新生成 Token</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 帮助 -->
-    <el-dialog title="帮助" :visible.sync="helpVisible" width="640px" top="5vh" append-to-body>
+    <el-dialog title="DeepShell 帮助手册" :visible.sync="helpVisible" width="720px" top="4vh" append-to-body>
         <div class="help-box">
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-question"></i>帮助手册与桌面快捷键</div>
+                <ul>
+                    <li>本手册可从<b>工作台右上角菜单 → 帮助 → 帮助手册</b>，或<b>可视化桌面开始菜单 → 帮助手册</b>随时打开；在桌面内打开不会退出当前桌面</li>
+                    <li><b>桌面窗口切换</b>：<b>Alt+Tab</b> 循环切换窗口，<b>Shift+Alt+Tab</b> 反向切换；部分操作系统会拦截 Alt+Tab，此时可用 <b>Alt+`</b>（反引号）作为网页内替代</li>
+                    <li><b>视频缩略图</b>：可视化桌面与资源管理器的大 / 中图标视图会为视频显示首帧缩略图；缩略图由浏览器从视频流抓取，首次加载稍慢，超大或编码不支持的视频会回退为文件图标，双击视频仍可播放</li>
+                </ul>
+            </div>
             <div class="help-section">
                 <div class="help-title"><i class="el-icon-monitor"></i>连接与工作台</div>
                 <ul>
                     <li>右上角「＋」打开已保存连接，或点击「新建连接」直接创建后立即连接；连接右侧 ⚙ 可设置置顶 / 收藏 / <b>编辑连接</b>，也可以<b>把连接拖动到文件夹上</b>快速归入文件夹；<b>文件夹上右键「连接所有」</b>可批量打开其中（含子文件夹）的全部服务器</li>
+                    <li><b>直接进入桌面（无需服务器）</b>：工作台空状态或「打开连接」弹窗底部点「直接进入桌面」，会打开 DeepShell 本机的本地桌面，不建立 SSH 连接。文件保存在数据目录的 <b>Desktop</b> 子目录（可通过桌面任务栏「本地桌面」提示查看），支持资源管理器浏览、新建 / 上传 / 下载 / 重命名 / 删除 / 在线编辑、图片与视频预览以及桌面插件；<b>「终端」直接打开本机 Shell（Windows cmd / Unix $SHELL）</b>，无需 SSH 回本机；AI 终端、任务管理器、服务、网络工具、磁盘、常用目录、快捷键命令、服务器搜索等依赖服务器的功能会自动隐藏并禁用。除首次进入外，也可在连接管理窗口点「本地桌面」在新标签页打开；地址带 <code>local=1</code> 时刷新会回到本地桌面</li>
                     <li>页面刷新（F5）后会自动<b>恢复之前打开的会话标签并重新连接</b>，不会丢失工作现场</li>
                     <li>标签：<b>拖动</b>可排序；<b>右键</b>支持复制 IP / 系统信息 / 重新连接 / 断开 / 关闭（其他、左边、右边、全部）；中键点击快速关闭</li>
+                    <li><b>终端分屏</b>：工具栏「左右分屏 / 上下分屏」按钮是<b>追加窗格</b>，已有 2 个窗格时再点可增加第 3 个；已有左右分屏后上下分屏按钮禁用，反之亦然。优先复用当前连接已有标签，没有时新开同连接会话；<b>拖动分隔条</b>可调整窗格宽/高；每个窗格右上角 <b>×</b> 关闭该分屏并弹出确认，只剩一个窗格时自动退出分屏。分屏顺序、尺寸和焦点在刷新页面后恢复；手机版不支持分屏</li>
+                    <li><b>命令审计</b>：终端里手动提交的命令会写入「审计日志」和 <code>logs/terminal-commands.log</code>，记录连接、用户、来源 IP 与命令；命令底栏、快捷命令与本地 Shell 命令同样记录，密码 / SSH 确认等交互提示自动跳过。历史命令调出后提交也能被识别</li>
                     <li>终端顶栏实时显示远端 CPU / 内存 / 交换 / 网络利用率，悬浮查看主机、负载与运行时长</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-link"></i>外部调用（跳板机客户端）</div>
+                <ul>
+                    <li>使用分发包（<code>java -jar</code>）启动后会自动把 <code>deepshell://</code> 注册为当前用户的 URL 协议：Windows 写入 HKCU 注册表、无需管理员权限，Linux 写入 xdg desktop 文件；IDE / classes 模式不注册。可在右上角菜单「安全与访问 → 外部调用」查看状态或重新注册</li>
+                    <li>网页 / 门户里的 <code>&lt;a href="deepshell://connect?id=12"&gt;打开服务器&lt;/a&gt;</code> 点击后由系统拉起本机 DeepShell：已运行时交给现有实例打开新标签页，未运行时自动启动；无需浏览器插件</li>
+                    <li>按主机直连可传 <code>host</code> / <code>port</code> / <code>username</code> / <code>password</code>（或 <code>authType=KEY&amp;keyPath=...</code>）/ <code>name</code> / <code>source</code>；本机已有相同主机、端口与用户名的连接会复用已保存凭据，否则新建并保存连接。建议优先用 <code>id</code> 或省略密码，避免密码出现在链接里</li>
+                    <li>外部调用接口只接受本机回环请求并校验数据目录中的 <code>protocol.key</code>，但网页仍可触发打开已保存连接；请开启登录，不要把带密码的链接放到公开页面</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-connection"></i>HTTP 集成接口（JumpServer / 门户）</div>
+                <ul>
+                    <li>右上角菜单「安全与访问 → 集成接口（HTTP）」可查看接口地址、调用 Token 与 cURL 示例；Token 优先使用 <code>deepshell.integration.token</code>，未配置时自动生成到数据目录 <code>integration.token</code></li>
+                    <li>JumpServer / 门户后端向 <code>POST /api/integration/connections/open</code> 发送 JSON，并在请求头携带 <code>X-DeepShell-Integration-Token</code>（或 Bearer Token）。接口按 host + port + username 更新已有连接，匹配不到时新建连接，然后通知已打开的 DeepShell 页面自动打开连接标签</li>
+                    <li>关键字段：<code>id</code> 更新指定连接；<code>password</code> / <code>keyPath</code> 更新凭据；<code>view=desktop|workbench</code> 指定打开视图；<code>open=false</code> 只保存不打开；<code>openInBrowser=true</code> 在没有在线页面时让 DeepShell 所在机器打开浏览器</li>
+                    <li>接口只面向服务端调用（拒绝浏览器 Origin 请求，不开启 CORS），请在内网 / HTTPS 下使用；没有在线页面时响应会返回 <code>workspaceUrl</code>，由门户把用户浏览器跳转到该地址即可</li>
                 </ul>
             </div>
             <div class="help-section">
@@ -928,10 +1067,10 @@
                     <li>命令走<b>独立通道</b>执行，不干扰（也不显示在）你正在操作的终端；AI 会记住自己 cd 到的目录，但 export 的环境变量不保留</li>
                     <li>默认「<b>自动执行</b>」：AI 连续执行多步；遇到删除 / 格式化 / 重启等<b>高风险命令会先暂停</b>，在你点击「执行 / 跳过」后继续。切到「每步确认」则每条命令都需你点执行</li>
                     <li>命令必须是非交互的：不能执行 vi / top 这类需要人工输入的程序；sudo 若无免密会失败；单条命令最长 120 秒，输出过长自动截断</li>
-                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；对 ZIP / JAR / WAR / TAR / TAR.GZ / TGZ / TAR.BZ2 / TAR.XZ / 7Z / RAR / GZ / BZ2 / XZ 压缩包，右键「解压」可解压到当前目录或同名文件夹，默认跳过已存在的同名文件，调用服务器自带 unzip / tar / 7z / unrar / gzip / bzip2 / xz；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、<b>从桌面图标拖到资源管理器窗口</b>（松手后选择复制或剪切）、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示服务端降采样后的图片缩略图（只加载可见项、限并发，避免大量原图卡死页面），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录；<b>双击文本文件</b>会打开「文本编辑器」应用窗口，顶部含文件 / 编辑 / 选择 / 视图 / 帮助菜单，支持多标签、新建 / 打开 / 保存 / 另存为，关闭标签前会提示未保存修改；工具栏新增<b>「过滤」</b>开关，勾选后只显示包含关键词的行（支持区分大小写与正则），过滤视图为只读，关闭过滤后恢复编辑</li>
-                    <li><b>桌面应用插件</b>：开始菜单「已安装应用 → 安装 / 管理」导入 ZIP（plugin.json + 入口 HTML + 图标），安装后直接出现在开始菜单；插件在隔离沙箱 iframe 中运行，支持同 ID 更新与卸载；格式详见 README「桌面应用插件」</li>
+                    <li><b>AI 可视化桌面</b>：点工具栏「AI 可视化桌面」进入资源管理器式全屏页面，从 AI 当前工作目录开始；支持大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序；右键菜单可编辑 / 下载（多选可打包成 ZIP——后端通过 SFTP 流式打包，或逐个下载；本机访问时可下载到本机目录）/ 重命名 / 删除 / 新建 / 上传 / 查看属性 / <b>压缩</b>；压缩子菜单支持 ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ，可选压缩级别、文件名和覆盖策略，调用服务器自带压缩命令；对 ZIP / JAR / WAR / TAR / TAR.GZ / TGZ / TAR.BZ2 / TAR.XZ / 7Z / RAR / GZ / BZ2 / XZ 压缩包，右键「解压」可解压到当前目录或同名文件夹，默认跳过已存在的同名文件，调用服务器自带 unzip / tar / 7z / unrar / gzip / bzip2 / xz；支持 Ctrl / Shift 多选、<b>在空白处按住左键拖动框选</b>（Ctrl 追加、拖到边缘自动滚动）、拖动文件到文件夹移动、<b>从桌面图标拖到资源管理器窗口</b>（松手后选择复制或剪切）、系统文件拖入上传；工具栏与<b>鼠标侧键 / Alt+← →</b>支持目录后退、前进；大 / 中图标视图会显示图片与视频缩略图：图片由服务端降采样，视频由浏览器读取视频流抓取首帧并叠加播放角标（只加载可见项、限并发，超大或编码不支持的视频回退为文件图标），<b>双击图片</b>在新标签页打开预览，支持缩放、拖动、旋转和上一张 / 下一张；<b>双击视频</b>也会在新标签页打开播放器，支持进度拖动 / 快进快退 / 同目录视频切换，关闭标签页即回到原目录；<b>双击文本文件</b>会打开「文本编辑器」应用窗口，顶部含文件 / 编辑 / 选择 / 视图 / 帮助菜单，支持多标签、新建 / 打开 / 保存 / 另存为，关闭标签前会提示未保存修改；工具栏新增<b>「过滤」</b>开关，勾选后只显示包含关键词的行（支持区分大小写与正则），过滤视图为只读，关闭过滤后恢复编辑</li>
+                    <li><b>桌面应用插件</b>：开始菜单「已安装应用 → 安装 / 管理」导入 ZIP（plugin.json + 入口 HTML + 图标），安装后直接出现在开始菜单；插件在隔离沙箱 iframe 中运行，支持同 ID 更新与卸载；格式详见 README「桌面应用插件」。官方 <b>Redis 管理器</b> 支持保存多个连接：连接成功后勾选「保存连接信息」，密码由 DeepShell 使用本机密钥加密保存在插件数据目录，不会回传给浏览器；下次在欢迎页或连接弹窗中选中已保存连接即可直接连接，也可编辑或删除</li>
                     <li><b>桌面任务栏 / 开始菜单</b>：页面底部任务栏放置 AI 终端、新建终端，以及已打开窗口的按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 服务与计划任务 / 网络工具箱 / 多机命令 / 常用目录 / 快捷命令 / 连接管理，可最小化与还原）；这些工具都从开始菜单打开，均在桌面内以窗口运行，不再跳转终端工作台。右侧显示 CPU / 内存 / 交换 / 网络 / 连接状态与时钟；<b>点击或右键连接状态</b>可重新连接 / 断开 / 查看系统信息；连接断开时状态旁会显示「重新连接」，任务栏空白处右键也可重新连接。点左下角开始按钮打开开始菜单，可启动固定应用、跳转常用位置；开始菜单底部可在新标签页打开工作台（保留当前桌面），或直接返回工作台；搜索框即时匹配应用与当前目录，<b>回车</b>会在当前目录的 6 层子目录中递归搜索文件，点击结果可定位或打开</li>
-                    <li><b>服务与计划任务 / 网络工具箱 / 多机命令</b>：开始菜单打开。服务窗口列出 systemd / SysV 服务，可启动、停止、重启与设置 / 取消开机自启；计划任务页查看用户 crontab（可添加 / 删除）、系统 crontab 与 systemd 定时器。网络工具箱在目标服务器上执行 ping / 路由追踪 / DNS 查询 / 端口探测。多机命令可选择多台已保存连接并发执行同一条命令，逐台查看退出码、耗时与输出；已打开的会话直接复用，未连接的按保存的代理 / 跳板机配置临时建连</li>
+                    <li><b>服务与计划任务 / 网络工具箱 / 多机命令</b>：开始菜单打开。服务窗口列出 systemd / SysV 服务，可启动、停止、重启与设置 / 取消开机自启；计划任务页查看用户 crontab（可添加 / 删除）、系统 crontab 与 systemd 定时器。网络工具箱的<b>实时流量</b>页采用与任务管理器一致的工具栏与表格样式，按程序显示实时上下行、累计流量与连接数，<b>右键（或双击）程序行可复用任务管理器的进程详情浮层</b>查看完整命令行 / CPU / 内存 / 运行时长，并可结束进程；非 root 登录时可点击工具栏「以 root 采样」，通过免密 sudo 或输入一次 sudo 密码（仅存于服务内存 30 分钟）读取全部进程，登录用户本身是 root 时直接显示 root 标识；连通性测试支持 ping / 路由追踪 / DNS 查询 / 端口探测。多机命令可选择多台已保存连接并发执行同一条命令，逐台查看退出码、耗时与输出；已打开的会话直接复用，未连接的按保存的代理 / 跳板机配置临时建连</li>
                     <li><b>常用目录 / 快捷命令（桌面窗口）</b>：常用目录可添加、移除目录，<b>单击目录</b>会在终端执行 cd 并让资源管理器跳转到该目录；快捷命令固定发送到当前桌面会话，单击执行、右侧 + 仅填入输入框；桌面终端窗口底栏也提供快捷命令入口，工作台的快捷命令面板保持不变</li>
                     <li><b>连接管理（桌面窗口）</b>：开始菜单「连接管理」在桌面内以窗口打开，支持搜索、收藏 / 置顶、文件夹分组、拖动排序、连接导入导出以及新建 / 编辑 / 复制 / 删除；<b>单击连接</b>会在新浏览器标签页打开该连接的 AI 桌面，当前桌面保持不变。终端工作台的「打开连接」弹窗行为不变</li>
                     <li><b>电源菜单</b>：开始菜单底部「返回工作台」右侧的电源按钮，点开提供<b>关机 / 重启 / 断开连接</b>——关机和重启会真实操作远端服务器（执行 shutdown，需当前用户为 root 或已配置<b>免密 sudo</b>，否则会提示失败并说明原因）；关机后会主动断开当前会话、不再自动重连，重启后会按退避策略自动重连，也可在任务栏连接状态处右键手动重新连接；操作会先弹出危险确认，并记入审计日志</li>
@@ -991,6 +1130,7 @@
                 <div class="help-title"><i class="el-icon-folder"></i>数据与安全</div>
                 <ul>
                     <li>连接、密码（AES 加密）、快捷命令与背景图存放于数据目录（分发包为程序目录下 <b>data/</b>），拷贝该目录即可迁移</li>
+                    <li>终端手动命令同时记录在「审计日志」和 <b>logs/terminal-commands.log</b>；本地 Shell 与 SSH 终端都会记录，密码 / SSH 确认等交互提示不会被记录</li>
                     <li>系统备份包含连接密码、AI API Key 与 SSH 私钥，请妥善保管；登录配置、HTTPS 证书和审计日志不包含在备份中</li>
                     <li>本工具设计为本机使用，请勿直接暴露到公网</li>
                 </ul>
@@ -1008,6 +1148,7 @@
             <el-divider></el-divider>
             <div class="about-line dim">运行环境：Java {{ appInfo.java }} ｜ {{ appInfo.os }}</div>
             <div class="about-line dim">数据目录：{{ appInfo.dataDir }}</div>
+            <div class="about-line dim">外部调用：{{ appInfo.protocolScheme || 'deepshell' }}:// · {{ protocolStateText(appInfo.protocolState) }}</div>
             <div class="about-line dim">本地工具 · 连接与账号信息仅保存在本机</div>
         </div>
     </el-dialog>

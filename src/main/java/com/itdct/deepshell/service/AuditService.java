@@ -45,10 +45,17 @@ public class AuditService {
 
     /** 记录一条审计；异常只写应用日志，不影响业务操作 */
     public void record(String action, String target, String result, String detail) {
+        record(action, target, result, detail,
+                auth.isEnabled() ? auth.getUsername() : "local", currentIp());
+    }
+
+    /** 指定操作者与来源 IP（WebSocket / 本地终端等没有 MVC 请求上下文的场景）。 */
+    public void record(String action, String target, String result, String detail,
+                       String username, String clientIp) {
         try {
             AuditLog entry = new AuditLog();
-            entry.setUsername(auth.isEnabled() ? auth.getUsername() : "local");
-            entry.setClientIp(currentIp());
+            entry.setUsername(truncate(username == null || username.isEmpty() ? "local" : username, 100));
+            entry.setClientIp(truncate(clientIp == null || clientIp.isEmpty() ? "system" : clientIp, 64));
             entry.setAction(truncate(action, 40));
             entry.setTarget(truncate(target, MAX_TARGET));
             entry.setDetail(truncate(detail, MAX_DETAIL));

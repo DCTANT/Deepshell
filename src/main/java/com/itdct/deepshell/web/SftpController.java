@@ -23,6 +23,10 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -127,34 +131,88 @@ public class SftpController {
         return R.ok();
     }
 
+    /**
+     * 普通下载：支持 HTTP Range。浏览器断线后重试、下载工具续传时只读取剩余区间；
+     * 带 taskId 时按实际发送字节更新传输中心进度。
+     */
     @GetMapping("/download")
     public void download(@RequestParam String sessionId, @RequestParam String path,
                          @RequestParam(required = false) String taskId,
-                         HttpServletResponse resp) throws Exception {
+                         HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String name = path.substring(path.lastIndexOf('/') + 1);
+        long[] stat = sftp.fileStat(sessionId, path);
+        long size = stat[0];
+        String etag = "\"" + size + "-" + stat[1] + "\"";
+        String lastModified = httpDate(stat[1]);
         resp.setContentType("application/octet-stream");
         resp.setHeader("Content-Disposition", contentDisposition("attachment", name));
-        audit.record("FILE_DOWNLOAD", path, "OK", null);
+        resp.setHeader("Accept-Ranges", "bytes");
+        resp.setHeader("Cache-Control", "no-store");
+        resp.setHeader("ETag", etag);
+        resp.setHeader("Last-Modified", lastModified);
+        long start = 0;
+        long end = size > 0 ? size - 1 : 0;
+        boolean partial = false;
+        String rangeHeader = req.getHeader("Range");
+        String ifRange = req.getHeader("If-Range");
+        if (rangeHeader != null && ifRange != null && !ifRange.trim().isEmpty()
+                && !ifRange.trim().equals(etag) && !ifRange.trim().equals(lastModified)) {
+            // 文件已变化：忽略 Range，重新返回完整文件
+            rangeHeader = null;
+        }
+        if (rangeHeader != null && !rangeHeader.trim().isEmpty()) {
+            long[] span = parseRange(rangeHeader, size);
+            if (span == null) {
+                resp.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
+                resp.setHeader("Content-Range", "bytes */" + size);
+                resp.setContentLengthLong(0);
+                return;
+            }
+            start = span[0];
+            end = span[1];
+            partial = true;
+        }
+        long length = size == 0 ? 0 : end - start + 1;
+        if (partial) {
+            resp.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+            resp.setHeader("Content-Range", "bytes " + start + "-" + end + "/" + size);
+        }
+        resp.setContentLengthLong(length);
+        audit.record("FILE_DOWNLOAD", path, "OK", partial ? "断点续传 " + start + "-" + end : null);
+        if (length <= 0 || "HEAD".equalsIgnoreCase(req.getMethod())) {
+            return;
+        }
         if (isBlank(taskId)) {
-            sftp.download(sessionId, path, resp.getOutputStream());
+            try {
+                sftp.streamRange(sessionId, path, start, length, resp.getOutputStream());
+            } catch (IOException clientGone) {
+                // 浏览器取消下载或网络中断
+            }
             return;
         }
         try {
-            downloadTasks.attach(taskId, sftp.fileSize(sessionId, path));
+            downloadTasks.attach(taskId, size);
         } catch (Exception ignore) {
             // 取不到大小时仍继续下载，前端显示已传字节
         }
         try (CountingOutputStream out = new CountingOutputStream(
-                resp.getOutputStream(), n -> downloadTasks.progress(taskId, n),
+                resp.getOutputStream(), start, n -> downloadTasks.progress(taskId, n),
                 () -> downloadTasks.isCancelled(taskId))) {
-            sftp.download(sessionId, path, out);
+            sftp.streamRange(sessionId, path, start, length, out);
         } catch (Exception e) {
             if (!downloadTasks.isCancelled(taskId)) {
                 downloadTasks.fail(taskId, e.getMessage());
             }
+            if (e instanceof IOException) {
+                // 响应已开始输出，无法再写错误响应；保留任务状态供续传
+                return;
+            }
             throw e;
         }
-        downloadTasks.finish(taskId);
+        // 分段续传请求只有读到文件末尾才算完成，否则保持“下载中”等待下一段
+        if (end >= size - 1) {
+            downloadTasks.finish(taskId);
+        }
     }
 
     /** 多选打包下载预检：校验会话、目录与选中项，返回实际下载文件名 */
@@ -218,12 +276,17 @@ public class SftpController {
         return s == null || s.trim().isEmpty();
     }
 
+    static String httpDate(long epochSeconds) {
+        return DateTimeFormatter.RFC_1123_DATE_TIME.format(
+                ZonedDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds), ZoneOffset.UTC));
+    }
+
     /**
      * 下载 / 预览的 Content-Disposition：filename= 只放 ASCII 回退名，
      * 真实文件名（可能含中文）放到 RFC 5987 的 filename* 中。
      * Tomcat 收到非 ASCII 头值时会丢弃该头，导致浏览器把图片当页面内联打开。
      */
-    private static String contentDisposition(String disposition, String name) {
+    static String contentDisposition(String disposition, String name) {
         String raw = (name == null || name.trim().isEmpty()) ? "download" : name;
         String safe = raw.replace('\\', '_').replace('"', '_')
                 .replace("\r", "_").replace("\n", "_");
@@ -247,9 +310,15 @@ public class SftpController {
         private long count;
 
         CountingOutputStream(OutputStream out, LongConsumer onProgress, BooleanSupplier cancelled) {
+            this(out, 0, onProgress, cancelled);
+        }
+
+        CountingOutputStream(OutputStream out, long initialCount,
+                             LongConsumer onProgress, BooleanSupplier cancelled) {
             super(out);
             this.onProgress = onProgress;
             this.cancelled = cancelled;
+            this.count = initialCount;
         }
 
         @Override
@@ -588,7 +657,7 @@ public class SftpController {
         }
     }
 
-    private static String imageContentType(String name) {
+    static String imageContentType(String name) {
         int idx = name.lastIndexOf('.');
         if (idx < 0 || idx == name.length() - 1) {
             return null;

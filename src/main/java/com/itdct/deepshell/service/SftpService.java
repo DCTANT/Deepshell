@@ -488,6 +488,14 @@ public class SftpService {
         return withSftp(sessionId, c -> c.stat(path).getSize());
     }
 
+    /** 文件大小与修改时间（秒），用于下载断点续传的 ETag / Last-Modified */
+    public long[] fileStat(String sessionId, String path) throws Exception {
+        return withSftp(sessionId, c -> {
+            SftpATTRS attrs = c.stat(path);
+            return new long[]{attrs.getSize(), attrs.getMTime()};
+        });
+    }
+
     /** 多选打包下载预检：校验目录 / 路径关系，并确认顶层文件或文件夹可访问 */
     public int checkBundle(String sessionId, String dir, List<String> paths) throws Exception {
         return checkSources(sessionId, dir, paths, MAX_BUNDLE_SOURCES);
