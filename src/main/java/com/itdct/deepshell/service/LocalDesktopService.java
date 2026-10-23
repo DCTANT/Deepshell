@@ -1,6 +1,8 @@
 package com.itdct.deepshell.service;
 
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.dto.FileChecksumResult;
+import com.itdct.deepshell.dto.FileContentMatch;
 import com.itdct.deepshell.dto.SftpEntry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -11,18 +13,24 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * 无 SSH 连接时的本地桌面文件服务：所有路径都限制在数据目录的 Desktop 子目录内，
@@ -35,6 +43,12 @@ public class LocalDesktopService {
     private static final long MAX_TEXT_BYTES = 8L * 1024 * 1024;
     private static final long MAX_THUMB_SOURCE = 30L * 1024 * 1024;
     private static final int MAX_COPY_DEPTH = 64;
+    private static final int MAX_CONTENT_SEARCH_DEPTH = 8;
+    private static final int MAX_CONTENT_SEARCH_FILES = 2000;
+    private static final long MAX_CONTENT_SEARCH_FILE = 5L * 1024 * 1024;
+    private static final int MAX_CONTENT_MATCH_TEXT = 600;
+    private static final Set<String> SKIP_SEARCH_DIRS = new HashSet<>(Arrays.asList(
+            ".git", ".svn", ".hg", "node_modules", "target", "dist", ".idea", "__pycache__"));
 
     private final Path root;
 
@@ -205,6 +219,15 @@ public class LocalDesktopService {
         return Files.size(file);
     }
 
+    /** 文件大小与修改时间（秒），用于下载断点续传的 ETag / Last-Modified */
+    public long[] fileStat(String virtualPath) throws IOException {
+        Path file = existing(virtualPath);
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("目标不是文件");
+        }
+        return new long[]{Files.size(file), Files.getLastModifiedTime(file).toMillis() / 1000L};
+    }
+
     public void download(String virtualPath, OutputStream out) throws IOException {
         Path file = existing(virtualPath);
         if (!Files.isRegularFile(file)) {
@@ -246,6 +269,137 @@ public class LocalDesktopService {
                 remaining -= read;
             }
         }
+    }
+
+    /**
+     * 本地桌面内容搜索：只扫描数据目录内的文本文件，限制目录深度、文件数与单文件大小，
+     * 避免大目录阻塞请求线程。
+     */
+    public List<FileContentMatch> contentSearch(String virtualPath, String keyword, String include,
+                                                boolean caseSensitive, int limit) throws IOException {
+        List<FileContentMatch> out = new ArrayList<>();
+        String kw = keyword == null ? "" : keyword.trim();
+        if (kw.isEmpty()) {
+            return out;
+        }
+        if (kw.length() > 200 || kw.contains("\n") || kw.contains("\r")) {
+            throw new IllegalArgumentException("搜索关键字不合法");
+        }
+        int max = limit <= 0 ? 100 : Math.min(limit, 300);
+        final Path base = existing(virtualPath);
+        requireDirectory(base);
+        final List<PathMatcher> matchers = contentMatchers(include);
+        final String needle = caseSensitive ? kw : kw.toLowerCase(Locale.ROOT);
+        final int[] scanned = {0};
+        Files.walkFileTree(base, java.util.EnumSet.noneOf(java.nio.file.FileVisitOption.class),
+                MAX_CONTENT_SEARCH_DEPTH, new SimpleFileVisitor<Path>() {
+                    @Override
+                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                        if (!dir.equals(base) && SKIP_SEARCH_DIRS.contains(
+                                dir.getFileName().toString().toLowerCase(Locale.ROOT))) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        if (out.size() >= max) {
+                            return FileVisitResult.TERMINATE;
+                        }
+                        if (!attrs.isRegularFile() || attrs.size() <= 0
+                                || attrs.size() > MAX_CONTENT_SEARCH_FILE) {
+                            return FileVisitResult.CONTINUE;
+                        }
+                        if (!matchers.isEmpty()) {
+                            boolean matched = false;
+                            for (PathMatcher matcher : matchers) {
+                                if (matcher.matches(file.getFileName())) {
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                            if (!matched) {
+                                return FileVisitResult.CONTINUE;
+                            }
+                        }
+                        if (++scanned[0] > MAX_CONTENT_SEARCH_FILES) {
+                            return FileVisitResult.TERMINATE;
+                        }
+                        byte[] bytes = Files.readAllBytes(file);
+                        int probe = Math.min(bytes.length, 4096);
+                        for (int i = 0; i < probe; i++) {
+                            if (bytes[i] == 0) {
+                                return FileVisitResult.CONTINUE;
+                            }
+                        }
+                        String virtual = "/" + root.relativize(file).toString().replace('\\', '/');
+                        String text = new String(bytes, StandardCharsets.UTF_8);
+                        String[] lines = text.split("\n", -1);
+                        for (int i = 0; i < lines.length && out.size() < max; i++) {
+                            String line = lines[i].replace("\r", "");
+                            String haystack = caseSensitive ? line : line.toLowerCase(Locale.ROOT);
+                            if (haystack.contains(needle)) {
+                                if (line.length() > MAX_CONTENT_MATCH_TEXT) {
+                                    line = line.substring(0, MAX_CONTENT_MATCH_TEXT) + "…";
+                                }
+                                out.add(new FileContentMatch(virtual, i + 1, line));
+                            }
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+        return out;
+    }
+
+    /** 本地文件校验和（MD5 / SHA-1 / SHA-256），流式读取，不占用大内存。 */
+    public FileChecksumResult checksum(String virtualPath, String algorithm) throws IOException {
+        String alg = FileSearchService.normalizeAlgorithm(algorithm);
+        Path file = existing(virtualPath);
+        if (!Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("目标不是文件");
+        }
+        String instance = "md5".equals(alg) ? "MD5" : ("sha1".equals(alg) ? "SHA-1" : "SHA-256");
+        try {
+            MessageDigest digest = MessageDigest.getInstance(instance);
+            try (InputStream in = Files.newInputStream(file)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    digest.update(buf, 0, n);
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest.digest()) {
+                sb.append(String.format("%02x", b));
+            }
+            return new FileChecksumResult(virtualPath, alg, sb.toString());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("当前 Java 环境不支持 " + alg + " 校验");
+        }
+    }
+
+    private static List<PathMatcher> contentMatchers(String include) {
+        List<PathMatcher> out = new ArrayList<>();
+        if (include == null) {
+            return out;
+        }
+        for (String part : include.split("[,;\\s]+")) {
+            String pattern = part.trim();
+            if (pattern.isEmpty() || pattern.length() > 120
+                    || pattern.contains("/") || pattern.contains("\\")) {
+                continue;
+            }
+            try {
+                out.add(FileSystems.getDefault().getPathMatcher("glob:" + pattern));
+            } catch (Exception ignore) {
+                // 无效通配符直接忽略
+            }
+            if (out.size() >= 8) {
+                break;
+            }
+        }
+        return out;
     }
 
     public static long maxThumbSource() {

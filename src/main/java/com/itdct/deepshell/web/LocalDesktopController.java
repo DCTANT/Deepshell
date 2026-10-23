@@ -2,7 +2,10 @@ package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.ImageThumbnails;
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.dto.ContentSearchReq;
 import com.itdct.deepshell.dto.CopyReq;
+import com.itdct.deepshell.dto.FileChecksumResult;
+import com.itdct.deepshell.dto.FileContentMatch;
 import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
 import com.itdct.deepshell.service.AuditService;
@@ -121,14 +124,73 @@ public class LocalDesktopController {
         return R.ok();
     }
 
+    /** 普通下载：支持 HTTP Range，浏览器或下载工具可断点续传。 */
     @GetMapping("/download")
-    public void download(@RequestParam String path, HttpServletResponse resp) throws IOException {
+    public void download(@RequestParam String path, HttpServletRequest req,
+                         HttpServletResponse resp) throws IOException {
         String name = baseName(path);
+        long[] stat = service.fileStat(path);
+        long size = stat[0];
+        String etag = "\"" + size + "-" + stat[1] + "\"";
+        String lastModified = SftpController.httpDate(stat[1]);
         resp.setContentType("application/octet-stream");
         resp.setHeader("Content-Disposition", SftpController.contentDisposition("attachment", name));
-        resp.setContentLengthLong(service.fileSize(path));
+        resp.setHeader("Accept-Ranges", "bytes");
+        resp.setHeader("Cache-Control", "no-store");
+        resp.setHeader("ETag", etag);
+        resp.setHeader("Last-Modified", lastModified);
+        long start = 0;
+        long end = size > 0 ? size - 1 : 0;
+        boolean partial = false;
+        String rangeHeader = req.getHeader("Range");
+        String ifRange = req.getHeader("If-Range");
+        if (rangeHeader != null && ifRange != null && !ifRange.trim().isEmpty()
+                && !ifRange.trim().equals(etag) && !ifRange.trim().equals(lastModified)) {
+            rangeHeader = null;
+        }
+        if (rangeHeader != null && !rangeHeader.trim().isEmpty()) {
+            long[] span = SftpController.parseRange(rangeHeader, size);
+            if (span == null) {
+                resp.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
+                resp.setHeader("Content-Range", "bytes */" + size);
+                resp.setContentLengthLong(0);
+                return;
+            }
+            start = span[0];
+            end = span[1];
+            partial = true;
+        }
+        long length = size == 0 ? 0 : end - start + 1;
+        if (partial) {
+            resp.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+            resp.setHeader("Content-Range", "bytes " + start + "-" + end + "/" + size);
+        }
+        resp.setContentLengthLong(length);
         audit.record("LOCAL_FILE_DOWNLOAD", path, "OK", null);
-        service.download(path, resp.getOutputStream());
+        if (length <= 0 || "HEAD".equalsIgnoreCase(req.getMethod())) {
+            return;
+        }
+        try {
+            service.streamRange(path, start, length, resp.getOutputStream());
+        } catch (IOException clientGone) {
+            // 浏览器取消下载或网络中断
+        }
+    }
+
+    @PostMapping("/content-search")
+    public R<List<FileContentMatch>> contentSearch(@RequestBody ContentSearchReq req) throws IOException {
+        if (req == null) {
+            throw new IllegalArgumentException("请求参数缺失");
+        }
+        return R.ok(service.contentSearch(req.getRoot(), req.getKeyword(), req.getInclude(),
+                req.isCaseSensitive(), req.getMaxResults()));
+    }
+
+    @GetMapping("/checksum")
+    public R<FileChecksumResult> checksum(@RequestParam String path,
+                                         @RequestParam(value = "algorithm", defaultValue = "sha256")
+                                                 String algorithm) throws IOException {
+        return R.ok(service.checksum(path, algorithm));
     }
 
     @GetMapping("/preview")

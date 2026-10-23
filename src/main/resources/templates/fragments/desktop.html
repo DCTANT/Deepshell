@@ -1411,6 +1411,19 @@
                         </section>
                     </div>
                 </template>
+                <template v-else-if="w.type === 'appcenter'">
+                    <div class="dsk-appcenter">
+                        <div class="dsk-appcenter-card">
+                            <span class="dsk-appcenter-icon"><i class="el-icon-shopping-bag-1"></i></span>
+                            <h2>应用中心</h2>
+                            <p>该功能尚未实现，敬请期待！</p>
+                            <p class="dim">
+                                应用中心正在建设中，后续可在这里浏览、安装和管理桌面应用与插件。
+                            </p>
+                            <span class="dsk-appcenter-badge">Coming Soon</span>
+                        </div>
+                    </div>
+                </template>
                 <template v-else>
                 <div class="dsk-toolbar">
             <el-button-group class="dsk-nav">
@@ -1423,7 +1436,7 @@
                 <el-button size="mini" :icon="w.loading ? 'el-icon-loading' : 'el-icon-refresh'"
                            title="刷新" @click="desktopRefresh(w)"></el-button>
             </el-button-group>
-            <div class="dsk-address">
+            <div class="dsk-address" @dblclick.self.stop.prevent="startDesktopPathEdit(w)">
                 <button class="dsk-fav-btn" :class="{ on: isDeskFavorite(w) }"
                         :disabled="!w.path || w.pathEditing || !desktopTab || desktopIsLocal"
                         :title="desktopIsLocal ? '本地桌面不支持常用目录'
@@ -1432,7 +1445,8 @@
                     <i :class="isDeskFavorite(w) ? 'el-icon-star-on' : 'el-icon-star-off'"></i>
                 </button>
                 <template v-if="!w.pathEditing">
-                    <div class="dsk-crumbs">
+                    <div class="dsk-crumbs" title="双击编辑路径"
+                         @dblclick.stop.prevent="startDesktopPathEdit(w)">
                         <span v-for="(c, i) in deskCrumbs(w)" :key="c.path" class="dsk-crumb-line">
                             <i v-if="i" class="el-icon-arrow-right dsk-crumb-sep"></i>
                             <span class="dsk-crumb" :title="c.path"
@@ -1440,7 +1454,7 @@
                         </span>
                     </div>
                     <i class="el-icon-edit dsk-edit-path" title="编辑路径"
-                       @click="startDesktopPathEdit"></i>
+                       @click="startDesktopPathEdit(w)"></i>
                 </template>
                 <el-input v-else :id="'dsk-path-input-' + w.id" size="mini" v-model="w.pathInput"
                           class="dsk-path-input" @keyup.enter.native="commitDesktopPathEdit(w)"
@@ -1472,6 +1486,8 @@
                        @click="desktopNewFile(w)"></el-button>
             <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"
                        @click="pickDesktopUpload"></el-button>
+            <el-button size="mini" icon="el-icon-search" title="在当前目录中搜索文件内容"
+                       @click="openDesktopContentSearch(w)"></el-button>
             <el-button v-if="!desktopIsLocal" size="mini" icon="el-icon-sort"
                        :disabled="!desktopSelectionHasFile(w)"
                        title="跨服务器传输选中文件（不下载到本机）"
@@ -2114,7 +2130,9 @@
                                             <b>桌面主题</b>
                                             <span>选择主题会同时应用窗口、任务栏、壁纸和强调色，之后仍可单独微调</span>
                                         </div>
-                                        <span class="dsk-theme-badge" v-if="desktopAppearanceCustomized">已微调</span>
+                                        <span class="dsk-theme-badge"
+                                              v-if="desktopActiveCustomAppearance">方案 · {{ desktopActiveCustomAppearance.name }}</span>
+                                        <span class="dsk-theme-badge" v-else-if="desktopAppearanceCustomized">已微调</span>
                                         <span class="dsk-theme-badge preset" v-else>{{ desktopAppearanceTheme.label }}预设</span>
                                     </div>
                                     <div class="dsk-appearance-preview">
@@ -2140,8 +2158,10 @@
                                             <span class="dsk-ap-tray"></span>
                                         </div>
                                         <div class="dsk-ap-caption">
-                                            <b>{{ desktopAppearanceTheme.label }}</b>
-                                            <span>{{ desktopAppearanceCustomized ? '自定义配色' : desktopAppearanceTheme.desc }}</span>
+                                            <b>{{ desktopActiveCustomAppearance
+                                                ? desktopActiveCustomAppearance.name : desktopAppearanceTheme.label }}</b>
+                                            <span>{{ desktopActiveCustomAppearance
+                                                ? '已保存的自定义外观' : (desktopAppearanceCustomized ? '自定义配色' : desktopAppearanceTheme.desc) }}</span>
                                         </div>
                                     </div>
                                     <div class="dsk-theme-grid">
@@ -2160,6 +2180,67 @@
                                             <span class="dsk-theme-name">{{ t.label }}</span>
                                         </button>
                                     </div>
+                                    <div class="dsk-custom-scheme">
+                                        <div class="dsk-custom-scheme-head">
+                                            <div class="dsk-set-info">
+                                                <b>我的外观方案</b>
+                                                <span>把当前颜色、透明度和图标大小保存为方案；切换预设后仍可一键恢复</span>
+                                            </div>
+                                            <div class="dsk-custom-scheme-save">
+                                                <el-input v-model="desktopAppearanceSaveName" size="mini"
+                                                          maxlength="24" clearable
+                                                          placeholder="方案名称，例如 我的深蓝"
+                                                          @keyup.enter.native="saveDesktopAppearanceScheme"></el-input>
+                                                <el-button size="mini" type="primary" icon="el-icon-folder-add"
+                                                           @click="saveDesktopAppearanceScheme">保存当前外观</el-button>
+                                            </div>
+                                        </div>
+                                        <div class="dsk-theme-grid dsk-custom-theme-grid"
+                                             v-if="desktopCustomAppearances.length">
+                                            <div v-for="c in desktopCustomAppearances" :key="'ct' + c.id"
+                                                 class="dsk-theme-card dsk-custom-theme-card"
+                                                 :class="{ active: desktopActiveCustomAppearance
+                                                     && desktopActiveCustomAppearance.id === c.id }"
+                                                 :title="'应用外观方案：' + c.name"
+                                                 @click="applyDesktopCustomAppearance(c)">
+                                                <span class="dsk-theme-swatch"
+                                                      :style="{ background: desktopThemeFor(c.appearance.theme).wallpaper }">
+                                                    <span class="dsk-theme-swatch-win"
+                                                          :style="{ background: c.appearance.windowColor }"></span>
+                                                    <span class="dsk-theme-swatch-task"
+                                                          :style="{ background: c.appearance.taskbarColor }"></span>
+                                                    <i v-if="desktopActiveCustomAppearance
+                                                              && desktopActiveCustomAppearance.id === c.id"
+                                                       class="el-icon-check"></i>
+                                                    <button type="button" class="dsk-custom-theme-del"
+                                                            title="删除此方案"
+                                                            @click.stop="deleteDesktopCustomAppearance(c)">
+                                                        <i class="el-icon-close"></i>
+                                                    </button>
+                                                </span>
+                                                <span class="dsk-theme-name">{{ c.name }}</span>
+                                            </div>
+                                        </div>
+                                        <div class="dsk-custom-scheme-empty" v-else>
+                                            还没有自定义方案，调整颜色后点「保存当前外观」即可留存
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>主题强调色</b>
+                                        <span>选中项、活动窗口描边、开关和图标高亮使用的颜色</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker :value="desktopEffectiveAccentColor"
+                                                         size="small"
+                                                         @change="setDesktopAppearanceColor('accentColor', $event)"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">
+                                            {{ desktopAppearance.accentColor || '跟随主题' }}
+                                        </span>
+                                        <el-button v-if="desktopAppearance.accentColor" size="mini" type="text"
+                                                   @click="clearDesktopAppearanceColor('accentColor')">自动</el-button>
+                                    </div>
                                 </div>
                                 <div class="dsk-set-row">
                                     <div class="dsk-set-info">
@@ -2170,6 +2251,40 @@
                                         <el-color-picker v-model="desktopAppearance.windowColor"
                                                          size="small"></el-color-picker>
                                         <span class="dsk-set-mono dsk-color-code">{{ desktopAppearance.windowColor }}</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口文字颜色</b>
+                                        <span>窗口内文件名、正文与标题文字的颜色；留空时按窗口明暗自动适配</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker :value="desktopAppearance.windowTextColor
+                                                                  || desktopAutoWindowTextColor"
+                                                         size="small"
+                                                         @change="setDesktopAppearanceColor('windowTextColor', $event)"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">
+                                            {{ desktopAppearance.windowTextColor || '自动' }}
+                                        </span>
+                                        <el-button v-if="desktopAppearance.windowTextColor" size="mini" type="text"
+                                                   @click="clearDesktopAppearanceColor('windowTextColor')">自动</el-button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>窗口边框颜色</b>
+                                        <span>普通窗口与活动窗口的边框颜色，修改后会覆盖主题默认描边</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker :value="desktopAppearance.windowBorderColor
+                                                                  || desktopAutoWindowBorderColor"
+                                                         size="small"
+                                                         @change="setDesktopAppearanceColor('windowBorderColor', $event)"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">
+                                            {{ desktopAppearance.windowBorderColor || '自动' }}
+                                        </span>
+                                        <el-button v-if="desktopAppearance.windowBorderColor" size="mini" type="text"
+                                                   @click="clearDesktopAppearanceColor('windowBorderColor')">自动</el-button>
                                     </div>
                                 </div>
                                 <div class="dsk-set-row">
@@ -2214,6 +2329,40 @@
                                                    :min="0" :max="70" :step="1"
                                                    :show-tooltip="false"></el-slider>
                                         <span class="dsk-set-num">{{ desktopAppearance.taskbarTransparency }}%</span>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>任务栏图标颜色</b>
+                                        <span>开始菜单、搜索、任务图标和托盘图标的颜色；文字颜色仍随任务栏明暗自动适配</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker :value="desktopAppearance.taskbarIconColor
+                                                                  || desktopAutoTaskbarIconColor"
+                                                         size="small"
+                                                         @change="setDesktopAppearanceColor('taskbarIconColor', $event)"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">
+                                            {{ desktopAppearance.taskbarIconColor || '自动' }}
+                                        </span>
+                                        <el-button v-if="desktopAppearance.taskbarIconColor" size="mini" type="text"
+                                                   @click="clearDesktopAppearanceColor('taskbarIconColor')">自动</el-button>
+                                    </div>
+                                </div>
+                                <div class="dsk-set-row">
+                                    <div class="dsk-set-info">
+                                        <b>桌面图标文字颜色</b>
+                                        <span>桌面根图标下方的文件名颜色，不影响窗口内文件列表</span>
+                                    </div>
+                                    <div class="dsk-set-color">
+                                        <el-color-picker :value="desktopAppearance.desktopIconTextColor
+                                                                  || desktopAutoDesktopIconTextColor"
+                                                         size="small"
+                                                         @change="setDesktopAppearanceColor('desktopIconTextColor', $event)"></el-color-picker>
+                                        <span class="dsk-set-mono dsk-color-code">
+                                            {{ desktopAppearance.desktopIconTextColor || '自动' }}
+                                        </span>
+                                        <el-button v-if="desktopAppearance.desktopIconTextColor" size="mini" type="text"
+                                                   @click="clearDesktopAppearanceColor('desktopIconTextColor')">自动</el-button>
                                     </div>
                                 </div>
                                 <div class="dsk-set-row">
@@ -2788,6 +2937,173 @@
             </div>
         </div>
 
+        <!-- 资源管理器：搜索文件内容 -->
+        <el-dialog title="搜索文件内容" :visible.sync="desktopContentSearch.visible" width="780px"
+                   append-to-body custom-class="dsk-fs-dialog">
+            <div class="dsk-fs-dialog-body">
+                <div class="dsk-fs-toolbar">
+                    <el-input v-model="desktopContentSearch.keyword" size="small" clearable
+                              class="dsk-content-search-input" prefix-icon="el-icon-search"
+                              placeholder="输入要搜索的文字（当前目录及子目录）"
+                              @keyup.enter.native="runDesktopContentSearch"></el-input>
+                    <el-input v-model="desktopContentSearch.include" size="small" clearable
+                              class="dsk-fs-include"
+                              placeholder="文件名过滤：*.log,*.conf（可留空）"></el-input>
+                    <el-checkbox v-model="desktopContentSearch.caseSensitive">区分大小写</el-checkbox>
+                    <el-button size="small" type="primary" icon="el-icon-search"
+                               :loading="desktopContentSearch.loading"
+                               @click="runDesktopContentSearch">搜索</el-button>
+                </div>
+                <div class="dsk-fs-path">
+                    <i class="el-icon-folder-opened"></i>
+                    <span>{{ desktopContentSearch.root }}</span>
+                </div>
+                <div class="dsk-fs-error" v-if="desktopContentSearch.error">
+                    {{ desktopContentSearch.error }}
+                </div>
+                <div class="dsk-fs-results" v-loading="desktopContentSearch.loading">
+                    <button v-for="(r, i) in desktopContentSearch.results" :key="'csr' + i"
+                            class="dsk-fs-result" :title="r.path + ' 第 ' + r.line + ' 行'"
+                            @click="desktopContentSearchOpenFile(r)">
+                        <span class="dsk-fs-result-head">
+                            <i class="el-icon-document"></i>
+                            <b>{{ r.name }}</b>
+                            <em>{{ r.relativePath }}</em>
+                            <span class="spacer"></span>
+                            <span class="dsk-fs-line">第 {{ r.line }} 行</span>
+                        </span>
+                        <code class="dsk-fs-snippet"
+                              v-html="desktopSearchHighlight(r.text, desktopContentSearch.keyword)"></code>
+                    </button>
+                    <div class="dsk-fs-empty"
+                         v-if="desktopContentSearch.searched && !desktopContentSearch.loading
+                               && !desktopContentSearch.results.length">
+                        <i class="el-icon-search"></i><span>没有找到匹配内容</span>
+                    </div>
+                    <div class="dsk-fs-empty" v-else-if="!desktopContentSearch.searched">
+                        <i class="el-icon-info"></i>
+                        <span>输入关键字后回车开始搜索，结果最多显示 200 条；点击结果可直接打开文件</span>
+                    </div>
+                </div>
+            </div>
+        </el-dialog>
+
+        <!-- 资源管理器：批量重命名 -->
+        <el-dialog title="批量重命名" :visible.sync="desktopBatchRename.visible" width="720px"
+                   append-to-body custom-class="dsk-fs-dialog">
+            <div class="dsk-fs-dialog-body">
+                <div class="dsk-rn-modes">
+                    <button type="button" :class="{ active: desktopBatchRename.mode === 'replace' }"
+                            @click="desktopBatchRename.mode = 'replace'">
+                        <i class="el-icon-rank"></i>查找替换
+                    </button>
+                    <button type="button" :class="{ active: desktopBatchRename.mode === 'prefix' }"
+                            @click="desktopBatchRename.mode = 'prefix'">
+                        <i class="el-icon-top-left"></i>添加前缀
+                    </button>
+                    <button type="button" :class="{ active: desktopBatchRename.mode === 'suffix' }"
+                            @click="desktopBatchRename.mode = 'suffix'">
+                        <i class="el-icon-top-right"></i>添加后缀
+                    </button>
+                    <button type="button" :class="{ active: desktopBatchRename.mode === 'sequence' }"
+                            @click="desktopBatchRename.mode = 'sequence'">
+                        <i class="el-icon-s-operation"></i>序号命名
+                    </button>
+                </div>
+                <div class="dsk-rn-fields" v-if="desktopBatchRename.mode === 'replace'">
+                    <el-input v-model="desktopBatchRename.find" size="small"
+                              placeholder="查找内容（区分大小写）"></el-input>
+                    <el-input v-model="desktopBatchRename.replace" size="small"
+                              placeholder="替换为，留空即删除"></el-input>
+                </div>
+                <div class="dsk-rn-fields" v-else-if="desktopBatchRename.mode === 'prefix'">
+                    <el-input v-model="desktopBatchRename.prefix" size="small"
+                              placeholder="前缀，例如 2026_"></el-input>
+                </div>
+                <div class="dsk-rn-fields" v-else-if="desktopBatchRename.mode === 'suffix'">
+                    <el-input v-model="desktopBatchRename.suffix" size="small"
+                              placeholder="后缀，例如 _备份（加在扩展名前）"></el-input>
+                </div>
+                <div class="dsk-rn-fields dsk-rn-seq" v-else>
+                    <el-input v-model="desktopBatchRename.template" size="small"
+                              placeholder="命名模板，支持 {n} 序号与 {name} 原名"></el-input>
+                    <el-input-number v-model="desktopBatchRename.start" size="small"
+                                     :min="0" :max="999999" controls-position="right"
+                                     label="起始序号"></el-input-number>
+                    <el-input-number v-model="desktopBatchRename.padding" size="small"
+                                     :min="1" :max="10" controls-position="right"
+                                     label="补零位数"></el-input-number>
+                    <el-checkbox v-model="desktopBatchRename.keepExt">保留扩展名</el-checkbox>
+                </div>
+                <div class="dsk-rn-summary">
+                    已选择 {{ desktopBatchRename.rows.length }} 项 ·
+                    将重命名 {{ desktopBatchRenameChangedCount }} 项
+                    <span class="dsk-rn-error-count" v-if="desktopBatchRenameErrorCount">
+                        · {{ desktopBatchRenameErrorCount }} 项有误
+                    </span>
+                </div>
+                <div class="dsk-rn-preview">
+                    <div v-for="(p, i) in desktopBatchRenamePreview" :key="'rn' + i"
+                         class="dsk-rn-row" :class="{ changed: p.changed, error: p.error }">
+                        <span class="dsk-rn-old" :title="p.name">{{ p.name }}</span>
+                        <i class="el-icon-right"></i>
+                        <span class="dsk-rn-new" :title="p.newName">{{ p.newName || '—' }}</span>
+                        <span class="dsk-rn-err" v-if="p.error">{{ p.error }}</span>
+                    </div>
+                </div>
+                <div class="dsk-fs-error" v-if="desktopBatchRename.error">{{ desktopBatchRename.error }}</div>
+                <div class="dsk-rn-foot">
+                    <span>重命名会逐个执行；名称冲突会先临时改名，避免互相覆盖</span>
+                    <span class="spacer"></span>
+                    <el-button size="small" @click="desktopBatchRename.visible = false">取消</el-button>
+                    <el-button size="small" type="primary" icon="el-icon-check"
+                               :disabled="!!desktopBatchRenameErrorCount || !desktopBatchRenameChangedCount"
+                               :loading="desktopBatchRename.saving"
+                               @click="runDesktopBatchRename">开始重命名</el-button>
+                </div>
+            </div>
+        </el-dialog>
+
+        <!-- 资源管理器：校验和 -->
+        <el-dialog title="文件校验和" :visible.sync="desktopChecksum.visible" width="700px"
+                   append-to-body custom-class="dsk-fs-dialog">
+            <div class="dsk-fs-dialog-body">
+                <div class="dsk-cs-toolbar">
+                    <span>算法</span>
+                    <el-radio-group v-model="desktopChecksum.algorithm" size="mini"
+                                    @change="runDesktopChecksum">
+                        <el-radio-button label="md5">MD5</el-radio-button>
+                        <el-radio-button label="sha1">SHA-1</el-radio-button>
+                        <el-radio-button label="sha256">SHA-256</el-radio-button>
+                    </el-radio-group>
+                    <span class="spacer"></span>
+                    <el-button size="mini" icon="el-icon-refresh" :loading="desktopChecksum.loading"
+                               @click="runDesktopChecksum">重新计算</el-button>
+                </div>
+                <div class="dsk-fs-path">
+                    <i class="el-icon-tickets"></i>
+                    <span>共 {{ desktopChecksum.rows.length }} 个文件 · 大文件可能需要较长时间</span>
+                </div>
+                <div class="dsk-fs-error" v-if="desktopChecksum.error">{{ desktopChecksum.error }}</div>
+                <div class="dsk-cs-list" v-loading="desktopChecksum.loading">
+                    <div v-for="(row, i) in desktopChecksum.rows" :key="'cs' + i" class="dsk-cs-row">
+                        <div class="dsk-cs-head">
+                            <i class="el-icon-document"></i>
+                            <b>{{ row.name }}</b>
+                            <span class="dsk-cs-path" :title="row.path">{{ row.path }}</span>
+                        </div>
+                        <div class="dsk-cs-value" v-if="row.value">
+                            <code>{{ row.value }}</code>
+                            <el-button size="mini" type="text" icon="el-icon-document-copy"
+                                       @click="desktopChecksumCopy(row.value)">复制</el-button>
+                        </div>
+                        <div class="dsk-cs-error" v-else-if="row.error">{{ row.error }}</div>
+                        <div class="dsk-cs-wait" v-else><i class="el-icon-loading"></i> 计算中…</div>
+                    </div>
+                </div>
+            </div>
+        </el-dialog>
+
         <div class="dsk-menu" ref="deskMenu" v-if="desktop.menu.visible"
              :style="{ left: desktop.menu.x + 'px', top: desktop.menu.y + 'px' }"
              @click.stop @contextmenu.prevent>
@@ -2799,6 +3115,10 @@
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
                      @click="desktopMenuAction('openNewWindow')">
                     <i class="el-icon-folder-add"></i>在新窗口打开
+                </div>
+                <div class="dsk-menu-item" v-if="!desktopMenuMulti && desktop.menu.target.dir"
+                     @click="desktopMenuAction('searchFolder')">
+                    <i class="el-icon-search"></i>在此文件夹中搜索内容…
                 </div>
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti && !isLnkFile(desktop.menu.target)"
                      @click="desktopMenuAction('shortcut')">
@@ -2827,6 +3147,9 @@
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti && !desktop.menu.target.dir"
                      @click="desktopMenuAction('download')">
                     <i class="el-icon-download"></i>下载
+                </div>
+                <div class="dsk-menu-item" v-if="desktopMenuHasFile" @click="desktopMenuAction('checksum')">
+                    <i class="el-icon-tickets"></i>校验和…
                 </div>
                 <div class="dsk-menu-item" v-if="desktopMenuHasFile && !desktopIsLocal"
                      @click="desktopMenuAction('crossTransfer')">
@@ -2866,6 +3189,9 @@
                 <div class="dsk-menu-item" v-if="!desktopMenuMulti" @click="desktopMenuAction('rename')">
                     <i class="el-icon-rank"></i>重命名<span class="dsk-menu-key">F2</span>
                 </div>
+                <div class="dsk-menu-item" v-if="desktopMenuMulti" @click="desktopMenuAction('batchRename')">
+                    <i class="el-icon-s-operation"></i>批量重命名…
+                </div>
                 <div class="dsk-menu-item danger" @click="desktopMenuAction('delete')">
                     <i class="el-icon-delete"></i>
                     {{ desktopIsLocal
@@ -2896,6 +3222,9 @@
                 </div>
                 <div class="dsk-menu-item" @click="desktopMenuAction('upload')">
                     <i class="el-icon-upload2"></i>上传文件
+                </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('contentSearch')">
+                    <i class="el-icon-search"></i>搜索文件内容…
                 </div>
                 <div class="dsk-menu-sep"></div>
                 <div class="dsk-menu-item" v-if="!desktopIsLocal" @click="desktopMenuAction('terminalHere')">

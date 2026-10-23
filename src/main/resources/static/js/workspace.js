@@ -254,7 +254,8 @@ var DESKTOP_APP_START_IDS = {
     terminal: 'terminal',
     transfers: 'transfers',
     explorer: 'file',
-    settings: 'control'
+    settings: 'control',
+    appcenter: 'appcenter'
 };
 
 var DESKTOP_APP_DEFAULTS = {
@@ -264,6 +265,7 @@ var DESKTOP_APP_DEFAULTS = {
     terminal: { icon: 'el-icon-monitor', color: '#22a06b' },
     transfers: { icon: 'el-icon-s-promotion', color: '#0ea5a4' },
     settings: { icon: 'el-icon-setting', color: '#54657e' },
+    appcenter: { icon: 'el-icon-shopping-bag-1', color: '#8b5cf6' },
     ai: { icon: 'el-icon-chat-dot-round', color: '#3d7eff' }
 };
 
@@ -273,7 +275,8 @@ var DESKTOP_START_ICON_DEFAULTS = {
     terminal: { icon: 'el-icon-monitor', color: '#22a06b' },
     transfers: { icon: 'el-icon-s-promotion', color: '#0ea5a4' },
     file: { icon: 'el-icon-folder-opened', color: '#e6a23c' },
-    control: { icon: 'el-icon-setting', color: '#54657e' }
+    control: { icon: 'el-icon-setting', color: '#54657e' },
+    appcenter: { icon: 'el-icon-shopping-bag-1', color: '#8b5cf6' }
 };
 
 var DESKTOP_DEFAULT_ICON_CHOICES = [
@@ -408,11 +411,63 @@ function desktopDefaultAppearance() {
     var t = desktopThemeById(DESKTOP_THEME_DEFAULT);
     return {
         theme: t.id,
+        accentColor: '',
         windowColor: t.windowColor,
         windowTransparency: t.windowTransparency,
+        windowTextColor: '',
+        windowBorderColor: '',
         taskbarColor: t.taskbarColor,
         taskbarTransparency: t.taskbarTransparency,
+        taskbarIconColor: '',
+        desktopIconTextColor: '',
         iconSize: 'medium'
+    };
+}
+
+function desktopOptionalHex(v) {
+    return v == null || v === '' ? '' : desktopNormalizeHex(v, '');
+}
+
+/* 单次外观快照：内置主题、颜色微调与自定义方案都使用同一结构 */
+function desktopSanitizeAppearance(data) {
+    var def = desktopDefaultAppearance();
+    if (!data || typeof data !== 'object') {
+        return def;
+    }
+    var theme = desktopThemeById(data.theme);
+    var size = data.iconSize;
+    if (size !== 'small' && size !== 'medium' && size !== 'large') {
+        size = def.iconSize;
+    }
+    return {
+        theme: theme.id,
+        accentColor: desktopOptionalHex(data.accentColor),
+        windowColor: desktopNormalizeHex(data.windowColor, theme.windowColor),
+        windowTransparency: desktopClampNumber(data.windowTransparency, 0, 70, theme.windowTransparency),
+        windowTextColor: desktopOptionalHex(data.windowTextColor),
+        windowBorderColor: desktopOptionalHex(data.windowBorderColor),
+        taskbarColor: desktopNormalizeHex(data.taskbarColor, theme.taskbarColor),
+        taskbarTransparency: desktopClampNumber(data.taskbarTransparency, 0, 70, theme.taskbarTransparency),
+        taskbarIconColor: desktopOptionalHex(data.taskbarIconColor),
+        desktopIconTextColor: desktopOptionalHex(data.desktopIconTextColor),
+        iconSize: size
+    };
+}
+
+function desktopAppearanceSnapshot(app) {
+    var a = desktopSanitizeAppearance(app);
+    return {
+        theme: a.theme,
+        accentColor: a.accentColor,
+        windowColor: a.windowColor,
+        windowTransparency: a.windowTransparency,
+        windowTextColor: a.windowTextColor,
+        windowBorderColor: a.windowBorderColor,
+        taskbarColor: a.taskbarColor,
+        taskbarTransparency: a.taskbarTransparency,
+        taskbarIconColor: a.taskbarIconColor,
+        desktopIconTextColor: a.desktopIconTextColor,
+        iconSize: a.iconSize
     };
 }
 
@@ -514,28 +569,12 @@ function desktopIconMetrics(size) {
 }
 
 function loadDesktopAppearance() {
-    var def = desktopDefaultAppearance();
     try {
         var raw = localStorage.getItem(DESKTOP_APPEARANCE_KEY);
         var data = raw ? JSON.parse(raw) : null;
-        if (!data || typeof data !== 'object') {
-            return def;
-        }
-        var theme = desktopThemeById(data.theme);
-        var size = data.iconSize;
-        if (size !== 'small' && size !== 'medium' && size !== 'large') {
-            size = def.iconSize;
-        }
-        return {
-            theme: theme.id,
-            windowColor: desktopNormalizeHex(data.windowColor, theme.windowColor),
-            windowTransparency: desktopClampNumber(data.windowTransparency, 0, 70, theme.windowTransparency),
-            taskbarColor: desktopNormalizeHex(data.taskbarColor, theme.taskbarColor),
-            taskbarTransparency: desktopClampNumber(data.taskbarTransparency, 0, 70, theme.taskbarTransparency),
-            iconSize: size
-        };
+        return desktopSanitizeAppearance(data);
     } catch (e) {
-        return def;
+        return desktopDefaultAppearance();
     }
 }
 
@@ -544,14 +583,47 @@ function saveDesktopAppearance(app) {
         return;
     }
     try {
-        localStorage.setItem(DESKTOP_APPEARANCE_KEY, JSON.stringify({
-            theme: app.theme,
-            windowColor: app.windowColor,
-            windowTransparency: app.windowTransparency,
-            taskbarColor: app.taskbarColor,
-            taskbarTransparency: app.taskbarTransparency,
-            iconSize: app.iconSize
-        }));
+        localStorage.setItem(DESKTOP_APPEARANCE_KEY, JSON.stringify(desktopAppearanceSnapshot(app)));
+    } catch (e) { /* ignore */ }
+}
+
+/* 用户保存的自定义外观方案（与主题预设分开保存，切换预设不会丢失） */
+var DESKTOP_CUSTOM_APPEARANCE_KEY = 'deepshell.desktopCustomAppearances';
+var DESKTOP_CUSTOM_APPEARANCE_LIMIT = 20;
+
+function loadDesktopCustomAppearances() {
+    try {
+        var raw = localStorage.getItem(DESKTOP_CUSTOM_APPEARANCE_KEY);
+        var list = raw ? JSON.parse(raw) : null;
+        if (!Array.isArray(list)) {
+            return [];
+        }
+        var out = [];
+        list.forEach(function (item) {
+            if (!item || typeof item !== 'object') {
+                return;
+            }
+            var name = String(item.name || '').trim();
+            if (!name) {
+                return;
+            }
+            out.push({
+                id: String(item.id || ('custom-' + out.length + '-' + Date.now())),
+                name: name.slice(0, 24),
+                createdAt: Number(item.createdAt) || Date.now(),
+                appearance: desktopSanitizeAppearance(item.appearance)
+            });
+        });
+        return out.slice(0, DESKTOP_CUSTOM_APPEARANCE_LIMIT);
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDesktopCustomAppearances(list) {
+    try {
+        localStorage.setItem(DESKTOP_CUSTOM_APPEARANCE_KEY,
+            JSON.stringify((list || []).slice(0, DESKTOP_CUSTOM_APPEARANCE_LIMIT)));
     } catch (e) { /* ignore */ }
 }
 
@@ -3906,9 +3978,51 @@ new Vue({
         desktopThemes: DESKTOP_THEMES,
         desktopIconSizes: DESKTOP_ICON_SIZES,
         desktopAppearance: loadDesktopAppearance(),
+        desktopCustomAppearances: loadDesktopCustomAppearances(),
+        desktopAppearanceSaveName: '',
         desktopAppIconChoices: loadDesktopAppIconChoices(),
         desktopAppShapes: DESKTOP_APP_SHAPES,
         desktopAppIconColors: DESKTOP_APP_ICON_COLORS,
+        /* 资源管理器：内容搜索 / 批量重命名 / 校验和 */
+        desktopContentSearch: {
+            visible: false,
+            winId: '',
+            root: '',
+            keyword: '',
+            include: '',
+            caseSensitive: false,
+            loading: false,
+            searched: false,
+            results: [],
+            error: ''
+        },
+        desktopBatchRename: {
+            visible: false,
+            winId: '',
+            surface: false,
+            root: '',
+            rows: [],
+            existingNames: [],
+            mode: 'replace',
+            find: '',
+            replace: '',
+            prefix: '',
+            suffix: '',
+            template: '文件_{n}',
+            start: 1,
+            padding: 3,
+            keepExt: true,
+            saving: false,
+            error: ''
+        },
+        desktopChecksum: {
+            visible: false,
+            winId: '',
+            algorithm: 'sha256',
+            rows: [],
+            loading: false,
+            error: ''
+        },
         desktopAppProps: {
             visible: false,
             connId: '',
@@ -3945,6 +4059,9 @@ new Vue({
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
               icon: 'el-icon-setting', color: '#54657e',
               category: '系统工具', desc: '调整桌面外观、时钟、网络与系统设置' },
+            { key: 'app:appcenter', type: 'app', action: 'appcenter', label: '应用中心',
+              icon: 'el-icon-shopping-bag-1', color: '#8b5cf6',
+              category: '系统工具', desc: '浏览、安装和管理桌面应用（功能建设中）' },
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
               icon: 'el-icon-chat-dot-round', color: '#3d7eff',
               category: 'AI 助手', desc: '使用 AI 助手执行命令、排查服务器问题' }
@@ -3968,6 +4085,7 @@ new Vue({
             { id: 'nettool', label: '网络工具箱', icon: 'dsk-ico-network', color: '#7c3aed' },
             { id: 'batchcmd', label: '多机命令', icon: 'el-icon-copy-document', color: '#b45309' },
             { id: 'file', label: '资源管理器', icon: 'el-icon-folder-opened', color: '#e6a23c' },
+            { id: 'appcenter', label: '应用中心', icon: 'el-icon-shopping-bag-1', color: '#8b5cf6' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
             { id: 'cmd', label: '快捷命令', icon: 'el-icon-caret-right', color: '#22a06b' },
             { id: 'disk', label: '磁盘', icon: 'el-icon-pie-chart', color: '#f59e0b' },
@@ -5506,10 +5624,59 @@ new Vue({
         desktopAppearanceCustomized: function () {
             var app = this.desktopAppearance;
             var t = this.desktopAppearanceTheme;
-            return String(app.windowColor).toLowerCase() !== t.windowColor
+            return String(app.accentColor || t.accent).toLowerCase() !== t.accent
+                || String(app.windowColor).toLowerCase() !== t.windowColor
                 || Number(app.windowTransparency) !== Number(t.windowTransparency)
+                || !!app.windowTextColor
+                || !!app.windowBorderColor
                 || String(app.taskbarColor).toLowerCase() !== t.taskbarColor
-                || Number(app.taskbarTransparency) !== Number(t.taskbarTransparency);
+                || Number(app.taskbarTransparency) !== Number(t.taskbarTransparency)
+                || !!app.taskbarIconColor
+                || !!app.desktopIconTextColor;
+        },
+        desktopEffectiveAccentColor: function () {
+            return this.desktopAppearance.accentColor || this.desktopAppearanceTheme.accent;
+        },
+        desktopAutoWindowTextColor: function () {
+            return desktopColorIsDark(this.desktopAppearance.windowColor) ? '#e9f0fa' : '#253142';
+        },
+        desktopAutoWindowBorderColor: function () {
+            return desktopColorIsDark(this.desktopAppearance.windowColor)
+                ? 'rgba(148, 180, 224, .30)' : 'rgba(112, 152, 210, .50)';
+        },
+        desktopAutoTaskbarIconColor: function () {
+            return desktopColorIsDark(this.desktopAppearance.taskbarColor) ? '#e7eefb' : '#26313f';
+        },
+        desktopAutoDesktopIconTextColor: function () {
+            return this.desktopAppearanceTheme.iconFg;
+        },
+        desktopActiveCustomAppearance: function () {
+            var app = desktopAppearanceSnapshot(this.desktopAppearance);
+            var list = this.desktopCustomAppearances || [];
+            for (var i = 0; i < list.length; i++) {
+                if (JSON.stringify(app) === JSON.stringify(list[i].appearance)) {
+                    return list[i];
+                }
+            }
+            return null;
+        },
+        desktopBatchRenamePreview: function () {
+            var form = this.desktopBatchRename;
+            var self = this;
+            var list = (form.rows || []).map(function (row, index) {
+                return self.desktopBatchRenameRow(row, index, form);
+            });
+            return this.desktopValidateBatchRename(list, form);
+        },
+        desktopBatchRenameErrorCount: function () {
+            return this.desktopBatchRenamePreview.filter(function (r) {
+                return !!r.error;
+            }).length;
+        },
+        desktopBatchRenameChangedCount: function () {
+            return this.desktopBatchRenamePreview.filter(function (r) {
+                return !!r.changed && !r.error;
+            }).length;
         },
         desktopThemeStyle: function () {
             var app = this.desktopAppearance || desktopDefaultAppearance();
@@ -5519,24 +5686,29 @@ new Vue({
             var winAlpha = 1 - desktopClampNumber(app.windowTransparency, 0, 70, 6) / 100;
             var taskAlpha = 1 - desktopClampNumber(app.taskbarTransparency, 0, 70, 8) / 100;
             var panelAlpha = Math.max(winAlpha, 0.94);
-            var accent = theme.accent;
-            var fg = winDark ? '#e9f0fa' : '#253142';
-            var fgDim = winDark ? 'rgba(224, 234, 248, .64)' : 'rgba(37, 49, 66, .60)';
+            var accent = app.accentColor || theme.accent;
+            var autoFg = winDark ? '#e9f0fa' : '#253142';
+            var fg = app.windowTextColor || autoFg;
+            var fgDim = desktopRgba(fg, winDark ? .64 : .60);
             var line = winDark ? 'rgba(255, 255, 255, .11)' : 'rgba(18, 34, 61, .12)';
             var subtle = winDark ? 'rgba(255, 255, 255, .045)' : 'rgba(18, 34, 61, .035)';
             var hover = winDark ? 'rgba(255, 255, 255, .075)' : 'rgba(47, 111, 214, .075)';
             var taskFg = taskDark ? '#e7eefb' : '#26313f';
             var taskFgDim = taskDark ? 'rgba(226, 236, 250, .62)' : 'rgba(38, 49, 63, .58)';
+            var taskIcon = app.taskbarIconColor || taskFg;
+            var autoBorder = winDark ? 'rgba(148, 180, 224, .30)' : 'rgba(112, 152, 210, .50)';
+            var winBorder = app.windowBorderColor || autoBorder;
             var m = desktopIconMetrics(app.iconSize);
             return {
                 '--dsk-wallpaper': theme.wallpaper,
                 '--dsk-grid-line': theme.gridLine,
-                '--dsk-desktop-fg': theme.iconFg,
+                '--dsk-desktop-fg': app.desktopIconTextColor || theme.iconFg,
                 '--dsk-desktop-fg-shadow': theme.iconShadow,
                 '--dsk-accent': accent,
                 '--dsk-accent-soft': desktopRgba(accent, winDark ? .20 : .12),
                 '--dsk-win-bg': desktopRgba(app.windowColor, winAlpha),
-                '--dsk-win-border': winDark ? 'rgba(148, 180, 224, .30)' : 'rgba(112, 152, 210, .50)',
+                '--dsk-win-border': winBorder,
+                '--dsk-win-border-active': app.windowBorderColor || accent,
                 '--dsk-win-fg': fg,
                 '--dsk-win-fg-dim': fgDim,
                 '--dsk-win-line': line,
@@ -5567,6 +5739,8 @@ new Vue({
                 '--dsk-taskbar-border': taskDark ? 'rgba(0, 0, 0, .45)' : 'rgba(15, 32, 58, .10)',
                 '--dsk-taskbar-fg': taskFg,
                 '--dsk-taskbar-fg-dim': taskFgDim,
+                '--dsk-taskbar-icon': taskIcon,
+                '--dsk-taskbar-logo': app.taskbarIconColor || accent,
                 '--dsk-taskbar-hover': taskDark ? 'rgba(255, 255, 255, .09)' : 'rgba(15, 32, 58, .07)',
                 '--dsk-taskbar-active': taskDark ? 'rgba(255, 255, 255, .14)' : 'rgba(15, 32, 58, .11)',
                 '--dsk-taskbar-line': taskDark ? 'rgba(255, 255, 255, .12)' : 'rgba(15, 32, 58, .12)',
@@ -8424,6 +8598,9 @@ new Vue({
             if (type === 'services') {
                 return 'el-icon-s-tools';
             }
+            if (type === 'appcenter') {
+                return this.desktopAppIconByAction('appcenter', 'el-icon-shopping-bag-1');
+            }
             if (type === 'nettool') {
                 return 'dsk-ico-network';
             }
@@ -8467,6 +8644,9 @@ new Vue({
             }
             if (w && w.type === 'services') {
                 return '服务与计划任务';
+            }
+            if (w && w.type === 'appcenter') {
+                return '应用中心';
             }
             if (w && w.type === 'nettool') {
                 return '网络工具箱';
@@ -8533,6 +8713,9 @@ new Vue({
                 var svcText = this.servicesApp.tab === 'cron'
                     ? '计划任务' : (this.servicesApp.items.length + ' 个服务');
                 return host ? host + ' · ' + svcText : svcText;
+            }
+            if (w && w.type === 'appcenter') {
+                return host ? host + ' · 功能建设中' : '功能建设中';
             }
             if (w && w.type === 'nettool') {
                 var netText = this.netTool.tab === 'traffic'
@@ -8980,6 +9163,19 @@ new Vue({
             return w;
         },
         /* ---------- 服务与计划任务 ---------- */
+        openDesktopAppCenterWindow: function () {
+            if (!this.desktop.visible) {
+                return null;
+            }
+            var existing = this.desktopWindowOfType('appcenter');
+            if (existing) {
+                this.restoreDesktopWindow(existing);
+                return existing;
+            }
+            var w = this.addDesktopWindow('appcenter');
+            this.centerDesktopWindow(w, 720, 480);
+            return w;
+        },
         openDesktopServicesWindow: function () {
             if (!this.desktop.visible) {
                 return null;
@@ -12133,6 +12329,8 @@ new Vue({
                     this.openTransferDesktopWindow();
                 } else if (item.action === 'settings') {
                     this.openDesktopSettings();
+                } else if (item.action === 'appcenter') {
+                    this.openDesktopAppCenterWindow();
                 } else if (item.action === 'ai') {
                     this.openAiDesktopWindow();
                 } else if (item.action === 'trash') {
@@ -12712,7 +12910,8 @@ new Vue({
                 editor: 'editor',
                 terminal: 'terminal',
                 transfer: 'transfers',
-                ai: 'ai'
+                ai: 'ai',
+                appcenter: 'appcenter'
             })[type];
             return action ? this.desktopAppImageByAction(action) : '';
         },
@@ -13354,8 +13553,14 @@ new Vue({
         desktopGoHome: function () {
             this.loadDesktopDir(this.desktopHomeDir || '/');
         },
-        startDesktopPathEdit: function () {
-            var d = this.desk;
+        startDesktopPathEdit: function (win) {
+            var d = win || this.desk;
+            if (!d || !d.path) {
+                return;
+            }
+            if (d.id) {
+                this.desktop.explorerId = d.id;
+            }
             d.pathInput = d.path;
             d.pathEditing = true;
             var self = this;
@@ -14308,6 +14513,20 @@ new Vue({
                 if (target) {
                     this.desktopRename(target, ctxWin);
                 }
+            } else if (action === 'batchRename') {
+                this.openDesktopBatchRename(rows, ctxWin);
+            } else if (action === 'checksum') {
+                this.openDesktopChecksum(rows, ctxWin);
+            } else if (action === 'contentSearch') {
+                this.openDesktopContentSearch(ctxWin);
+            } else if (action === 'searchFolder') {
+                if (target && target.dir) {
+                    this.openDesktopContentSearch({
+                        id: ctxWin.id,
+                        type: ctxWin.type,
+                        path: this.desktopEntryPath(target, ctxWin)
+                    });
+                }
             } else if (action === 'delete') {
                 this.desktopDeleteRows(rows, ctxWin, false);
             } else if (action === 'deletePermanent') {
@@ -15132,6 +15351,436 @@ new Vue({
                 surface: d.type === 'surface'
             };
             this.renameVisible = true;
+        },
+        /* ---------- 资源管理器：内容搜索 ---------- */
+        desktopRelativePath: function (root, path) {
+            var base = String(root || '/');
+            var p = String(path || '');
+            if (base === '/') {
+                return p.replace(/^\/+/, '');
+            }
+            if (p === base) {
+                return '.';
+            }
+            if (p.indexOf(base + '/') === 0) {
+                return p.substring(base.length + 1);
+            }
+            return p;
+        },
+        desktopSearchHighlight: function (text, keyword) {
+            var source = escapeAiHtml(text == null ? '' : String(text));
+            var kw = escapeAiHtml(String(keyword || ''));
+            if (!kw) {
+                return source;
+            }
+            var pattern = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            var re = new RegExp(pattern, this.desktopContentSearch.caseSensitive ? 'g' : 'gi');
+            return source.replace(re, function (m) {
+                return '<mark>' + m + '</mark>';
+            });
+        },
+        openDesktopContentSearch: function (win) {
+            var d = win || this.desk;
+            var t = this.desktopTab;
+            if (!t || (!t.local && !t.sessionId) || !d || !d.path) {
+                ELEMENT.Message.warning('当前目录尚未就绪');
+                return;
+            }
+            this.desktopContentSearch = {
+                visible: true,
+                winId: d.type === 'surface' ? '' : (d.id || ''),
+                root: d.path,
+                keyword: '',
+                include: '',
+                caseSensitive: false,
+                loading: false,
+                searched: false,
+                results: [],
+                error: ''
+            };
+            var self = this;
+            this.$nextTick(function () {
+                var input = document.querySelector('.dsk-content-search-input input');
+                if (input) {
+                    input.focus();
+                }
+            });
+        },
+        runDesktopContentSearch: function () {
+            var form = this.desktopContentSearch;
+            var keyword = String(form.keyword || '').trim();
+            if (!keyword) {
+                ELEMENT.Message.warning('请输入要搜索的内容');
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            form.loading = true;
+            form.error = '';
+            form.searched = true;
+            var payload = {
+                root: form.root,
+                keyword: keyword,
+                include: form.include,
+                caseSensitive: !!form.caseSensitive,
+                maxResults: 200
+            };
+            var req;
+            if (t.local) {
+                req = http.post('/api/local/fs/content-search', payload);
+            } else {
+                payload.sessionId = t.sessionId;
+                req = http.post('/api/files/content-search', payload);
+            }
+            req.then(function (list) {
+                form.loading = false;
+                form.results = (list || []).map(function (r) {
+                    return {
+                        name: r.name || '',
+                        path: r.path || '',
+                        line: r.line || 0,
+                        text: r.text || '',
+                        relativePath: self.desktopRelativePath(form.root, r.path || '')
+                    };
+                });
+            }).catch(function (err) {
+                form.loading = false;
+                form.results = [];
+                form.error = '搜索失败：' + ((err && err.message) || '网络错误');
+            });
+        },
+        desktopContentSearchOpenFile: function (row) {
+            var t = this.desktopTab;
+            if (!t || !row || !row.path) {
+                return;
+            }
+            this.desktopContentSearch.visible = false;
+            this.openDesktopEditorWindow(t, row.path);
+        },
+        /* ---------- 资源管理器：批量重命名 ---------- */
+        openDesktopBatchRename: function (rows, win) {
+            var d = win || this.desk;
+            var t = this.desktopTab;
+            rows = rows || this.desktopSelectedRows(d);
+            if (!t || (!t.local && !t.sessionId) || !rows.length) {
+                ELEMENT.Message.warning('请先选择要重命名的文件或文件夹');
+                return;
+            }
+            var self = this;
+            this.desktopBatchRename = {
+                visible: true,
+                winId: d.type === 'surface' ? '' : (d.id || ''),
+                surface: d.type === 'surface',
+                root: d.path,
+                rows: rows.map(function (r) {
+                    return { name: r.name, dir: !!r.dir };
+                }),
+                existingNames: (d.entries || []).map(function (r) { return r.name; }),
+                mode: 'replace',
+                find: '',
+                replace: '',
+                prefix: '',
+                suffix: '',
+                template: '文件_{n}',
+                start: 1,
+                padding: Math.max(2, String(rows.length).length),
+                keepExt: true,
+                saving: false,
+                error: ''
+            };
+        },
+        desktopBatchNameParts: function (name, dir) {
+            var s = String(name || '');
+            if (dir) {
+                return { base: s, ext: '' };
+            }
+            var dot = s.lastIndexOf('.');
+            if (dot <= 0 || dot === s.length - 1) {
+                return { base: s, ext: '' };
+            }
+            return { base: s.substring(0, dot), ext: s.substring(dot) };
+        },
+        desktopBatchRenameName: function (row, index, form) {
+            var parts = this.desktopBatchNameParts(row.name, row.dir);
+            var base = parts.base;
+            var ext = parts.ext;
+            var newBase = base;
+            if (form.mode === 'replace') {
+                if (!form.find) {
+                    return row.name;
+                }
+                newBase = base.split(form.find).join(form.replace == null ? '' : form.replace);
+            } else if (form.mode === 'prefix') {
+                newBase = (form.prefix || '') + base;
+            } else if (form.mode === 'suffix') {
+                newBase = base + (form.suffix || '');
+            } else if (form.mode === 'sequence') {
+                var template = String(form.template || '文件_{n}');
+                var seq = (Number(form.start) || 1) + index;
+                var pad = Math.max(1, Math.min(10, Number(form.padding) || 1));
+                var num = String(seq);
+                while (num.length < pad) {
+                    num = '0' + num;
+                }
+                if (template.indexOf('{n}') < 0) {
+                    template += '{n}';
+                }
+                newBase = template.split('{n}').join(num).split('{name}').join(base);
+            }
+            newBase = String(newBase || '').trim();
+            var keepExt = form.mode !== 'sequence' || form.keepExt !== false;
+            return newBase + (row.dir || !keepExt ? '' : ext);
+        },
+        desktopBatchRenameRow: function (row, index, form) {
+            var newName = this.desktopBatchRenameName(row, index, form);
+            return {
+                name: row.name,
+                dir: row.dir,
+                newName: newName,
+                changed: newName !== row.name,
+                error: ''
+            };
+        },
+        desktopValidateBatchRename: function (list, form) {
+            var counts = {};
+            var sources = {};
+            var changedSources = {};
+            var existing = {};
+            (form.rows || []).forEach(function (r) {
+                sources[String(r.name).toLowerCase()] = true;
+            });
+            list.forEach(function (r) {
+                if (r.changed) {
+                    changedSources[String(r.name).toLowerCase()] = true;
+                }
+            });
+            (form.existingNames || []).forEach(function (n) {
+                existing[n] = true;
+            });
+            list.forEach(function (r) {
+                if (!r.newName) {
+                    r.error = '名称不能为空';
+                    return;
+                }
+                if (r.newName.indexOf('/') >= 0 || r.newName.indexOf('\\') >= 0) {
+                    r.error = '名称不能包含斜杠';
+                    return;
+                }
+                var key = r.newName.toLowerCase();
+                counts[key] = (counts[key] || 0) + 1;
+            });
+            list.forEach(function (r) {
+                if (r.error || !r.changed) {
+                    return;
+                }
+                var key = r.newName.toLowerCase();
+                if (counts[key] > 1) {
+                    r.error = '多个文件将重命名为相同名称';
+                    return;
+                }
+                for (var name in existing) {
+                    if (name.toLowerCase() !== key) {
+                        continue;
+                    }
+                    if (!sources[key]) {
+                        r.error = '同名项目已存在';
+                    } else if (!changedSources[key]) {
+                        // 目标名属于一个不会改名的选中项，改名时会直接冲突
+                        r.error = '目标名称与未重命名的项目重复';
+                    }
+                    break;
+                }
+            });
+            return list;
+        },
+        runDesktopBatchRename: function () {
+            var form = this.desktopBatchRename;
+            var t = this.desktopTab;
+            if (!t || (!t.local && !t.sessionId)) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var self = this;
+            var preview = this.desktopBatchRenamePreview;
+            var changed = preview.filter(function (r) {
+                return r.changed && !r.error;
+            });
+            if (!changed.length) {
+                ELEMENT.Message.warning('没有需要重命名的项目');
+                return;
+            }
+            form.saving = true;
+            form.error = '';
+            var targets = {};
+            changed.forEach(function (r) {
+                targets[r.newName] = true;
+            });
+            var used = {};
+            (form.existingNames || []).forEach(function (n) { used[n] = true; });
+            changed.forEach(function (r) {
+                used[r.name] = true;
+                used[r.newName] = true;
+            });
+            var stamp = Date.now().toString(36);
+            var tempIndex = 0;
+            var plan = changed.map(function (r) {
+                var temp = '';
+                if (targets[r.name]) {
+                    do {
+                        temp = '.__ds_rn_' + stamp + '_' + (++tempIndex) + '__';
+                    } while (used[temp]);
+                    used[temp] = true;
+                }
+                return { oldName: r.name, newName: r.newName, tempName: temp, failed: false };
+            });
+            var ok = 0;
+            var fail = 0;
+            var firstError = '';
+            var recordError = function (err) {
+                fail++;
+                if (!firstError) {
+                    firstError = (err && err.message) || '重命名失败';
+                }
+            };
+            var chain = Promise.resolve();
+            plan.forEach(function (item) {
+                if (!item.tempName) {
+                    return;
+                }
+                chain = chain.then(function () {
+                    return self.renameDesktopPath(t, self.pathJoin(form.root, item.oldName), item.tempName)
+                        .catch(function (err) {
+                            item.failed = true;
+                            recordError(err);
+                        });
+                });
+            });
+            plan.forEach(function (item) {
+                chain = chain.then(function () {
+                    if (item.failed) {
+                        return null;
+                    }
+                    var source = item.tempName || item.oldName;
+                    return self.renameDesktopPath(t, self.pathJoin(form.root, source), item.newName)
+                        .then(function () {
+                            ok++;
+                        }).catch(function (err) {
+                            recordError(err);
+                        });
+                });
+            });
+            chain.then(function () {
+                form.saving = false;
+                if (fail === 0) {
+                    ELEMENT.Message.success('已重命名 ' + ok + ' 项');
+                } else {
+                    ELEMENT.Message.warning('批量重命名完成：成功 ' + ok + ' 项，失败 ' + fail + ' 项'
+                        + (firstError ? '（' + firstError + '）' : ''));
+                }
+                self.desktopBatchRename.visible = false;
+                self.desktopRefresh(form.surface ? { type: 'surface' } : self.desktopWindowById(form.winId));
+            }).catch(function (err) {
+                form.saving = false;
+                form.error = (err && err.message) || '批量重命名失败';
+            });
+        },
+        renameDesktopPath: function (tab, path, newName) {
+            if (tab.local) {
+                return http.post('/api/local/fs/rename', { path: path, newName: newName });
+            }
+            return http.post('/api/sftp/rename', {
+                sessionId: tab.sessionId,
+                path: path,
+                newName: newName
+            });
+        },
+        /* ---------- 资源管理器：校验和 ---------- */
+        openDesktopChecksum: function (rows, win) {
+            var d = win || this.desk;
+            var t = this.desktopTab;
+            var files = (rows || this.desktopSelectedRows(d)).filter(function (r) {
+                return r && !r.dir;
+            });
+            if (!t || (!t.local && !t.sessionId) || !files.length) {
+                ELEMENT.Message.info('请选择要计算校验和的文件');
+                return;
+            }
+            var self = this;
+            this.desktopChecksum = {
+                visible: true,
+                winId: d.type === 'surface' ? '' : (d.id || ''),
+                algorithm: 'sha256',
+                rows: files.map(function (r) {
+                    return {
+                        name: r.name,
+                        path: self.desktopEntryPath(r, d),
+                        value: '',
+                        error: '',
+                        loading: false
+                    };
+                }),
+                loading: false,
+                error: ''
+            };
+            this.$nextTick(function () {
+                self.runDesktopChecksum();
+            });
+        },
+        runDesktopChecksum: function () {
+            var form = this.desktopChecksum;
+            var t = this.desktopTab;
+            if (!t || (!t.local && !t.sessionId) || !form.rows.length) {
+                return;
+            }
+            var self = this;
+            var alg = form.algorithm;
+            form.loading = true;
+            form.error = '';
+            form.rows.forEach(function (row) {
+                row.value = '';
+                row.error = '';
+                row.loading = true;
+            });
+            var chain = Promise.resolve();
+            form.rows.forEach(function (row) {
+                chain = chain.then(function () {
+                    var req = t.local
+                        ? http.get('/api/local/fs/checksum', {
+                            params: { path: row.path, algorithm: alg }
+                        })
+                        : http.get('/api/files/checksum', {
+                            params: {
+                                sessionId: t.sessionId,
+                                path: row.path,
+                                algorithm: alg
+                            }
+                        });
+                    return req.then(function (res) {
+                        row.value = res && res.value ? res.value : '';
+                        row.loading = false;
+                    }).catch(function (err) {
+                        row.loading = false;
+                        row.error = (err && err.message) || '计算失败';
+                    });
+                });
+            });
+            chain.then(function () {
+                form.loading = false;
+            }).catch(function (err) {
+                form.loading = false;
+                form.error = (err && err.message) || '计算失败';
+            });
+        },
+        desktopChecksumCopy: function (value) {
+            if (!value) {
+                return;
+            }
+            this.copyText(value);
+            ELEMENT.Message.success('校验和已复制');
         },
         desktopShowProps: function (row, win) {
             var d = win || this.desk;
@@ -16932,6 +17581,10 @@ new Vue({
                 this.openDesktopServicesWindow();
                 return;
             }
+            if (id === 'appcenter') {
+                this.openDesktopAppCenterWindow();
+                return;
+            }
             if (id === 'nettool') {
                 this.openDesktopNetToolWindow();
                 return;
@@ -17035,14 +17688,22 @@ new Vue({
                 }
             });
         },
+        desktopThemeFor: function (id) {
+            return desktopThemeById(id);
+        },
         applyDesktopTheme: function (id) {
             var t = desktopThemeById(id);
             var a = this.desktopAppearance;
             a.theme = t.id;
+            a.accentColor = '';
             a.windowColor = t.windowColor;
             a.windowTransparency = t.windowTransparency;
+            a.windowTextColor = '';
+            a.windowBorderColor = '';
             a.taskbarColor = t.taskbarColor;
             a.taskbarTransparency = t.taskbarTransparency;
+            a.taskbarIconColor = '';
+            a.desktopIconTextColor = '';
         },
         setDesktopIconSize: function (size) {
             if (size !== 'small' && size !== 'medium' && size !== 'large') {
@@ -17050,15 +17711,89 @@ new Vue({
             }
             this.desktopAppearance.iconSize = size;
         },
+        setDesktopAppearanceColor: function (field, value) {
+            if (!this.desktopAppearance || !field) {
+                return;
+            }
+            var hex = desktopOptionalHex(value);
+            if (hex) {
+                this.desktopAppearance[field] = hex;
+            }
+        },
+        clearDesktopAppearanceColor: function (field) {
+            if (this.desktopAppearance) {
+                this.desktopAppearance[field] = '';
+            }
+        },
+        saveDesktopAppearanceScheme: function () {
+            var name = String(this.desktopAppearanceSaveName || '').trim();
+            if (!name) {
+                ELEMENT.Message.warning('请先输入方案名称');
+                return;
+            }
+            if (name.length > 24) {
+                ELEMENT.Message.warning('方案名称最多 24 个字符');
+                return;
+            }
+            var snapshot = desktopAppearanceSnapshot(this.desktopAppearance);
+            var list = this.desktopCustomAppearances.slice();
+            var existing = null;
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].name === name) {
+                    existing = list[i];
+                    break;
+                }
+            }
+            if (existing) {
+                existing.appearance = snapshot;
+                existing.createdAt = Date.now();
+            } else {
+                list.unshift({
+                    id: 'custom-' + Date.now().toString(36),
+                    name: name,
+                    createdAt: Date.now(),
+                    appearance: snapshot
+                });
+            }
+            this.desktopCustomAppearances = list.slice(0, DESKTOP_CUSTOM_APPEARANCE_LIMIT);
+            saveDesktopCustomAppearances(this.desktopCustomAppearances);
+            this.desktopAppearanceSaveName = '';
+            ELEMENT.Message.success((existing ? '已更新外观方案「' : '已保存外观方案「') + name + '」');
+        },
+        applyDesktopCustomAppearance: function (item) {
+            if (!item || !item.appearance) {
+                return;
+            }
+            var a = this.desktopAppearance;
+            var saved = desktopAppearanceSnapshot(item.appearance);
+            Object.keys(saved).forEach(function (key) {
+                a[key] = saved[key];
+            });
+            ELEMENT.Message.success('已应用外观方案「' + item.name + '」');
+        },
+        deleteDesktopCustomAppearance: function (item) {
+            if (!item) {
+                return;
+            }
+            var self = this;
+            this.$confirm('删除外观方案「' + item.name + '」？当前已应用的颜色不会改变。', '删除外观方案', {
+                type: 'warning',
+                confirmButtonText: '删除',
+                cancelButtonText: '取消'
+            }).then(function () {
+                self.desktopCustomAppearances = self.desktopCustomAppearances.filter(function (c) {
+                    return c.id !== item.id;
+                });
+                saveDesktopCustomAppearances(self.desktopCustomAppearances);
+                ELEMENT.Message.success('已删除外观方案「' + item.name + '」');
+            }).catch(function () { /* 取消 */ });
+        },
         resetDesktopAppearance: function () {
             var def = desktopDefaultAppearance();
             var a = this.desktopAppearance;
-            a.theme = def.theme;
-            a.windowColor = def.windowColor;
-            a.windowTransparency = def.windowTransparency;
-            a.taskbarColor = def.taskbarColor;
-            a.taskbarTransparency = def.taskbarTransparency;
-            a.iconSize = def.iconSize;
+            Object.keys(def).forEach(function (key) {
+                a[key] = def[key];
+            });
             ELEMENT.Message.success('已恢复默认外观主题');
         },
         resetDesktopSettings: function () {
@@ -19852,6 +20587,17 @@ new Vue({
                     item.offset = t.doneBytes || 0;
                     item.status = t.status || item.status;
                     item.error = t.error || '';
+                    if (item.status === 'error') {
+                        // 浏览器可能正在自动续传：保留轮询，任务重新进入下载中时继续显示进度
+                        if (!item._errorSince) {
+                            item._errorSince = Date.now();
+                        }
+                        if (Date.now() - item._errorSince < 30000) {
+                            return;
+                        }
+                    } else {
+                        item._errorSince = 0;
+                    }
                     if (item.status === 'done' || item.status === 'error' || item.status === 'cancelled') {
                         clearInterval(item._timer);
                         item._timer = null;

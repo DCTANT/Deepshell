@@ -330,7 +330,7 @@
 }
 
 .dsk-window.active {
-    border-color: var(--dsk-accent);
+    border-color: var(--dsk-win-border-active, var(--dsk-accent));
     box-shadow: var(--dsk-win-shadow), 0 0 0 1px var(--dsk-accent-soft);
 }
 
@@ -5345,7 +5345,7 @@
 
 /* 任务栏 */
 .ai-desktop .dsk-start-btn {
-    color: var(--dsk-taskbar-fg);
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg));
 }
 
 .ai-desktop .dsk-start-btn:hover,
@@ -5356,7 +5356,7 @@
 }
 
 .ai-desktop .dsk-win-logo i {
-    background: var(--dsk-accent);
+    background: var(--dsk-taskbar-logo, var(--dsk-accent));
 }
 
 .ai-desktop .dsk-task-search {
@@ -5373,7 +5373,7 @@
 }
 
 .ai-desktop .dsk-task-search > i {
-    color: var(--dsk-accent);
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg));
 }
 
 .ai-desktop .dsk-task-app {
@@ -5381,7 +5381,7 @@
 }
 
 .ai-desktop .dsk-task-app > i {
-    color: inherit;
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg-dim));
 }
 
 .ai-desktop .dsk-task-app:hover {
@@ -5410,7 +5410,7 @@
 
 .ai-desktop .dsk-task-app.dsk-ai-app > i,
 .ai-desktop .dsk-task-app.dsk-task-win > i {
-    color: var(--dsk-accent);
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg));
 }
 
 .ai-desktop .dsk-task-app.dsk-task-win.is-min {
@@ -5430,7 +5430,7 @@
 }
 
 .ai-desktop .dsk-tray-stat > i {
-    color: var(--dsk-taskbar-fg-dim);
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg-dim));
 }
 
 .ai-desktop .dsk-tray-stat:hover,
@@ -5457,7 +5457,7 @@
 }
 
 .ai-desktop .dsk-tray-bell {
-    color: var(--dsk-taskbar-fg-dim);
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg-dim));
 }
 
 .ai-desktop .dsk-tray-clock {
@@ -5469,7 +5469,7 @@
 }
 
 .ai-desktop .dsk-show-desktop {
-    color: var(--dsk-taskbar-fg-dim);
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg-dim));
 }
 
 .ai-desktop .dsk-show-desktop:hover {
@@ -7656,4 +7656,514 @@
 
 .ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-row.hottest:hover {
     background: #203044;
+}
+
+/* ================= 自定义外观方案 ================= */
+.ai-desktop .dsk-custom-scheme {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--dsk-panel-line);
+}
+
+.ai-desktop .dsk-custom-scheme-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.ai-desktop .dsk-custom-scheme-head .dsk-set-info {
+    flex: 1;
+}
+
+.ai-desktop .dsk-custom-scheme-save {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ai-desktop .dsk-custom-scheme-save .el-input {
+    width: 180px;
+}
+
+.ai-desktop .dsk-custom-scheme-empty {
+    padding: 10px 12px;
+    border: 1px dashed var(--dsk-panel-line);
+    border-radius: 6px;
+    color: var(--dsk-panel-fg-dim);
+    font-size: 11.5px;
+}
+
+.ai-desktop .dsk-custom-theme-card {
+    position: relative;
+}
+
+.ai-desktop .dsk-custom-theme-del {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    z-index: 2;
+    width: 18px;
+    height: 18px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(12, 18, 28, .66);
+    color: #fff;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.ai-desktop .dsk-custom-theme-card:hover .dsk-custom-theme-del {
+    display: inline-flex;
+}
+
+.ai-desktop .dsk-custom-theme-del:hover {
+    background: #d84848;
+}
+
+/* ================= 应用中心（建设中占位） ================= */
+.dsk-appcenter {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background: transparent;
+}
+
+.dsk-appcenter-card {
+    width: 100%;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 10px;
+    padding: 36px 30px;
+    border: 1px solid var(--dsk-win-line);
+    border-radius: 14px;
+    background: var(--dsk-win-subtle);
+}
+
+.dsk-appcenter-icon {
+    width: 72px;
+    height: 72px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #a78bfa, #7c3aed);
+    color: #fff;
+    font-size: 34px;
+    box-shadow: 0 12px 26px rgba(124, 58, 237, .28);
+}
+
+.dsk-appcenter-card h2 {
+    margin: 6px 0 0;
+    color: var(--dsk-win-fg);
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.dsk-appcenter-card p {
+    margin: 0;
+    color: var(--dsk-win-fg);
+    font-size: 13px;
+}
+
+.dsk-appcenter-card p.dim {
+    color: var(--dsk-win-fg-dim);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.dsk-appcenter-badge {
+    margin-top: 4px;
+    padding: 3px 10px;
+    border: 1px solid var(--dsk-accent-soft);
+    border-radius: 999px;
+    background: var(--dsk-accent-soft);
+    color: var(--dsk-accent);
+    font-size: 11px;
+}
+
+/* ================= 资源管理器文件工具对话框 ================= */
+.dsk-fs-dialog .el-dialog__body {
+    padding: 6px 18px 18px;
+}
+
+.dsk-fs-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dsk-fs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dsk-fs-toolbar .dsk-content-search-input {
+    flex: 1 1 auto;
+}
+
+.dsk-fs-toolbar .dsk-fs-include {
+    flex: 0 1 250px;
+}
+
+.dsk-fs-path {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 6px 9px;
+    border-radius: 5px;
+    background: #f5f7fb;
+    color: #6b7a90;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11.5px;
+}
+
+.dsk-fs-path span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-fs-error {
+    padding: 7px 10px;
+    border: 1px solid #f3c7c7;
+    border-radius: 5px;
+    background: #fff4f4;
+    color: #b23b3b;
+    font-size: 12px;
+}
+
+.dsk-fs-results {
+    min-height: 220px;
+    max-height: 52vh;
+    overflow: auto;
+    border: 1px solid #e4e9f1;
+    border-radius: 7px;
+    background: #fff;
+}
+
+.dsk-fs-result {
+    display: block;
+    width: 100%;
+    padding: 8px 11px;
+    border: 0;
+    border-bottom: 1px solid #eef2f7;
+    background: transparent;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.dsk-fs-result:last-child {
+    border-bottom: 0;
+}
+
+.dsk-fs-result:hover {
+    background: #f4f8ff;
+}
+
+.dsk-fs-result-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: #6b7a90;
+    font-size: 12px;
+}
+
+.dsk-fs-result-head > i {
+    color: #3d7eff;
+}
+
+.dsk-fs-result-head b {
+    flex: 0 0 auto;
+    color: #223047;
+    font-weight: 600;
+}
+
+.dsk-fs-result-head em {
+    min-width: 0;
+    overflow: hidden;
+    color: #8a96a8;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-fs-line {
+    flex: 0 0 auto;
+    color: #9aa6b8;
+    font-size: 11px;
+}
+
+.dsk-fs-snippet {
+    display: block;
+    margin-top: 4px;
+    padding: 4px 7px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: #f7f9fc;
+    color: #3a4a60;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.55;
+    text-overflow: ellipsis;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.dsk-fs-snippet mark {
+    padding: 0 1px;
+    border-radius: 2px;
+    background: #ffe58a;
+    color: #6b4b00;
+}
+
+.dsk-fs-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 200px;
+    color: #93a0b2;
+    font-size: 12px;
+}
+
+.dsk-fs-empty > i {
+    font-size: 24px;
+    opacity: .65;
+}
+
+/* 批量重命名 */
+.dsk-rn-modes {
+    display: flex;
+    gap: 6px;
+}
+
+.dsk-rn-modes button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    border: 1px solid #dfe5ee;
+    border-radius: 6px;
+    background: #fff;
+    color: #5a6b85;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.dsk-rn-modes button:hover {
+    border-color: #9fc0f5;
+    color: #2f6fd6;
+}
+
+.dsk-rn-modes button.active {
+    border-color: #3d7eff;
+    background: #eef4ff;
+    color: #1c5fce;
+}
+
+.dsk-rn-fields {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dsk-rn-fields .el-input {
+    flex: 1 1 auto;
+}
+
+.dsk-rn-seq .el-input {
+    flex: 1 1 auto;
+    min-width: 160px;
+}
+
+.dsk-rn-seq .el-input-number {
+    flex: 0 0 120px;
+}
+
+.dsk-rn-summary {
+    color: #6b7a90;
+    font-size: 11.5px;
+}
+
+.dsk-rn-error-count {
+    color: #c0392b;
+}
+
+.dsk-rn-preview {
+    max-height: 300px;
+    overflow: auto;
+    border: 1px solid #e4e9f1;
+    border-radius: 7px;
+    background: #fff;
+}
+
+.dsk-rn-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid #eef2f7;
+    color: #7a8798;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11.5px;
+}
+
+.dsk-rn-row:last-child {
+    border-bottom: 0;
+}
+
+.dsk-rn-row.changed {
+    color: #223047;
+}
+
+.dsk-rn-row.error {
+    background: #fff6f6;
+}
+
+.dsk-rn-old,
+.dsk-rn-new {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-rn-old {
+    flex: 1 1 50%;
+}
+
+.dsk-rn-new {
+    flex: 1 1 50%;
+    color: #1c5fce;
+}
+
+.dsk-rn-row.error .dsk-rn-new {
+    color: #c0392b;
+}
+
+.dsk-rn-row > i {
+    flex: 0 0 auto;
+    color: #b3bfce;
+    font-size: 11px;
+}
+
+.dsk-rn-err {
+    flex: 0 0 auto;
+    color: #c0392b;
+    font-size: 11px;
+}
+
+.dsk-rn-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 4px;
+    color: #8a96a8;
+    font-size: 11px;
+}
+
+/* 校验和 */
+.dsk-cs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #5a6b85;
+    font-size: 12px;
+}
+
+.dsk-cs-list {
+    min-height: 160px;
+    max-height: 50vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.dsk-cs-row {
+    padding: 9px 11px;
+    border: 1px solid #e4e9f1;
+    border-radius: 7px;
+    background: #fff;
+}
+
+.dsk-cs-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: #223047;
+    font-size: 12px;
+}
+
+.dsk-cs-head > i {
+    flex: 0 0 auto;
+    color: #3d7eff;
+}
+
+.dsk-cs-head b {
+    flex: 0 0 auto;
+    font-weight: 600;
+}
+
+.dsk-cs-path {
+    min-width: 0;
+    overflow: hidden;
+    color: #8a96a8;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-cs-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    background: #f6f9fd;
+}
+
+.dsk-cs-value code {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: #2b4a78;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-cs-error {
+    margin-top: 5px;
+    color: #c0392b;
+    font-size: 11.5px;
+}
+
+.dsk-cs-wait {
+    margin-top: 5px;
+    color: #8a96a8;
+    font-size: 11.5px;
 }
