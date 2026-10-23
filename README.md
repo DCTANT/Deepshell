@@ -94,7 +94,7 @@
 前置要求：JDK 8+、Maven。
 
 ```bash
-# 构建（同时生成分发包 target/deepshell-1.3.0.zip）
+# 构建（同时生成分发包 target/deepshell-1.4.0.zip）
 mvn -DskipTests package
 
 # 或直接运行 jar（开发调试）
@@ -103,10 +103,10 @@ java -jar target/deepshell.jar
 
 ### 分发包（推荐）
 
-解压 `target/deepshell-1.3.0.zip` 后的目录结构：
+解压 `target/deepshell-1.4.0.zip` 后的目录结构：
 
 ```
-deepshell-1.3.0/
+deepshell-1.4.0/
 ├─ deepshell.jar      主程序
 ├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
 ├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）
