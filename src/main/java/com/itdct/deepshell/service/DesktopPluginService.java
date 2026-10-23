@@ -63,7 +63,8 @@ public class DesktopPluginService {
     private static final long MAX_MANIFEST_BYTES = 512 * 1024;
     private static final int DEFAULT_WIDTH = 760;
     private static final int DEFAULT_HEIGHT = 520;
-    private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList("com.deepshell.redis"));
+    private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList(
+            "com.deepshell.redis", "com.deepshell.elasticsearch"));
     private static final ObjectMapper OM = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -162,32 +163,44 @@ public class DesktopPluginService {
     }
 
     public List<BuiltinPluginInfo> listBuiltin() {
+        List<PluginInfo> installedList = list();
         List<BuiltinPluginInfo> out = new ArrayList<>();
+        out.add(builtinEntry(installedList, "redis", "com.deepshell.redis", "Redis 管理器", "2.1.0",
+                "面向 AI 桌面的 Redis 浏览与调试工具：保存连接（密码加密）、列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
+                "/plugin-icons/redis.svg"));
+        out.add(builtinEntry(installedList, "elasticsearch", "com.deepshell.elasticsearch",
+                "Elasticsearch 管理器", "1.0.0",
+                "面向 AI 桌面的 Elasticsearch 管理与调试工具：集群概览、索引与映射浏览、文档搜索编辑、REST 控制台，连接凭据本机加密保存。",
+                "/plugin-icons/elasticsearch.svg"));
+        return out;
+    }
+
+    private BuiltinPluginInfo builtinEntry(List<PluginInfo> installedList, String key, String id,
+                                           String name, String bundledVersion, String description,
+                                           String iconUrl) {
         PluginInfo installed = null;
-        for (PluginInfo p : list()) {
-            if ("com.deepshell.redis".equals(p.getId())) {
+        for (PluginInfo p : installedList) {
+            if (id.equals(p.getId())) {
                 installed = p;
                 break;
             }
         }
-        String bundledVersion = "2.1.0";
         boolean officialInstalled = installed != null && installed.isVerified();
         String installedVersion = installed == null ? "" : installed.getVersion();
         boolean updateAvailable = officialInstalled && versionGreater(bundledVersion, installedVersion);
-        out.add(new BuiltinPluginInfo(
-                "redis",
-                "com.deepshell.redis",
-                "Redis 管理器",
+        return new BuiltinPluginInfo(
+                key,
+                id,
+                name,
                 bundledVersion,
-                "面向 AI 桌面的 Redis 浏览与调试工具：保存连接（密码加密）、列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
+                description,
                 "DeepShell",
-                "/plugin-icons/redis.svg",
+                iconUrl,
                 officialInstalled,
                 installedVersion,
                 updateAvailable,
                 true,
-                true));
-        return out;
+                true);
     }
 
     private PluginInfo installStream(InputStream zip, long size, boolean builtin,

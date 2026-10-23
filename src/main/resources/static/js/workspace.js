@@ -4136,6 +4136,7 @@ new Vue({
         },
         /* 网络工具箱 */
         netTool: {
+            tab: 'traffic',
             tool: 'ping',
             target: '',
             port: '80',
@@ -4145,7 +4146,18 @@ new Vue({
             exitCode: null,
             durationMs: 0,
             timedOut: false,
-            at: 0
+            at: 0,
+            traffic: {
+                data: null,
+                error: '',
+                paused: false,
+                intervalMs: 2000,
+                includeLoopback: false,
+                keyword: '',
+                sortBy: 'rate',
+                sortDir: 'desc',
+                updatedAt: 0
+            }
         },
         /* 多机命令 */
         batchCmd: {
@@ -5271,6 +5283,122 @@ new Vue({
                 }
             }
             return '桌面图标';
+        },
+        /* ---------- 网络工具箱：实时程序流量 ---------- */
+        netTrafficSystem: function () {
+            var d = this.netTool.traffic.data;
+            return d && d.system ? d.system : {};
+        },
+        netTrafficUnattributed: function () {
+            var d = this.netTool.traffic.data;
+            var u = d && d.unattributed ? d.unattributed : {};
+            return {
+                rxRate: Number(u.rxRate) || 0,
+                txRate: Number(u.txRate) || 0
+            };
+        },
+        netTrafficRows: function () {
+            var t = this.netTool.traffic;
+            var d = t.data;
+            if (!d || !Array.isArray(d.programs)) {
+                return [];
+            }
+            var include = !!t.includeLoopback;
+            var q = String(t.keyword || '').trim().toLowerCase();
+            var rows = [];
+            for (var i = 0; i < d.programs.length; i++) {
+                var r = d.programs[i] || {};
+                if (!include && !(r.extConns > 0)) {
+                    continue;
+                }
+                if (q) {
+                    var text = ((r.name || '') + ' ' + r.pid + ' ' + (r.user || '')).toLowerCase();
+                    if (text.indexOf(q) < 0) {
+                        continue;
+                    }
+                }
+                var rx = Number(include ? r.rxRate : r.extRxRate) || 0;
+                var tx = Number(include ? r.txRate : r.extTxRate) || 0;
+                var totalRx = Number(include ? r.rxTotal : r.extRxTotal) || 0;
+                var totalTx = Number(include ? r.txTotal : r.extTxTotal) || 0;
+                rows.push({
+                    pid: r.pid,
+                    name: r.name || '',
+                    user: r.user || '',
+                    rx: rx,
+                    tx: tx,
+                    rate: rx + tx,
+                    totalRx: totalRx,
+                    totalTx: totalTx,
+                    total: totalRx + totalTx,
+                    conns: Number(include ? r.conns : r.extConns) || 0,
+                    extConns: Number(r.extConns) || 0,
+                    loopbackConns: Number(r.loopbackConns) || 0
+                });
+            }
+            var by = t.sortBy || 'rate';
+            var dir = t.sortDir === 'asc' ? 1 : -1;
+            rows.sort(function (a, b) {
+                if (by === 'name') {
+                    var an = String(a.name).toLowerCase();
+                    var bn = String(b.name).toLowerCase();
+                    if (an === bn) {
+                        return a.pid - b.pid;
+                    }
+                    return an < bn ? -dir : dir;
+                }
+                var va = Number(a[by]) || 0;
+                var vb = Number(b[by]) || 0;
+                if (va === vb) {
+                    return a.rate === b.rate ? a.pid - b.pid : b.rate - a.rate;
+                }
+                return (va - vb) * dir;
+            });
+            return rows;
+        },
+        netTrafficTopPid: function () {
+            var rows = this.netTrafficRows;
+            var top = 0;
+            var max = 0;
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].rate > max) {
+                    max = rows[i].rate;
+                    top = rows[i].pid;
+                }
+            }
+            return max > 0 ? top : 0;
+        },
+        netTrafficMaxDown: function () {
+            var max = 0;
+            var rows = this.netTrafficRows;
+            for (var i = 0; i < rows.length; i++) {
+                max = Math.max(max, rows[i].rx);
+            }
+            return max;
+        },
+        netTrafficMaxUp: function () {
+            var max = 0;
+            var rows = this.netTrafficRows;
+            for (var i = 0; i < rows.length; i++) {
+                max = Math.max(max, rows[i].tx);
+            }
+            return max;
+        },
+        netToolTrafficIntervalText: function () {
+            var ms = Number(this.netTool.traffic.intervalMs) || 2000;
+            return (ms / 1000) + ' 秒';
+        },
+        netTrafficIfaceText: function () {
+            var list = this.netTrafficSystem.interfaces;
+            if (!Array.isArray(list) || !list.length) {
+                return '—';
+            }
+            var parts = [];
+            for (var i = 0; i < list.length; i++) {
+                var it = list[i] || {};
+                parts.push(it.name + (it.speedMbps ? ' ' + it.speedMbps + ' Mbps' : ''));
+            }
+            return parts.join(' / ');
         },
         desktopTab: function () {
             if (this.desktop.local) {
@@ -8118,6 +8246,8 @@ new Vue({
             this.stopDesktopDragScroll();
             this.stopDesktopClock();
             this.resetTaskmgrState();
+            this.stopNetTraffic();
+            this._netTrafficSession = '';
             this.cancelDesktopMarquee();
             this.cancelDesktopIconMarquee();
             this.cancelDesktopThumbQueue();
@@ -8317,7 +8447,11 @@ new Vue({
                 return host ? host + ' · ' + svcText : svcText;
             }
             if (w && w.type === 'nettool') {
-                var netText = '连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : '');
+                var netText = this.netTool.tab === 'traffic'
+                    ? ('实时流量' + (this.netTool.traffic.data
+                        ? ' · ' + (this.netTool.traffic.data.programCount || 0) + ' 个程序'
+                        : ''))
+                    : ('连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : ''));
                 return host ? host + ' · ' + netText : netText;
             }
             if (w && w.type === 'batchcmd') {
@@ -8973,8 +9107,12 @@ new Vue({
             var existing = this.desktopWindowOfType('nettool');
             if (existing) {
                 this.restoreDesktopWindow(existing);
+                if (this.netTool.tab === 'traffic') {
+                    this.startNetTraffic(false);
+                }
                 return existing;
             }
+            this.netTool.tab = 'traffic';
             this.netTool.running = false;
             this.netTool.error = '';
             this.netTool.output = '';
@@ -8982,9 +9120,135 @@ new Vue({
             this.netTool.durationMs = 0;
             this.netTool.timedOut = false;
             this.netTool.at = 0;
+            this.netTool.traffic.data = null;
+            this.netTool.traffic.error = '';
+            this.netTool.traffic.paused = false;
+            this.netTool.traffic.updatedAt = 0;
             var w = this.addDesktopWindow('nettool');
-            this.centerDesktopWindow(w, 780, 500);
+            this.centerDesktopWindow(w, 1060, 640);
+            this.startNetTraffic(true);
             return w;
+        },
+        switchNetToolTab: function (tab) {
+            if (!tab || this.netTool.tab === tab) {
+                return;
+            }
+            this.netTool.tab = tab;
+            if (tab === 'traffic') {
+                this.startNetTraffic(!this.netTool.traffic.data);
+            } else {
+                this.stopNetTraffic();
+            }
+        },
+        startNetTraffic: function (reset) {
+            this.stopNetTraffic();
+            var t = this.netTool.traffic;
+            var tab = this.desktopTab;
+            t.paused = false;
+            if (reset) {
+                t.data = null;
+                t.error = '';
+                t.updatedAt = 0;
+            }
+            if (!tab || !tab.sessionId) {
+                t.error = '会话未就绪，请等 SSH 连接建立后再试';
+                return;
+            }
+            this.sampleNetTraffic(!!reset);
+            var self = this;
+            this._netTrafficTimer = setInterval(function () {
+                self.sampleNetTraffic(false);
+            }, Math.max(1000, Number(t.intervalMs) || 2000));
+        },
+        restartNetTrafficTimer: function () {
+            if (this.netTool.tab !== 'traffic' || this.netTool.traffic.paused) {
+                return;
+            }
+            this.startNetTraffic(false);
+        },
+        stopNetTraffic: function () {
+            if (this._netTrafficTimer) {
+                clearInterval(this._netTrafficTimer);
+                this._netTrafficTimer = null;
+            }
+        },
+        toggleNetTrafficPause: function () {
+            var t = this.netTool.traffic;
+            t.paused = !t.paused;
+            if (t.paused) {
+                this.stopNetTraffic();
+            } else {
+                this.startNetTraffic(false);
+            }
+        },
+        sampleNetTraffic: function (reset) {
+            var t = this.netTool.traffic;
+            var tab = this.desktopTab;
+            if (!this.desktop.visible || this.netTool.tab !== 'traffic' || !tab || !tab.sessionId) {
+                this.stopNetTraffic();
+                return;
+            }
+            if (this._netTrafficBusy || document.hidden) {
+                return;
+            }
+            var sessionId = tab.sessionId;
+            if (this._netTrafficSession !== sessionId) {
+                this._netTrafficSession = sessionId;
+                reset = true;
+                t.data = null;
+                t.updatedAt = 0;
+            }
+            var self = this;
+            this._netTrafficBusy = true;
+            http.post('/api/nettools/process-traffic', {
+                sessionId: sessionId,
+                reset: !!reset
+            }, { silent: true }).then(function (d) {
+                if (self._netTrafficSession !== sessionId) {
+                    return;
+                }
+                t.data = d || null;
+                t.error = '';
+                t.updatedAt = Date.now();
+            }).catch(function (e) {
+                if (self._netTrafficSession !== sessionId) {
+                    return;
+                }
+                t.error = (e && e.message) ? e.message : '读取进程流量失败';
+            }).then(function () {
+                self._netTrafficBusy = false;
+            });
+        },
+        sortNetTraffic: function (key) {
+            var t = this.netTool.traffic;
+            if (t.sortBy === key) {
+                t.sortDir = t.sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                t.sortBy = key;
+                t.sortDir = key === 'name' ? 'asc' : 'desc';
+            }
+        },
+        netTrafficSortIcon: function (key) {
+            var t = this.netTool.traffic;
+            if (t.sortBy !== key) {
+                return 'el-icon-sort';
+            }
+            return t.sortDir === 'asc' ? 'el-icon-sort-up' : 'el-icon-sort-down';
+        },
+        netTrafficBarWidth: function (row, key) {
+            var max = key === 'rx' ? this.netTrafficMaxDown : this.netTrafficMaxUp;
+            if (!max || !row || !row[key]) {
+                return '0%';
+            }
+            return Math.max(3, Math.round(row[key] * 100 / max)) + '%';
+        },
+        fmtClockTime: function (ts) {
+            if (!ts) {
+                return '--';
+            }
+            var d = new Date(ts);
+            var p = function (x) { return (x < 10 ? '0' : '') + x; };
+            return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         },
         runNetTool: function () {
             var t = this.desktopTab;
@@ -9366,6 +9630,10 @@ new Vue({
                 this.taskmgr.ctxMenu.visible = false;
                 this.taskmgr.runVisible = false;
                 this.taskmgr.detail.overlayVisible = false;
+            }
+            if (w.type === 'nettool') {
+                this.stopNetTraffic();
+                this._netTrafficSession = '';
             }
             if (this.taskmgr.selected === 'win:' + w.id) {
                 this.taskmgr.selected = '';

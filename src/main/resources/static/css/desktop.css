@@ -4096,6 +4096,474 @@
     word-break: break-all;
 }
 
+.dsk-net-head .dsk-app-tab i {
+    margin-right: 3px;
+    font-size: 13px;
+}
+
+/* 网络工具箱：实时程序流量 */
+.dsk-traf {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fbfcfe;
+}
+
+.dsk-traf-top {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 12px 8px;
+    background: #f7f9fc;
+    border-bottom: 1px solid #eef1f6;
+}
+
+.dsk-traf-stats {
+    flex: 1;
+    min-width: 430px;
+    display: flex;
+    gap: 8px;
+}
+
+.dsk-traf-stat {
+    flex: 1;
+    min-width: 104px;
+    padding: 6px 9px 7px;
+    border: 1px solid #e6edf7;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(31, 95, 196, .035);
+}
+
+.dsk-traf-stat > span {
+    display: block;
+    color: #7a8699;
+    font-size: 11px;
+}
+
+.dsk-traf-stat > b {
+    display: block;
+    margin-top: 1px;
+    color: #24334a;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+}
+
+.dsk-traf-stat.down > b {
+    color: #0f6cbd;
+}
+
+.dsk-traf-stat.up > b {
+    color: #d97706;
+}
+
+.dsk-traf-stat.muted > b {
+    color: #5f6b7c;
+    font-size: 15px;
+}
+
+.dsk-traf-stat > small {
+    display: block;
+    overflow: hidden;
+    color: #9aa5b6;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-traf-tools {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding-top: 2px;
+}
+
+.dsk-traf-search {
+    width: 156px;
+}
+
+.dsk-traf-interval {
+    width: 84px;
+}
+
+.dsk-traf-loop {
+    margin-left: 2px;
+}
+
+.dsk-traf-loop .el-checkbox__label {
+    padding-left: 5px;
+    color: #68758a;
+    font-size: 11.5px;
+}
+
+.dsk-traf-btn {
+    height: 28px;
+    padding: 0 9px;
+    border: 1px solid #dce4ef;
+    border-radius: 6px;
+    background: #fff;
+    color: #52637a;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+
+.dsk-traf-btn:hover {
+    border-color: #b9cde8;
+    color: #1f5fc4;
+}
+
+.dsk-traf-btn.on {
+    border-color: #f0d19a;
+    background: #fff8ea;
+    color: #a96609;
+}
+
+.dsk-traf-btn i {
+    margin-right: 3px;
+}
+
+.dsk-traf-status {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 5px 12px;
+    border-bottom: 1px solid #f1f4f9;
+    background: #fdfefe;
+    color: #8a94a4;
+    font-size: 11px;
+}
+
+.dsk-traf-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #14804a;
+    font-weight: 600;
+}
+
+.dsk-traf-live > i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #18a058;
+    box-shadow: 0 0 0 3px rgba(24, 160, 88, .12);
+    animation: dskTrafPulse 1.8s ease-in-out infinite;
+}
+
+.dsk-traf-live.off {
+    color: #8a94a4;
+    font-weight: 400;
+}
+
+.dsk-traf-live.off > i {
+    background: #aeb8c6;
+    box-shadow: none;
+    animation: none;
+}
+
+@keyframes dskTrafPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .35; }
+}
+
+.dsk-traf-warn {
+    color: #b45309;
+}
+
+.dsk-traf-muted {
+    color: #9aa5b6;
+}
+
+.dsk-traf-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+}
+
+.dsk-traf-grid {
+    display: grid;
+    grid-template-columns: minmax(160px, 1.75fr) minmax(84px, 1fr) minmax(84px, 1fr) minmax(108px, 1.1fr) 62px;
+    align-items: center;
+    column-gap: 10px;
+    min-width: 560px;
+}
+
+.dsk-traf-tablehead {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-bottom: 1px solid #e8eef7;
+    background: #f7f9fc;
+}
+
+.dsk-traf-sort {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #7a8699;
+    font-size: 11px;
+    text-align: right;
+    cursor: pointer;
+}
+
+.dsk-traf-sort:hover {
+    color: #1f5fc4;
+}
+
+.dsk-traf-sort.left {
+    text-align: left;
+}
+
+.dsk-traf-sort i {
+    margin-left: 2px;
+    font-size: 11px;
+}
+
+.dsk-traf-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.dsk-traf-row {
+    padding: 7px 12px;
+    border-bottom: 1px solid #f2f5fa;
+    transition: background .12s ease;
+}
+
+.dsk-traf-row:hover {
+    background: #f7faff;
+}
+
+.dsk-traf-row.hottest {
+    background: linear-gradient(90deg, rgba(15, 108, 189, .075), rgba(15, 108, 189, .015) 62%, transparent);
+}
+
+.dsk-traf-prog {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.dsk-traf-ico {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: linear-gradient(135deg, #e8f1ff, #d8e7fb);
+    color: #2468bd;
+    font-size: 14px;
+}
+
+.dsk-traf-ico.loop {
+    background: linear-gradient(135deg, #f1f3f7, #e7ebf2);
+    color: #8491a5;
+}
+
+.dsk-traf-prog-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.dsk-traf-name-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.dsk-traf-name-row > b {
+    overflow: hidden;
+    color: #26354b;
+    font-size: 12.5px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-traf-prog-main > small {
+    overflow: hidden;
+    color: #98a3b4;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-traf-hottest {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #e8f1ff;
+    color: #1f65c5;
+    font-size: 9.5px;
+}
+
+.dsk-traf-rate {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    min-width: 0;
+}
+
+.dsk-traf-rate > b {
+    color: #33445c;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dsk-traf-rate > b.down {
+    color: #0f6cbd;
+}
+
+.dsk-traf-rate > b.up {
+    color: #c06a05;
+}
+
+.dsk-traf-bar {
+    width: 100%;
+    max-width: 100px;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: #edf1f7;
+}
+
+.dsk-traf-bar > i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #7fb7f2, #2f7ed0);
+}
+
+.dsk-traf-bar > i.up {
+    background: linear-gradient(90deg, #f3c47d, #d98a1a);
+}
+
+.dsk-traf-total {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    min-width: 0;
+}
+
+.dsk-traf-total > b {
+    color: #3b4a60;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dsk-traf-total > small {
+    overflow: hidden;
+    max-width: 100%;
+    color: #9aa5b6;
+    font-size: 9.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-traf-conns {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.dsk-traf-conns > b {
+    color: #3b4a60;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.dsk-traf-conns > small {
+    color: #9aa5b6;
+    font-size: 9.5px;
+    white-space: nowrap;
+}
+
+.dsk-traf-foot {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 5px 12px;
+    border-top: 1px solid #eef2f8;
+    background: #f7f9fc;
+    color: #8491a4;
+    font-size: 10.5px;
+}
+
+.dsk-traf-note {
+    flex: 0 0 auto;
+    overflow: hidden;
+    padding: 4px 12px 6px;
+    border-top: 1px solid #f4f7fb;
+    background: #fbfcfe;
+    color: #a4aebe;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dsk-traf .el-input__inner {
+    height: 28px;
+    line-height: 28px;
+    background: #fff;
+    color: #33445c;
+    font-size: 11.5px;
+}
+
+.dsk-traf .el-input__icon {
+    line-height: 28px;
+}
+
+.dsk-traf .el-select .el-input .el-select__caret {
+    color: #8a94a4;
+}
+
+/* 实时流量是浅色面板：深色桌面主题下输入框与复选框仍使用浅色配色 */
+.ai-desktop.dsk-scheme-dark .dsk-window .dsk-traf .el-input__inner {
+    background: #fff;
+    border-color: #dce4ef;
+    color: #33445c;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-window .dsk-traf .el-input__inner::placeholder {
+    color: #a0aabb;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-window .dsk-traf .el-checkbox__label {
+    color: #68758a;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-window .dsk-traf .el-checkbox__inner {
+    border-color: #c2cedd;
+    background: #fff;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-window .dsk-traf .el-checkbox__input.is-checked .el-checkbox__inner {
+    border-color: #2f7ed0;
+    background: #2f7ed0;
+}
+
+
 /* 多机命令 */
 .dsk-batch {
     flex: 1;
