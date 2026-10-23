@@ -3,6 +3,8 @@ package com.itdct.deepshell.ws;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.itdct.deepshell.service.ConnectionDiagnostics;
+import com.itdct.deepshell.service.ConnectionFailure;
 import com.itdct.deepshell.service.HostKeyCheckException;
 import com.itdct.deepshell.service.SshSessionManager;
 import com.itdct.deepshell.service.TerminalAuditService;
@@ -110,9 +112,13 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             n.set("hostKey", om.valueToTree(e.getInfo()));
             sendText(ws, n.toString());
             closeQuietly(ws);
+        } catch (ConnectionFailure e) {
+            log.warn("SSH 连接失败: {}", e.getMessage());
+            sendDiagnosis(ws, e.getDiagnosis());
+            closeQuietly(ws);
         } catch (Exception e) {
             log.warn("SSH 连接失败: {}", e.toString());
-            sendError(ws, friendly(e));
+            sendDiagnosis(ws, ConnectionDiagnostics.from(e, "目标主机"));
             closeQuietly(ws);
         }
     }
@@ -243,6 +249,16 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
 
     private void sendError(WebSocketSession ws, String msg) {
         sendText(ws, text("error", "message", msg));
+    }
+
+    private void sendDiagnosis(WebSocketSession ws, java.util.Map<String, Object> diagnosis) {
+        ObjectNode n = om.createObjectNode();
+        n.put("type", "error");
+        n.put("message", diagnosis == null ? "连接失败" : String.valueOf(diagnosis.get("summary")));
+        if (diagnosis != null) {
+            n.set("diagnosis", om.valueToTree(diagnosis));
+        }
+        sendText(ws, n.toString());
     }
 
     private String text(String type, String key, String value) {

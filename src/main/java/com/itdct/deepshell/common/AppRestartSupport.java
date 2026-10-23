@@ -199,6 +199,12 @@ public final class AppRestartSupport {
 
     private static List<String> baseCommand() {
         List<String> command = new ArrayList<>();
+        // 绿色版用 jpackage 启动器重启，避免依赖 java.home / java.class.path 的布局
+        java.nio.file.Path launcher = RuntimeSupport.launcher();
+        if (launcher != null) {
+            command.add(launcher.toAbsolutePath().toString());
+            return command;
+        }
         command.add(javaExecutable());
         // 复用当前 JVM 的 -D / -X / -javaagent 等参数，重启后的配置与启动方式保持一致
         command.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());

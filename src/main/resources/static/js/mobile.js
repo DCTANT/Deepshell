@@ -727,7 +727,7 @@
                 appInfo: null,
                 authStatus: { enabled: false },
 
-                hostKey: { visible: false, tab: null, info: null, trusting: false },
+                hostKey: { visible: false, tab: null, info: null, trusting: false, ack: false },
                 dialog: {
                     visible: false, title: '', message: '', code: '', input: false, textarea: false,
                     value: '', placeholder: '', confirmText: '确定', cancelText: '取消',
@@ -839,10 +839,13 @@
                 return map[this.connSheet.intent] || '打开连接';
             },
             aiModels: function () {
-                var p = this.aiConfig.providers.find(function (x) {
-                    return x.id === this.aiConfig.provider;
-                }, this);
+                var p = this.aiCurrentProvider;
                 return p && p.fallbackModels ? p.fallbackModels : [];
+            },
+            aiCurrentProvider: function () {
+                return this.aiConfig.providers.find(function (x) {
+                    return x.id === this.aiConfig.provider;
+                }, this) || null;
             }
         },
         watch: {
@@ -1344,6 +1347,9 @@
                     if (r && r.needTrust) {
                         f.testOk = false;
                         f.testText = '连接可用，但主机指纹尚未信任；首次建立终端连接时会弹出确认。';
+                    } else if (r && r.ok === false) {
+                        f.testOk = false;
+                        f.testText = self.mobileTestErrorText(r);
                     } else {
                         f.testOk = true;
                         f.testText = (r && r.message) || '连接成功';
@@ -1353,6 +1359,14 @@
                     f.testOk = false;
                     f.testText = (e && e.message) || '连接失败';
                 });
+            },
+            mobileTestErrorText: function (r) {
+                var e = r && r.error ? r.error : {};
+                var text = (e.title || r.message || '连接失败');
+                if (e.steps && e.steps.length) {
+                    text += '：' + e.steps[0];
+                }
+                return text;
             },
             testConn: function (c) {
                 if (!c) {
@@ -1366,6 +1380,8 @@
                 }, { silent: true }).then(function (r) {
                     if (r && r.needTrust) {
                         self.toast('连接可用，首次连接时会确认主机指纹', 'warn');
+                    } else if (r && r.ok === false) {
+                        self.toast(self.mobileTestErrorText(r), 'error');
                     } else {
                         self.toast((r && r.message) || '连接成功', 'success');
                     }
@@ -2221,7 +2237,7 @@
 
             /* ================= 主机指纹 ================= */
             showHostKey: function (tab, info) {
-                this.hostKey = { visible: true, tab: tab, info: info || {}, trusting: false };
+                this.hostKey = { visible: true, tab: tab, info: info || {}, trusting: false, ack: false };
             },
             cancelHostKey: function () {
                 var h = this.hostKey;
@@ -2231,11 +2247,15 @@
                     h.tab.serverClosed = true;
                     this.writeTerm(h.tab, '\r\n\x1b[33m● 已取消：主机指纹未信任，连接未建立\x1b[0m\r\n');
                 }
-                this.hostKey = { visible: false, tab: null, info: null, trusting: false };
+                this.hostKey = { visible: false, tab: null, info: null, trusting: false, ack: false };
             },
             trustHostKey: function () {
                 var h = this.hostKey;
                 if (!h.info) {
+                    return;
+                }
+                if (!h.ack) {
+                    this.toast('请先核对指纹，并勾选“我已核对”', 'warn');
                     return;
                 }
                 var info = h.info;
@@ -2247,7 +2267,7 @@
                     role: info.role, roleLabel: info.roleLabel
                 }).then(function () {
                     var tab = h.tab;
-                    self.hostKey = { visible: false, tab: null, info: null, trusting: false };
+                    self.hostKey = { visible: false, tab: null, info: null, trusting: false, ack: false };
                     if (tab) {
                         tab.hostKeyPending = false;
                         self.reconnectTab(tab, false);

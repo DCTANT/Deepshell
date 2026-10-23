@@ -2792,6 +2792,76 @@ button {
     font-family: "Cascadia Code", Consolas, Menlo, monospace;
 }
 
+.m-modal-wide {
+    max-height: 88vh;
+    overflow-y: auto;
+}
+
+.m-hostkey-ack {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.035);
+    color: #b9c6d8;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.m-hostkey-ack input {
+    width: 16px !important;
+    height: 16px;
+    margin: 2px 0 0 0;
+    flex: 0 0 auto;
+    accent-color: #4c8dff;
+}
+
+.m-hostkey-ack span {
+    flex: 1;
+}
+
+.m-ai-keyguide {
+    margin: 5px 0 14px;
+    padding: 11px 12px;
+    border: 1px solid rgba(88, 141, 246, 0.28);
+    border-radius: 11px;
+    background: rgba(46, 93, 176, 0.12);
+    color: #b9c8dc;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.m-ai-keyguide b {
+    display: block;
+    color: #dbe8fb;
+    margin-bottom: 4px;
+}
+
+.m-ai-keyguide ol {
+    margin: 3px 0 7px;
+    padding-left: 19px;
+}
+
+.m-ai-keyguide li {
+    margin: 3px 0;
+}
+
+.m-ai-keyguide a {
+    color: #79b0ff;
+    display: block;
+    margin-top: 3px;
+}
+
+.m-ai-keyguide span {
+    display: block;
+    margin-top: 5px;
+    color: #8fa1b8;
+    font-size: 11.5px;
+}
+
 .m-modal input,
 .m-modal textarea {
     width: 100%;

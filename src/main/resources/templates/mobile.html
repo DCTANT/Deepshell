@@ -553,6 +553,15 @@
                         <option v-for="p in aiConfig.providers" :key="p.id" :value="p.id">{{ p.name }}</option>
                     </select>
                 </label>
+                <div class="m-ai-keyguide" v-if="aiCurrentProvider && aiCurrentProvider.keySteps && aiCurrentProvider.keySteps.length">
+                    <b>去哪拿 API Key？</b>
+                    <ol>
+                        <li v-for="(s, i) in aiCurrentProvider.keySteps" :key="i">{{ s }}</li>
+                    </ol>
+                    <a v-if="aiCurrentProvider.keyUrl" :href="aiCurrentProvider.keyUrl"
+                       target="_blank" rel="noopener">打开 {{ aiCurrentProvider.name }} Key 页面</a>
+                    <span v-if="aiCurrentProvider.costHint">费用：{{ aiCurrentProvider.costHint }}</span>
+                </div>
                 <label class="m-field">
                     <span>接口地址</span>
                     <input v-model="aiConfig.baseUrl" placeholder="https://api.deepseek.com" autocomplete="off">
@@ -905,23 +914,21 @@
 
     <!-- ================= 主机指纹确认 ================= -->
     <div class="m-modal-mask" v-if="hostKey.visible">
-        <div class="m-modal">
-            <div class="m-modal-icon warn"><i class="el-icon-key"></i></div>
-            <div class="m-modal-title">主机指纹确认</div>
-            <div class="m-modal-text">
-                首次连接该服务器，或指纹发生变化。请核对指纹后再信任：
-            </div>
-            <div class="m-hostkey-meta" v-if="hostKey.info">
-                {{ hostKey.info.host }}:{{ hostKey.info.port }} · {{ hostKey.info.keyType }}
-            </div>
-            <pre class="m-hostkey-code">{{ hostKey.info ? hostKey.info.fingerprintSha256 || hostKey.info.fingerprint || hostKey.info.keyBase64 : '' }}</pre>
-            <div class="m-cmd-danger" v-if="hostKey.info && hostKey.info.changed">
-                <i class="el-icon-warning-outline"></i>指纹与已保存记录不一致，可能是服务器重装或中间人攻击
-            </div>
+        <div class="m-modal m-modal-wide">
+            <div class="m-modal-title">{{ hostKey.info && hostKey.info.changed
+                ? '服务器身份证变了，先别急着连' : '第一次见这台服务器，先认认身份证' }}</div>
+            <host-key-details v-if="hostKey.info" :info="hostKey.info" dark compact></host-key-details>
+            <label class="m-hostkey-ack">
+                <input type="checkbox" v-model="hostKey.ack">
+                <span>{{ hostKey.info && hostKey.info.changed
+                    ? '我已通过云控制台 VNC 核对，确认这是重装系统 / 更换密钥导致的'
+                    : '我已核对指纹，确认这是我要连接的服务器' }}</span>
+            </label>
             <div class="m-modal-actions">
-                <button type="button" class="m-btn" @click="cancelHostKey">取消</button>
-                <button type="button" class="m-btn primary" :disabled="hostKey.trusting" @click="trustHostKey">
-                    {{ hostKey.trusting ? '信任中…' : '信任并连接' }}
+                <button type="button" class="m-btn" @click="cancelHostKey">先不连接</button>
+                <button type="button" class="m-btn primary" :disabled="hostKey.trusting || !hostKey.ack"
+                        @click="trustHostKey">
+                    {{ hostKey.trusting ? '信任中…' : '确认无误，信任并连接' }}
                 </button>
             </div>
         </div>
@@ -954,6 +961,7 @@
 <noscript>DeepShell 手机版需要启用 JavaScript。</noscript>
 
 <script th:src="@{/vendor/vue/vue.min.js}"></script>
+<script th:src="@{/js/host-key-details.js}"></script>
 <script th:src="@{/vendor/axios/axios.min.js}"></script>
 <script th:src="@{/vendor/xterm/xterm.js}"></script>
 <script th:src="@{/vendor/xterm-addon-fit/xterm-addon-fit.js}"></script>

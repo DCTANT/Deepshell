@@ -2,6 +2,7 @@ package com.itdct.deepshell;
 
 import com.itdct.deepshell.common.AppRestartSupport;
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.common.RuntimeSupport;
 import com.itdct.deepshell.protocol.ProtocolLaunchSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
@@ -21,6 +22,16 @@ public class DeepShellApplication {
         // 让 --deepshell.data-dir=... 与 -Ddeepshell.data-dir=... 一样在数据目录解析前生效，
         // 避免数据库走 CLI 参数、密钥/证书/日志却落到 ~/.deepshell
         applyDataDirFromArgs(args);
+        // 开机自启 / 托盘后台启动：不自动弹出浏览器
+        if (RuntimeSupport.hasBackgroundArg(args)) {
+            System.setProperty("deepshell.background", "true");
+        }
+        // 绿色版由 jpackage 启动器启动，application.yml 可能不在启动目录；显式加载程序目录的外置配置
+        applyPackagedDefaults();
+        // 托盘与原生目录选择需要 AWT；无桌面会话的服务器保持 headless
+        if (RuntimeSupport.hasDesktopSession()) {
+            System.setProperty("java.awt.headless", "false");
+        }
         // 界面发起的「重启 DeepShell」会以该参数拉起重启助手：等旧进程退出后再启动新实例
         if (AppRestartSupport.isHelper(args)) {
             AppRestartSupport.runHelper(args);
@@ -32,6 +43,10 @@ public class DeepShellApplication {
             return;
         }
         Path dataDir = DataDir.root();
+        // 数据目录解析结果固定为系统属性，保证 Spring 的 datasource/logging 占位符与 DataDir 完全一致
+        if (System.getProperty("deepshell.data-dir") == null) {
+            System.setProperty("deepshell.data-dir", dataDir.toString());
+        }
         // SQLite 不会自动创建缺失的父目录，需在数据源初始化前准备好
         Files.createDirectories(dataDir.resolve("db"));
         Files.createDirectories(dataDir.resolve("logs"));
@@ -52,6 +67,23 @@ public class DeepShellApplication {
         // 最低优先级兜底：即使配置文件删掉了 server.address，也默认只监听本机
         app.setDefaultProperties(Collections.singletonMap("server.address", "127.0.0.1"));
         app.run(args);
+    }
+
+    /**
+     * 绿色版（jpackage app-image）的程序目录里带外置 application.yml / data。
+     * 启动器可能不把工作目录设为程序目录，这里显式补上 Spring 配置位置。
+     */
+    private static void applyPackagedDefaults() {
+        Path appDir = RuntimeSupport.appDir();
+        if (appDir == null) {
+            return;
+        }
+        Path config = appDir.resolve("application.yml");
+        if (Files.isRegularFile(config)
+                && System.getProperty("spring.config.additional-location") == null) {
+            System.setProperty("spring.config.additional-location",
+                    "optional:file:" + config.toString().replace('\\', '/'));
+        }
     }
 
     /** 支持 --deepshell.data-dir=... 与 --deepshell.data-dir ... 两种写法。 */

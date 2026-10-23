@@ -6,6 +6,7 @@ import com.itdct.deepshell.entity.SshConnection;
 import com.itdct.deepshell.service.AuditService;
 import com.itdct.deepshell.service.ConnectionService;
 import com.itdct.deepshell.service.ConnectionTransferService;
+import com.itdct.deepshell.service.ExternalConnectionImportService;
 import com.itdct.deepshell.service.SshSessionManager;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -13,8 +14,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import javax.servlet.http.HttpServletRequest;
+import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -25,13 +29,16 @@ public class ConnectionController {
 
     private final ConnectionService service;
     private final ConnectionTransferService transferService;
+    private final ExternalConnectionImportService externalImportService;
     private final SshSessionManager sessionManager;
     private final AuditService audit;
 
     public ConnectionController(ConnectionService service, ConnectionTransferService transferService,
+                                ExternalConnectionImportService externalImportService,
                                 SshSessionManager sessionManager, AuditService audit) {
         this.service = service;
         this.transferService = transferService;
+        this.externalImportService = externalImportService;
         this.sessionManager = sessionManager;
         this.audit = audit;
     }
@@ -202,6 +209,52 @@ public class ConnectionController {
         audit.record("CONNECTION_IMPORT", files.length + " 个文件", imported > 0 ? "OK" : "FAIL",
                 "成功 " + imported + " 条，失败 " + failed + " 条，跳过 " + skipped + " 条");
         return R.ok(m);
+    }
+
+    /** 扫描本机 ~/.ssh/config 与（Windows）PuTTY 会话；只允许本机回环访问 */
+    @GetMapping("/import/sources")
+    public R<Map<String, Object>> importSources(HttpServletRequest request) {
+        requireLocal(request);
+        return R.ok(externalImportService.scan());
+    }
+
+    /** 导入扫描结果中勾选的条目；服务端按 id 重新扫描，不接受任意地址 / 私钥路径 */
+    @PostMapping("/import/external")
+    public R<Map<String, Object>> importExternal(@RequestBody Map<String, Object> body,
+                                                 HttpServletRequest request) {
+        requireLocal(request);
+        Object raw = body.get("ids");
+        List<String> ids = new ArrayList<>();
+        if (raw instanceof List) {
+            for (Object o : (List<?>) raw) {
+                if (o != null) {
+                    ids.add(String.valueOf(o));
+                }
+            }
+        }
+        boolean skipDuplicates = body.get("skipDuplicates") == null
+                || Boolean.parseBoolean(String.valueOf(body.get("skipDuplicates")));
+        Map<String, Object> r = externalImportService.importSelected(ids, skipDuplicates);
+        audit.record("CONNECTION_IMPORT", "SSH / PuTTY", "OK", String.valueOf(r.get("message")));
+        return R.ok(r);
+    }
+
+    private static void requireLocal(HttpServletRequest request) {
+        String addr = request == null ? null : request.getRemoteAddr();
+        if (addr == null) {
+            throw new IllegalArgumentException("仅支持在本机访问时导入 SSH / PuTTY 配置");
+        }
+        try {
+            if (InetAddress.getByName(addr).isLoopbackAddress()) {
+                return;
+            }
+        } catch (Exception ignore) {
+            // 继续按字符串判断
+        }
+        if ("::1".equals(addr) || addr.startsWith("::ffff:127.")) {
+            return;
+        }
+        throw new IllegalArgumentException("仅支持在本机访问（127.0.0.1 / localhost）时导入 SSH / PuTTY 配置");
     }
 
     private static int num(Object o) {

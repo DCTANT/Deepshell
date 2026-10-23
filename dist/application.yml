@@ -49,6 +49,16 @@ deepshell:
   # 相对路径基于启动目录解析；默认指向程序目录下的 data/，拷贝该目录即可迁移全部数据。
   data-dir: ./data
 
+  # 当前版本号；构建绿色版 / 检查更新时使用
+  version: 1.5.0
+  # 自动更新：读取 Gitee Releases 最新版本；只接受发布页里带有 SHA256 的绿色版 ZIP。
+  # 关闭后仍可在「关于 → 应用与更新」手动检查。
+  update:
+    enabled: true
+    gitee-owner: decentant
+    gitee-repo: deepshell
+    check-interval-hours: 24
+
   # 登录认证：默认关闭（仅本机使用无需登录）。
   # 开启局域网访问时必须启用登录并修改默认密码，否则应用会拒绝启动或拒绝开启局域网。
   # 账号密码为明文配置，请务必修改默认值；可通过右上角菜单「登录与安全」调整 Token 有效期。

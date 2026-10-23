@@ -2,7 +2,9 @@ package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.common.RuntimeSupport;
 import com.itdct.deepshell.protocol.ProtocolRegistrar;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,6 +23,9 @@ public class AppInfoController {
 
     private final ProtocolRegistrar protocolRegistrar;
 
+    @Value("${deepshell.version:1.5.0}")
+    private String configuredVersion;
+
     public AppInfoController(ProtocolRegistrar protocolRegistrar) {
         this.protocolRegistrar = protocolRegistrar;
     }
@@ -30,11 +35,16 @@ public class AppInfoController {
         Map<String, String> m = new HashMap<>();
         m.put("name", "DeepShell");
         String v = AppInfoController.class.getPackage().getImplementationVersion();
-        m.put("version", v == null ? "1.4.0" : v);
+        m.put("version", v == null ? configuredVersion : v);
         m.put("buildTime", resolveBuildTime());
         m.put("java", System.getProperty("java.version"));
         m.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));
         m.put("dataDir", DataDir.root().toString());
+        m.put("packaged", String.valueOf(RuntimeSupport.isPackaged()));
+        m.put("launcher", RuntimeSupport.launcher() == null ? ""
+                : RuntimeSupport.launcher().toAbsolutePath().toString());
+        m.put("installDir", RuntimeSupport.appDir() == null ? ""
+                : RuntimeSupport.appDir().toAbsolutePath().toString());
         // 进程启动时间：前端重启后用它判断响应是否已来自新进程
         m.put("startedAt", String.valueOf(ManagementFactory.getRuntimeMXBean().getStartTime()));
         Map<String, Object> protocol = protocolRegistrar.status();

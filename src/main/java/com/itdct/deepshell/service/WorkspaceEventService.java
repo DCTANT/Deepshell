@@ -64,6 +64,14 @@ public class WorkspaceEventService {
         return send(event.toString());
     }
 
+    /** 自动检查发现新版本时通知已打开的页面，由页面决定是否提示 / 打开更新面板。 */
+    public int broadcastUpdate(java.util.Map<String, Object> info) {
+        ObjectNode event = om.createObjectNode();
+        event.put("type", "update-available");
+        event.set("info", om.valueToTree(info == null ? new java.util.HashMap<String, Object>() : info));
+        return send(event.toString());
+    }
+
     private int send(String json) {
         int sent = 0;
         for (WebSocketSession session : sessions) {

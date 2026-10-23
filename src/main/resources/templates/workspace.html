@@ -183,7 +183,8 @@
         <div class="ws-panel" :style="{ width: panelWidth + 'px' }" v-if="panelVisible && activeTab">
             <el-tabs v-model="panelTab" stretch class="panel-tabs" @tab-click="onPanelTabClick">
                 <el-tab-pane label="AI终端" name="ai">
-                    <ai-chat-panel v-if="activeTab.sessionId" ref="aiChatPanel" :tab="activeTab" context="panel"></ai-chat-panel>
+                    <ai-chat-panel v-if="activeTab.sessionId" ref="aiChatPanel" :tab="activeTab" context="panel"
+                                   @ai-setup="openAiWizard"></ai-chat-panel>
                     <div v-else class="panel-tip">连接建立后即可使用 AI 终端</div>
                 </el-tab-pane>
 
@@ -461,6 +462,8 @@
     <!-- 全局弹窗（工作台 / AI 桌面共用） -->
     <th:block th:replace="~{fragments/dialogs :: dialogs}"></th:block>
 
+    <ai-setup-wizard ref="aiWizard" @saved="onAiWizardSaved"></ai-setup-wizard>
+
     <div class="tab-menu top-menu" v-if="topMenuVisible"
          :style="{ top: topMenuPos.top + 'px', right: topMenuPos.right + 'px' }"
          @click.stop @mouseleave="topSubMenu = ''">
@@ -555,6 +558,9 @@
             <div class="tab-menu tab-menu-sub" v-if="topSubMenu === 'ai'" @click.stop>
                 <div class="tab-menu-item" @click="onMenuCommand('ai')">
                     <i class="el-icon-setting"></i>AI 设置
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('aiWizard')">
+                    <i class="el-icon-magic-stick"></i>AI 配置向导
                 </div>
                 <div class="tab-menu-item" @click="onMenuCommand('openAiPanel')">
                     <i class="el-icon-chat-dot-round"></i>AI 终端面板
@@ -825,6 +831,10 @@
                                                        @click="continueRun(m)">继续执行</el-button>
                                             <el-button v-else-if="m.action === 'retry'" size="mini"
                                                        @click="retryRun(m)">重试</el-button>
+                                            <el-button v-else-if="m.action === 'aiSetup'" size="mini" type="primary"
+                                                       icon="el-icon-magic-stick" @click="$emit('ai-setup')">
+                                                打开 AI 配置向导
+                                            </el-button>
                                         </div>
                                         <div v-if="m.cmd" class="aicard">
                                             <div class="aicard-head">
@@ -1530,6 +1540,11 @@
 <script th:src="@{/vendor/xterm-addon-fit/xterm-addon-fit.js}"></script>
 <script th:src="@{/vendor/xterm-addon-search/xterm-addon-search.js}"></script>
 <script th:src="@{/vendor/codemirror/codemirror.min.js}"></script>
+<script th:src="@{/js/issue-help.js}"></script>
+<script th:src="@{/js/host-key-details.js}"></script>
+<script th:src="@{/js/ai-setup-wizard.js}"></script>
+<script th:src="@{/js/app-runtime-panel.js}"></script>
+<script th:src="@{/js/external-import-panel.js}"></script>
 <script th:src="@{/js/conn-form.js}"></script>
 <script th:src="@{/js/workspace.js}"></script>
 </body>

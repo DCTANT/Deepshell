@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -127,9 +128,26 @@ public class HostKeyService {
             m.put("knownFingerprint", knownFingerprint);
         }
         m.put("message", changed
-                ? "主机密钥已变更，可能存在中间人攻击。请先在服务器上核对指纹后再决定是否更新。"
-                : "首次连接该主机，请核对服务器指纹后再信任。");
+                ? "这台服务器的「身份证」和上次保存的不一样。若你最近没有重装系统或更换 SSH 密钥，请不要信任，先通过云控制台 VNC 核对。"
+                : "第一次见这台服务器。先核对它的「身份证」（SSH 主机指纹），确认是本人后再保存。");
+        m.put("verifyCommand", verifyCommand(keyType));
         return m;
+    }
+
+    /** 给新手直接照着执行的指纹核对命令。 */
+    private static String verifyCommand(String keyType) {
+        String type = keyType == null ? "" : keyType.toLowerCase(Locale.ROOT);
+        String file;
+        if (type.contains("ed25519")) {
+            file = "/etc/ssh/ssh_host_ed25519_key.pub";
+        } else if (type.contains("ecdsa")) {
+            file = "/etc/ssh/ssh_host_ecdsa_key.pub";
+        } else if (type.contains("rsa")) {
+            file = "/etc/ssh/ssh_host_rsa_key.pub";
+        } else {
+            file = "/etc/ssh/ssh_host_*_key.pub";
+        }
+        return "sudo ssh-keygen -lf " + file;
     }
 
     /** JSch 的 HostKeyRepository 适配：端点固定，未知/变更时记录最后见到的密钥供上层抛出确认框 */
