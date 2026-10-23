@@ -3965,7 +3965,7 @@ new Vue({
             { id: 'transfers', label: '传输中心', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
             { id: 'taskmgr', label: '任务管理器', icon: 'el-icon-cpu', color: '#0f6cbd' },
             { id: 'services', label: '服务与计划任务', icon: 'el-icon-s-tools', color: '#0f766e' },
-            { id: 'nettool', label: '网络工具箱', icon: 'el-icon-share', color: '#7c3aed' },
+            { id: 'nettool', label: '网络工具箱', icon: 'dsk-ico-network', color: '#7c3aed' },
             { id: 'batchcmd', label: '多机命令', icon: 'el-icon-copy-document', color: '#b45309' },
             { id: 'file', label: '资源管理器', icon: 'el-icon-folder-opened', color: '#e6a23c' },
             { id: 'dirs', label: '常用目录', icon: 'el-icon-star-off', color: '#8b5cf6' },
@@ -4152,6 +4152,16 @@ new Vue({
             durationMs: 0,
             timedOut: false,
             at: 0,
+            root: {
+                checked: false,
+                loading: false,
+                user: '',
+                uid: -1,
+                isRoot: false,
+                ready: false,
+                passwordless: false,
+                needsPassword: false
+            },
             traffic: {
                 data: null,
                 error: '',
@@ -4162,7 +4172,8 @@ new Vue({
                 sortBy: 'rate',
                 sortDir: 'desc',
                 selectedPid: 0,
-                updatedAt: 0
+                updatedAt: 0,
+                rootEnabled: false
             }
         },
         /* 多机命令 */
@@ -4366,6 +4377,7 @@ new Vue({
             ['PROTOCOL_REGISTER', '注册外部调用'],
             ['INTEGRATION_OPEN', '接口打开连接'],
             ['INTEGRATION_TOKEN', '集成接口 Token'],
+            ['NETWORK_ROOT', 'root 采样'],
             ['HOST_KEY', '主机指纹'],
             ['PORT_FORWARD', '端口转发'],
             ['AUTH_SETTINGS', '认证设置']
@@ -5433,6 +5445,26 @@ new Vue({
         netToolTrafficIntervalText: function () {
             var ms = Number(this.netTool.traffic.intervalMs) || 2000;
             return (ms / 1000) + ' 秒';
+        },
+        netTrafficRootText: function () {
+            var r = this.netTool.root;
+            if (r.loading) {
+                return '授权中…';
+            }
+            return this.netTool.traffic.rootEnabled ? 'root 采样中' : '以 root 采样';
+        },
+        netTrafficRootTitle: function () {
+            var r = this.netTool.root;
+            if (r.isRoot) {
+                return '当前 SSH 登录用户是 ' + (r.user || 'root') + '，可读取全部进程';
+            }
+            if (this.netTool.traffic.rootEnabled) {
+                return '正在通过 sudo 以 root 读取全部进程；点击恢复为当前用户';
+            }
+            if (r.passwordless) {
+                return '当前用户可免密 sudo，点击直接以 root 采样';
+            }
+            return '输入 sudo 密码后以 root 采样，可查看全部进程；密码仅保存在服务内存 30 分钟';
         },
         netTrafficIfaceText: function () {
             var list = this.netTrafficSystem.interfaces;
@@ -8393,7 +8425,7 @@ new Vue({
                 return 'el-icon-s-tools';
             }
             if (type === 'nettool') {
-                return 'el-icon-share';
+                return 'dsk-ico-network';
             }
             if (type === 'batchcmd') {
                 return 'el-icon-copy-document';
@@ -9166,6 +9198,7 @@ new Vue({
                 this.restoreDesktopWindow(existing);
                 if (this.netTool.tab === 'traffic') {
                     this.startNetTraffic(false);
+                    this.loadNetRootStatus();
                 }
                 return existing;
             }
@@ -9177,6 +9210,7 @@ new Vue({
             this.netTool.durationMs = 0;
             this.netTool.timedOut = false;
             this.netTool.at = 0;
+            this.resetNetRootState();
             this.netTool.traffic.data = null;
             this.netTool.traffic.error = '';
             this.netTool.traffic.paused = false;
@@ -9184,7 +9218,154 @@ new Vue({
             var w = this.addDesktopWindow('nettool');
             this.centerDesktopWindow(w, 1060, 640);
             this.startNetTraffic(true);
+            this.loadNetRootStatus();
             return w;
+        },
+        resetNetRootState: function () {
+            var r = this.netTool.root;
+            r.checked = false;
+            r.loading = false;
+            r.user = '';
+            r.uid = -1;
+            r.isRoot = false;
+            r.ready = false;
+            r.passwordless = false;
+            r.needsPassword = false;
+            this.netTool.traffic.rootEnabled = false;
+        },
+        isCurrentNetSession: function (sessionId) {
+            return !!this.desktopTab && this.desktopTab.sessionId === sessionId;
+        },
+        applyNetRootStatus: function (d) {
+            var r = this.netTool.root;
+            d = d || {};
+            r.checked = true;
+            r.user = d.user || '';
+            r.uid = typeof d.uid === 'number' ? d.uid : -1;
+            r.isRoot = !!d.root;
+            r.ready = !!d.ready;
+            r.passwordless = !!d.passwordless;
+            r.needsPassword = !!d.needsPassword;
+            if (r.isRoot || !r.ready) {
+                this.netTool.traffic.rootEnabled = false;
+            }
+        },
+        loadNetRootStatus: function () {
+            var tab = this.desktopTab;
+            var r = this.netTool.root;
+            if (!tab || !tab.sessionId) {
+                this.resetNetRootState();
+                return;
+            }
+            var sessionId = tab.sessionId;
+            var self = this;
+            r.loading = true;
+            http.get('/api/nettools/root', {
+                params: { sessionId: sessionId },
+                silent: true
+            }).then(function (d) {
+                if (!self.isCurrentNetSession(sessionId)) {
+                    return;
+                }
+                r.loading = false;
+                self.applyNetRootStatus(d);
+            }).catch(function () {
+                if (!self.isCurrentNetSession(sessionId)) {
+                    return;
+                }
+                r.loading = false;
+                r.checked = false;
+            });
+        },
+        toggleNetTrafficRoot: function () {
+            if (this.netTool.root.isRoot) {
+                ELEMENT.Message.info('当前 SSH 登录用户就是 root，无需切换');
+                return;
+            }
+            if (this.netTool.traffic.rootEnabled) {
+                this.disableNetTrafficRoot();
+            } else {
+                this.enableNetTrafficRoot();
+            }
+        },
+        enableNetTrafficRoot: function (password) {
+            var self = this;
+            var tab = this.desktopTab;
+            var r = this.netTool.root;
+            if (!tab || !tab.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var sessionId = tab.sessionId;
+            r.loading = true;
+            http.post('/api/nettools/root', {
+                sessionId: sessionId,
+                password: password == null ? null : password
+            }, { silent: true }).then(function (d) {
+                if (!self.isCurrentNetSession(sessionId)) {
+                    return;
+                }
+                r.loading = false;
+                self.applyNetRootStatus(d);
+                if (d && d.ready) {
+                    self.netTool.traffic.rootEnabled = true;
+                    ELEMENT.Message.success('已切换到 root 采样');
+                    self.startNetTraffic(true);
+                } else {
+                    self.promptNetRootPassword();
+                }
+            }).catch(function (e) {
+                if (!self.isCurrentNetSession(sessionId)) {
+                    return;
+                }
+                r.loading = false;
+                r.needsPassword = true;
+                ELEMENT.Message.error((e && e.message) ? e.message : '启用 root 采样失败');
+            });
+        },
+        promptNetRootPassword: function () {
+            var self = this;
+            this.$prompt('请输入当前 SSH 用户的 sudo 密码。密码仅保存在 DeepShell 服务内存中，30 分钟内有效，不会写入日志或数据库。',
+                '以 root 采样', {
+                    confirmButtonText: '启用',
+                    cancelButtonText: '取消',
+                    inputType: 'password',
+                    inputPlaceholder: 'sudo 密码',
+                    inputPattern: /\S+/,
+                    inputErrorMessage: '密码不能为空',
+                    closeOnClickModal: false
+                }).then(function (res) {
+                    self.enableNetTrafficRoot(res.value);
+                }).catch(function () { /* 取消 */ });
+        },
+        disableNetTrafficRoot: function () {
+            var self = this;
+            var tab = this.desktopTab;
+            var r = this.netTool.root;
+            if (!tab || !tab.sessionId) {
+                return;
+            }
+            var sessionId = tab.sessionId;
+            r.loading = true;
+            http.delete('/api/nettools/root', {
+                params: { sessionId: sessionId },
+                silent: true
+            }).then(function (d) {
+                if (!self.isCurrentNetSession(sessionId)) {
+                    return;
+                }
+                r.loading = false;
+                self.applyNetRootStatus(d);
+                self.netTool.traffic.rootEnabled = false;
+                ELEMENT.Message.info('已恢复为当前用户采样');
+                self.startNetTraffic(true);
+            }).catch(function (e) {
+                if (!self.isCurrentNetSession(sessionId)) {
+                    return;
+                }
+                r.loading = false;
+                ELEMENT.Message.error((e && e.message) ? e.message : '关闭 root 采样失败');
+            });
         },
         switchNetToolTab: function (tab) {
             if (!tab || this.netTool.tab === tab) {
@@ -9255,12 +9436,15 @@ new Vue({
                 reset = true;
                 t.data = null;
                 t.updatedAt = 0;
+                this.resetNetRootState();
+                this.loadNetRootStatus();
             }
             var self = this;
             this._netTrafficBusy = true;
             http.post('/api/nettools/process-traffic', {
                 sessionId: sessionId,
-                reset: !!reset
+                reset: !!reset,
+                root: !!t.rootEnabled
             }, { silent: true }).then(function (d) {
                 if (self._netTrafficSession !== sessionId) {
                     return;
@@ -9272,7 +9456,12 @@ new Vue({
                 if (self._netTrafficSession !== sessionId) {
                     return;
                 }
-                t.error = (e && e.message) ? e.message : '读取进程流量失败';
+                var message = (e && e.message) ? e.message : '读取进程流量失败';
+                t.error = message;
+                if (t.rootEnabled && /root|sudo/i.test(message)) {
+                    t.rootEnabled = false;
+                    self.loadNetRootStatus();
+                }
             }).then(function () {
                 self._netTrafficBusy = false;
             });

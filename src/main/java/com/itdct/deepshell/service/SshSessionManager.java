@@ -18,6 +18,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -1060,7 +1061,15 @@ public class SshSessionManager {
      * 在独立 exec 通道执行命令并捕获输出（stdout/stderr 合并），不干扰交互终端
      */
     public String execCapture(SshSession s, String command, long timeoutMs) throws Exception {
-        return execRaw(s, command, timeoutMs, Integer.MAX_VALUE, () -> false).output;
+        return execRaw(s, command, timeoutMs, Integer.MAX_VALUE, () -> false, null).output;
+    }
+
+    /** 带 stdin 的一次性 exec（如 sudo -S 读取密码）；输入内容不会写入日志。 */
+    public String execCaptureWithInput(SshSession s, String command, String input, long timeoutMs)
+            throws Exception {
+        InputStream stdin = input == null ? null
+                : new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8));
+        return execRaw(s, command, timeoutMs, Integer.MAX_VALUE, () -> false, stdin).output;
     }
 
     /**
@@ -1105,15 +1114,25 @@ public class SshSessionManager {
      */
     private RawExec execRaw(SshSession s, String command, long timeoutMs, int maxBytes,
                             BooleanSupplier cancelled) throws Exception {
-        return execRaw(s.getJsch(), s.getId(), command, timeoutMs, maxBytes, cancelled);
+        return execRaw(s, command, timeoutMs, maxBytes, cancelled, null);
+    }
+
+    private RawExec execRaw(SshSession s, String command, long timeoutMs, int maxBytes,
+                            BooleanSupplier cancelled, InputStream stdin) throws Exception {
+        return execRaw(s.getJsch(), s.getId(), command, timeoutMs, maxBytes, cancelled, stdin);
     }
 
     private RawExec execRaw(Session jsch, String label, String command, long timeoutMs, int maxBytes,
                             BooleanSupplier cancelled) throws Exception {
+        return execRaw(jsch, label, command, timeoutMs, maxBytes, cancelled, null);
+    }
+
+    private RawExec execRaw(Session jsch, String label, String command, long timeoutMs, int maxBytes,
+                            BooleanSupplier cancelled, InputStream stdin) throws Exception {
         ChannelExec exec = (ChannelExec) jsch.openChannel("exec");
         exec.setCommand(command);
-        // 立即向远端 stdin 发 EOF：读取标准输入的命令（如无参数 cat）直接结束而不是挂起
-        exec.setInputStream(null);
+        // stdin 为 null 时立即向远端发 EOF：读取标准输入的命令（如无参数 cat）直接结束而不是挂起
+        exec.setInputStream(stdin);
         InputStream in = exec.getInputStream();
         exec.connect(5000);
         RawExec r = new RawExec();
@@ -1201,7 +1220,7 @@ public class SshSessionManager {
     /** 可取消的 exec：cancelled 变为 true 时断开通道，终止捕获并尽快返回 */
     public ExecResult execInShell(SshSession s, String command, String cwd, long timeoutMs, int maxBytes,
                                   BooleanSupplier cancelled) throws Exception {
-        return parseWrappedOutput(execRaw(s, wrapCommand(command, cwd), timeoutMs, maxBytes, cancelled));
+        return parseWrappedOutput(execRaw(s, wrapCommand(command, cwd), timeoutMs, maxBytes, cancelled, null));
     }
 
     /** 拆出命令输出（去掉标记行）、退出码与执行后的工作目录；标记缺失时用 JSch 退出码兜底 */

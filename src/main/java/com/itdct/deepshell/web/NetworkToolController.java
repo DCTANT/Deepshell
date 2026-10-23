@@ -3,9 +3,13 @@ package com.itdct.deepshell.web;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.service.NetworkToolService;
 import com.itdct.deepshell.service.NetworkTrafficService;
+import com.itdct.deepshell.service.SudoAccessService;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -17,10 +21,13 @@ public class NetworkToolController {
 
     private final NetworkToolService service;
     private final NetworkTrafficService traffic;
+    private final SudoAccessService sudoAccess;
 
-    public NetworkToolController(NetworkToolService service, NetworkTrafficService traffic) {
+    public NetworkToolController(NetworkToolService service, NetworkTrafficService traffic,
+                                 SudoAccessService sudoAccess) {
         this.service = service;
         this.traffic = traffic;
+        this.sudoAccess = sudoAccess;
     }
 
     @PostMapping("/run")
@@ -38,7 +45,32 @@ public class NetworkToolController {
             throw new IllegalArgumentException("缺少会话 ID");
         }
         return R.ok(traffic.sample(req.getSessionId().trim(),
-                Boolean.TRUE.equals(req.getReset())));
+                Boolean.TRUE.equals(req.getReset()), Boolean.TRUE.equals(req.getRoot())));
+    }
+
+    @GetMapping("/root")
+    public R<Map<String, Object>> rootStatus(@RequestParam("sessionId") String sessionId) {
+        return R.ok(sudoAccess.status(requireSession(sessionId)));
+    }
+
+    @PostMapping("/root")
+    public R<Map<String, Object>> enableRoot(@RequestBody RootReq req) {
+        if (req == null) {
+            throw new IllegalArgumentException("请求参数缺失");
+        }
+        return R.ok(sudoAccess.enable(requireSession(req.getSessionId()), req.getPassword()));
+    }
+
+    @DeleteMapping("/root")
+    public R<Map<String, Object>> disableRoot(@RequestParam("sessionId") String sessionId) {
+        return R.ok(sudoAccess.clear(requireSession(sessionId)));
+    }
+
+    private static String requireSession(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            throw new IllegalArgumentException("缺少会话 ID");
+        }
+        return sessionId.trim();
     }
 
     public static class RunReq {
@@ -83,6 +115,7 @@ public class NetworkToolController {
     public static class TrafficReq {
         private String sessionId;
         private Boolean reset;
+        private Boolean root;
 
         public String getSessionId() {
             return sessionId;
@@ -98,6 +131,35 @@ public class NetworkToolController {
 
         public void setReset(Boolean reset) {
             this.reset = reset;
+        }
+
+        public Boolean getRoot() {
+            return root;
+        }
+
+        public void setRoot(Boolean root) {
+            this.root = root;
+        }
+    }
+
+    public static class RootReq {
+        private String sessionId;
+        private String password;
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public void setSessionId(String sessionId) {
+            this.sessionId = sessionId;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
         }
     }
 }

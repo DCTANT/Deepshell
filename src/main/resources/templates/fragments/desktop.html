@@ -1109,7 +1109,7 @@
                             <button type="button" class="dsk-app-tab"
                                     :class="{ active: netTool.tab === 'test' }"
                                     @click="switchNetToolTab('test')">
-                                <i class="el-icon-share"></i> 连通性测试
+                                <i class="dsk-ico-network"></i> 连通性测试
                             </button>
                             <span class="spacer"></span>
                             <span class="dsk-app-host" v-if="desktopTab">
@@ -1145,6 +1145,21 @@
                                         </button>
                                         <el-checkbox size="mini" v-model="netTool.traffic.includeLoopback"
                                                      class="tm-traf-loop">含回环</el-checkbox>
+                                        <template v-if="netTool.root.checked">
+                                            <span v-if="netTool.root.isRoot" class="tm-traf-rootbadge"
+                                                  :title="netTrafficRootTitle">
+                                                <i class="el-icon-lock"></i> root
+                                            </span>
+                                            <button v-else type="button" class="tm-traf-root"
+                                                    :class="{ active: netTool.traffic.rootEnabled }"
+                                                    :disabled="netTool.root.loading"
+                                                    :title="netTrafficRootTitle"
+                                                    @click="toggleNetTrafficRoot">
+                                                <i :class="netTool.root.loading ? 'el-icon-loading'
+                                                    : (netTool.traffic.rootEnabled ? 'el-icon-lock' : 'el-icon-unlock')"></i>
+                                                {{ netTrafficRootText }}
+                                            </button>
+                                        </template>
                                     </div>
                                     <div class="tm-traf-summary">
                                         <span class="tm-traf-live"
@@ -1162,6 +1177,9 @@
                                         </span>
                                         <span class="tm-traf-warn" v-if="netTool.traffic.data && netTool.traffic.data.restricted">
                                             <i class="el-icon-warning-outline"></i> 非 root，仅显示有权限的进程
+                                        </span>
+                                        <span class="tm-traf-ok" v-if="netTool.traffic.data && netTool.traffic.data.root">
+                                            <i class="el-icon-circle-check"></i> root 采样，全部进程可见
                                         </span>
                                         <span class="dim" v-if="netTool.traffic.updatedAt">更新于 {{ fmtClockTime(netTool.traffic.updatedAt) }}</span>
                                     </div>

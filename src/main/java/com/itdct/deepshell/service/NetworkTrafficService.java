@@ -52,16 +52,34 @@ public class NetworkTrafficService {
     private static final int MAX_PROGRAMS = 300;
 
     private final SshSessionManager sessions;
+    private final SudoAccessService sudoAccess;
     private final Map<String, State> states = new ConcurrentHashMap<>();
 
-    public NetworkTrafficService(SshSessionManager sessions) {
+    public NetworkTrafficService(SshSessionManager sessions, SudoAccessService sudoAccess) {
         this.sessions = sessions;
+        this.sudoAccess = sudoAccess;
     }
 
     public Map<String, Object> sample(String sessionId, boolean reset) throws Exception {
+        return sample(sessionId, reset, false);
+    }
+
+    public Map<String, Object> sample(String sessionId, boolean reset, boolean root) throws Exception {
         SshSessionManager.SshSession s = sessions.get(sessionId);
         long now = System.currentTimeMillis();
-        String raw = sessions.execCapture(s, SAMPLE_SCRIPT, 9000);
+        String raw;
+        if (root) {
+            SudoAccessService.Command command = sudoAccess.wrap(sessionId, SAMPLE_SCRIPT);
+            raw = command.getPassword() == null
+                    ? sessions.execCapture(s, command.getCommand(), 9000)
+                    : sessions.execCaptureWithInput(s, command.getCommand(),
+                    command.getPassword() + "\n", 9000);
+            if (raw == null || !raw.contains("@@UID")) {
+                throw new IllegalArgumentException("root 采样失败：" + firstLine(raw));
+            }
+        } else {
+            raw = sessions.execCapture(s, SAMPLE_SCRIPT, 9000);
+        }
         Parsed parsed = parse(raw);
         State state = states.computeIfAbsent(sessionId, k -> new State());
         Map<String, Object> result;
@@ -548,5 +566,18 @@ public class NetworkTrafficService {
         } catch (Exception ignore) {
             return def;
         }
+    }
+
+    private static String firstLine(String text) {
+        if (text == null) {
+            return "sudo 执行失败，请检查当前用户权限";
+        }
+        for (String line : text.split("\r?\n")) {
+            String value = line.trim();
+            if (!value.isEmpty()) {
+                return value.length() > 200 ? value.substring(0, 200) + "…" : value;
+            }
+        }
+        return "sudo 执行失败，请检查当前用户权限";
     }
 }
