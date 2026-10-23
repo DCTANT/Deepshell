@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.itdct.deepshell.service.HostKeyCheckException;
 import com.itdct.deepshell.service.SshSessionManager;
+import com.itdct.deepshell.service.TerminalAuditService;
+import com.itdct.deepshell.service.TerminalCommandTracker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
@@ -14,6 +16,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -27,10 +31,12 @@ import java.util.UUID;
 public class SshWebSocketHandler extends TextWebSocketHandler {
 
     private final SshSessionManager sessions;
+    private final TerminalAuditService terminalAudit;
     private final ObjectMapper om = new ObjectMapper();
 
-    public SshWebSocketHandler(SshSessionManager sessions) {
+    public SshWebSocketHandler(SshSessionManager sessions, TerminalAuditService terminalAudit) {
         this.sessions = sessions;
+        this.terminalAudit = terminalAudit;
     }
 
     @Override
@@ -62,6 +68,8 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         String attachmentId = UUID.randomUUID().toString().replace("-", "");
+        ws.getAttributes().put("cmdTracker", new TerminalCommandTracker());
+        ws.getAttributes().put("clientIp", clientIp(ws));
         try {
             SshSessionManager.OpenResult opened =
                     sessions.openOrAttach(connId, cols, rows, clientKey, attachmentId);
@@ -125,7 +133,9 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             JsonNode node = om.readTree(message.getPayload());
             String type = node.path("type").asText();
             if ("data".equals(type)) {
-                s.write(node.path("data").asText("").getBytes(StandardCharsets.UTF_8));
+                String data = node.path("data").asText("");
+                s.write(data.getBytes(StandardCharsets.UTF_8));
+                auditTerminalInput(ws, s, node, data);
             } else if ("resize".equals(type)) {
                 s.resize(node.path("cols").asInt(120), node.path("rows").asInt(30));
             } else if ("close".equals(type)) {
@@ -148,6 +158,65 @@ public class SshWebSocketHandler extends TextWebSocketHandler {
             sessions.detach((String) sid,
                     attachmentId == null ? null : (String) attachmentId);
         }
+        ws.getAttributes().remove("cmdTracker");
+    }
+
+    /**
+     * 手敲命令审计：前端对打字输入会附带 xterm 当前行（可正确处理历史命令 / Tab 补全），
+     * 命令底栏 / 快捷命令等整段发送则由后端按行解析；密码提示等敏感输入由前端传 auditSkip。
+     */
+    private void auditTerminalInput(WebSocketSession ws, SshSessionManager.SshSession s,
+                                    JsonNode node, String data) {
+        Object raw = ws.getAttributes().get("cmdTracker");
+        if (!(raw instanceof TerminalCommandTracker)) {
+            return;
+        }
+        TerminalCommandTracker tracker = (TerminalCommandTracker) raw;
+        boolean auditEnabled = !node.has("audit") || node.path("audit").asBoolean(true);
+        if (!auditEnabled) {
+            tracker.reset();
+            return;
+        }
+        String clientIp = String.valueOf(ws.getAttributes().get("clientIp"));
+        boolean typed = node.path("auditTyped").asBoolean(false);
+        if (typed) {
+            if (node.path("auditSkip").asBoolean(false)) {
+                tracker.reset();
+                return;
+            }
+            java.util.List<String> commands = tracker.feed(data);
+            String line = node.has("auditLine") ? node.path("auditLine").asText("").trim() : "";
+            if (!line.isEmpty()) {
+                tracker.reset();
+                terminalAudit.recordCommand(s.getName(), s.getConnectionId(), line, clientIp, false);
+            } else {
+                for (String command : commands) {
+                    terminalAudit.recordCommand(s.getName(), s.getConnectionId(), command, clientIp, false);
+                }
+            }
+            return;
+        }
+        if (node.path("auditSkip").asBoolean(false)) {
+            tracker.reset();
+            return;
+        }
+        for (String command : tracker.feed(data)) {
+            terminalAudit.recordCommand(s.getName(), s.getConnectionId(), command, clientIp, false);
+        }
+    }
+
+    private static String clientIp(WebSocketSession ws) {
+        try {
+            if (ws.getRemoteAddress() instanceof InetSocketAddress) {
+                InetAddress address = ((InetSocketAddress) ws.getRemoteAddress()).getAddress();
+                if (address != null) {
+                    return address.getHostAddress();
+                }
+            }
+        } catch (Exception ignore) {
+            // 回退到地址字符串
+        }
+        return String.valueOf(ws.getRemoteAddress());
     }
 
     private void sendBinary(WebSocketSession ws, byte[] data) {

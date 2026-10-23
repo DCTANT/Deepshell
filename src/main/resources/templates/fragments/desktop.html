@@ -124,7 +124,8 @@
                 <template v-if="w.type === 'terminal'">
                     <div class="dsk-terminal-body" v-if="w.termTab">
                         <div class="dsk-term" :ref="'desk-term-' + w.id"></div>
-                        <term-cmd-bar :tab="w.termTab" context="window"></term-cmd-bar>
+                        <term-cmd-bar :tab="w.termTab" context="window"
+                                      :local-terminal="!!w.termTab.localShell"></term-cmd-bar>
                     </div>
                 </template>
                 <template v-else-if="w.type === 'transfer'">
@@ -1117,154 +1118,167 @@
                         </div>
 
                         <template v-if="netTool.tab === 'traffic'">
-                            <div class="dsk-traf">
-                                <div class="dsk-traf-top">
-                                    <div class="dsk-traf-stats">
-                                        <div class="dsk-traf-stat down">
-                                            <span>实时下行</span>
-                                            <b>{{ fmtRate(netTrafficSystem.rxRate) }}</b>
-                                            <small>本次累计 {{ fmtSize(netTrafficSystem.rxTotal) }}</small>
+                            <div class="dsk-tm dsk-traf-tm">
+                                <div class="tm-page tm-traf-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>实时流量</h2>
+                                            <p class="tm-page-sub">按程序查看服务器实时上下行速率 · 右键程序行查看进程详情</p>
                                         </div>
-                                        <div class="dsk-traf-stat up">
-                                            <span>实时上行</span>
-                                            <b>{{ fmtRate(netTrafficSystem.txRate) }}</b>
-                                            <small>本次累计 {{ fmtSize(netTrafficSystem.txTotal) }}</small>
-                                        </div>
-                                        <div class="dsk-traf-stat muted">
-                                            <span>未归属</span>
-                                            <b>{{ fmtRate(netTrafficUnattributed.rxRate + netTrafficUnattributed.txRate) }}</b>
-                                            <small>UDP / 短连接 / 权限外</small>
-                                        </div>
-                                        <div class="dsk-traf-stat">
-                                            <span>活跃连接</span>
-                                            <b>{{ netTool.traffic.data ? netTool.traffic.data.connectionCount : '--' }}</b>
-                                            <small>{{ netTool.traffic.data ? netTool.traffic.data.programCount : 0 }} 个程序</small>
-                                        </div>
-                                    </div>
-                                    <div class="dsk-traf-tools">
+                                        <span class="spacer"></span>
                                         <el-input size="mini" v-model="netTool.traffic.keyword"
                                                   clearable prefix-icon="el-icon-search"
-                                                  class="dsk-traf-search"
-                                                  placeholder="筛选程序 / PID"></el-input>
+                                                  class="tm-search tm-traf-search"
+                                                  placeholder="筛选程序 / PID / 用户"></el-input>
                                         <el-select size="mini" v-model="netTool.traffic.intervalMs"
-                                                   class="dsk-traf-interval"
-                                                   @change="restartNetTrafficTimer">
+                                                   class="tm-traf-int" @change="restartNetTrafficTimer">
                                             <el-option :value="1000" label="1 秒"></el-option>
                                             <el-option :value="2000" label="2 秒"></el-option>
                                             <el-option :value="3000" label="3 秒"></el-option>
                                             <el-option :value="5000" label="5 秒"></el-option>
                                         </el-select>
-                                        <button type="button" class="dsk-traf-btn"
-                                                :class="{ on: netTool.traffic.paused }"
+                                        <button type="button" class="tm-btn"
+                                                :class="{ active: netTool.traffic.paused }"
                                                 @click="toggleNetTrafficPause">
                                             <i :class="netTool.traffic.paused ? 'el-icon-video-play' : 'el-icon-video-pause'"></i>
                                             {{ netTool.traffic.paused ? '继续' : '暂停' }}
                                         </button>
                                         <el-checkbox size="mini" v-model="netTool.traffic.includeLoopback"
-                                                     class="dsk-traf-loop">含回环</el-checkbox>
+                                                     class="tm-traf-loop">含回环</el-checkbox>
                                     </div>
-                                </div>
-                                <div class="dsk-traf-status">
-                                    <span class="dsk-traf-live"
-                                          :class="{ off: netTool.traffic.paused || !netTool.traffic.data }">
-                                        <i></i>{{ netTool.traffic.paused ? '已暂停'
-                                            : (netTool.traffic.data ? '实时采样' : '连接中') }}
-                                    </span>
-                                    <span v-if="netTool.traffic.data">每 {{ netToolTrafficIntervalText }} 采样</span>
-                                    <span v-if="netTool.traffic.updatedAt">更新于 {{ fmtClockTime(netTool.traffic.updatedAt) }}</span>
-                                    <span v-if="netTool.traffic.data && netTool.traffic.data.restricted"
-                                          class="dsk-traf-warn">
-                                        <i class="el-icon-warning-outline"></i> 非 root，只能看到当前用户有权限的进程
-                                    </span>
-                                    <span v-if="netTool.traffic.data && netTool.traffic.data.self && netTool.traffic.data.self.excluded"
-                                          class="dsk-traf-muted">已排除本工具 SSH 会话</span>
-                                </div>
-                                <div class="dsk-app-error" v-if="netTool.traffic.error">{{ netTool.traffic.error }}</div>
-                                <div class="dsk-traf-panel">
-                                    <div class="dsk-traf-grid dsk-traf-tablehead">
-                                        <button type="button" class="dsk-traf-sort left"
-                                                @click="sortNetTraffic('name')">
-                                            程序 <i :class="netTrafficSortIcon('name')"></i>
-                                        </button>
-                                        <button type="button" class="dsk-traf-sort"
-                                                @click="sortNetTraffic('rx')">
-                                            下行 <i :class="netTrafficSortIcon('rx')"></i>
-                                        </button>
-                                        <button type="button" class="dsk-traf-sort"
-                                                @click="sortNetTraffic('tx')">
-                                            上行 <i :class="netTrafficSortIcon('tx')"></i>
-                                        </button>
-                                        <button type="button" class="dsk-traf-sort"
-                                                @click="sortNetTraffic('total')">
-                                            本次累计 <i :class="netTrafficSortIcon('total')"></i>
-                                        </button>
-                                        <button type="button" class="dsk-traf-sort"
-                                                @click="sortNetTraffic('conns')">
-                                            连接 <i :class="netTrafficSortIcon('conns')"></i>
-                                        </button>
+                                    <div class="tm-traf-summary">
+                                        <span class="tm-traf-live"
+                                              :class="{ off: netTool.traffic.paused || !netTool.traffic.data }">
+                                            <i></i>{{ netTool.traffic.paused ? '已暂停'
+                                                : (netTool.traffic.data ? '实时采样' : '连接中') }}
+                                        </span>
+                                        <span>下行 <b>{{ fmtRate(netTrafficSystem.rxRate) }}</b></span>
+                                        <span>上行 <b>{{ fmtRate(netTrafficSystem.txRate) }}</b></span>
+                                        <span class="dim">累计 ↓ {{ fmtSize(netTrafficSystem.rxTotal) }} · ↑ {{ fmtSize(netTrafficSystem.txTotal) }}</span>
+                                        <span class="dim">活跃连接 {{ netTool.traffic.data ? netTool.traffic.data.connectionCount : '--' }}
+                                            · {{ netTool.traffic.data ? netTool.traffic.data.programCount : 0 }} 个程序</span>
+                                        <span class="tm-traf-warn" v-if="netTrafficUnattributed.rxRate || netTrafficUnattributed.txRate">
+                                            <i class="el-icon-warning-outline"></i> 未归属 {{ fmtRate(netTrafficUnattributed.rxRate + netTrafficUnattributed.txRate) }}
+                                        </span>
+                                        <span class="tm-traf-warn" v-if="netTool.traffic.data && netTool.traffic.data.restricted">
+                                            <i class="el-icon-warning-outline"></i> 非 root，仅显示有权限的进程
+                                        </span>
+                                        <span class="dim" v-if="netTool.traffic.updatedAt">更新于 {{ fmtClockTime(netTool.traffic.updatedAt) }}</span>
                                     </div>
-                                    <div class="dsk-traf-scroll">
-                                        <div v-for="row in netTrafficRows" :key="'nt' + row.pid"
-                                             class="dsk-traf-grid dsk-traf-row"
-                                             :class="{ hottest: row.pid === netTrafficTopPid }">
-                                            <div class="dsk-traf-prog">
-                                                <span class="dsk-traf-ico" :class="{ loop: !row.extConns }">
-                                                    <i class="el-icon-monitor"></i>
-                                                </span>
-                                                <span class="dsk-traf-prog-main">
-                                                    <span class="dsk-traf-name-row">
-                                                        <b>{{ row.name || '未知进程' }}</b>
-                                                        <span v-if="row.pid === netTrafficTopPid"
-                                                              class="dsk-traf-hottest">最高</span>
+                                    <div class="tm-inline-error" v-if="netTool.traffic.error">
+                                        <i class="el-icon-warning-outline"></i>
+                                        <span>{{ netTool.traffic.error }}</span>
+                                    </div>
+                                    <div class="tm-table-box tm-traf-box">
+                                        <div class="tm-proc-head tm-traf-grid">
+                                            <span class="tm-name-cell tm-th-sort" @click="sortNetTraffic('name')">
+                                                程序<i :class="netTrafficSortIcon('name')"></i>
+                                            </span>
+                                            <span>PID</span>
+                                            <span>用户</span>
+                                            <span class="tm-th-sort tm-num" @click="sortNetTraffic('rx')">
+                                                下行<i :class="netTrafficSortIcon('rx')"></i>
+                                            </span>
+                                            <span class="tm-th-sort tm-num" @click="sortNetTraffic('tx')">
+                                                上行<i :class="netTrafficSortIcon('tx')"></i>
+                                            </span>
+                                            <span class="tm-th-sort tm-num" @click="sortNetTraffic('total')">
+                                                本次累计<i :class="netTrafficSortIcon('total')"></i>
+                                            </span>
+                                            <span class="tm-th-sort tm-num" @click="sortNetTraffic('conns')">
+                                                连接<i :class="netTrafficSortIcon('conns')"></i>
+                                            </span>
+                                        </div>
+                                        <div class="tm-traf-scroll">
+                                            <div v-for="row in netTrafficRows" :key="'nt' + row.pid"
+                                                 class="tm-proc-row tm-traf-grid"
+                                                 :class="{ hottest: row.pid === netTrafficTopPid,
+                                                           selected: row.pid === netTool.traffic.selectedPid }"
+                                                 @click="netTool.traffic.selectedPid = row.pid"
+                                                 @dblclick="openNetTrafficProcessDetail(row)"
+                                                 @contextmenu.prevent.stop="openNetTrafficProcessDetail(row)">
+                                                <span class="tm-name-cell">
+                                                    <span class="tm-appico tm-traf-ico" :class="{ loop: !row.extConns }">
+                                                        <i class="el-icon-monitor"></i>
                                                     </span>
-                                                    <small>PID {{ row.pid }}<template v-if="row.user"> · {{ row.user }}</template></small>
+                                                    <span class="tm-pname" :title="row.name">{{ row.name || '未知进程' }}</span>
+                                                    <span v-if="row.pid === netTrafficTopPid" class="tm-traf-hot">最高</span>
+                                                </span>
+                                                <span class="tm-traf-mono">{{ row.pid }}</span>
+                                                <span class="tm-traf-dim">{{ row.user || '—' }}</span>
+                                                <span class="tm-num tm-traf-down">{{ fmtRate(row.rx) }}</span>
+                                                <span class="tm-num tm-traf-up">{{ fmtRate(row.tx) }}</span>
+                                                <span class="tm-num">{{ fmtSize(row.total) }}</span>
+                                                <span class="tm-num">
+                                                    {{ row.conns }}<small v-if="row.loopbackConns">（回环 {{ row.loopbackConns }}）</small>
                                                 </span>
                                             </div>
-                                            <div class="dsk-traf-rate">
-                                                <b class="down">{{ fmtRate(row.rx) }}</b>
-                                                <span class="dsk-traf-bar">
-                                                    <i class="down" :style="{ width: netTrafficBarWidth(row, 'rx') }"></i>
-                                                </span>
-                                            </div>
-                                            <div class="dsk-traf-rate">
-                                                <b class="up">{{ fmtRate(row.tx) }}</b>
-                                                <span class="dsk-traf-bar">
-                                                    <i class="up" :style="{ width: netTrafficBarWidth(row, 'tx') }"></i>
-                                                </span>
-                                            </div>
-                                            <div class="dsk-traf-total">
-                                                <b>{{ fmtSize(row.total) }}</b>
-                                                <small>↓ {{ fmtSize(row.totalRx) }} · ↑ {{ fmtSize(row.totalTx) }}</small>
-                                            </div>
-                                            <div class="dsk-traf-conns">
-                                                <b>{{ row.conns }}</b>
-                                                <small>{{ row.loopbackConns ? '回环 ' + row.loopbackConns : '连接' }}</small>
+                                            <div v-if="!netTrafficRows.length" class="tm-empty">
+                                                <i :class="netTool.traffic.data ? 'el-icon-data-line' : 'el-icon-loading'"></i>
+                                                <p>{{ netTool.traffic.data
+                                                    ? (netTool.traffic.keyword ? '没有匹配的程序' : '当前没有可归属的网络连接')
+                                                    : '正在读取服务器套接字…' }}</p>
                                             </div>
                                         </div>
-                                        <div v-if="!netTrafficRows.length" class="dsk-app-empty">
-                                            <i :class="netTool.traffic.data ? 'el-icon-data-line' : 'el-icon-loading'"></i>
-                                            {{ netTool.traffic.data
-                                                ? (netTool.traffic.keyword ? '没有匹配的程序' : '当前没有可归属的网络连接')
-                                                : '正在读取服务器套接字…' }}
+                                        <div class="tm-proc-foot">
+                                            <span class="tm-foot-hint dim">网卡 {{ netTrafficIfaceText }}</span>
+                                            <span class="tm-foot-hint dim" v-if="netTool.traffic.data && netTool.traffic.data.self && netTool.traffic.data.self.excluded">
+                                                本工具 SSH ↓ {{ fmtRate(netTool.traffic.data.self.rxRate) }} · ↑ {{ fmtRate(netTool.traffic.data.self.txRate) }}
+                                            </span>
+                                            <span class="spacer"></span>
+                                            <span class="tm-foot-hint dim">每 {{ netToolTrafficIntervalText }} 采样</span>
+                                            <span class="tm-foot-hint">{{ netTrafficRows.length }} / {{ netTool.traffic.data ? netTool.traffic.data.programCount : 0 }} 个程序</span>
                                         </div>
                                     </div>
+                                    <div class="tm-page-note" :title="netTool.traffic.data ? netTool.traffic.data.note : ''">
+                                        {{ netTool.traffic.data ? netTool.traffic.data.note : '正在等待服务器采样…' }}
+                                    </div>
                                 </div>
-                                <div class="dsk-traf-foot">
-                                    <span>网卡 {{ netTrafficIfaceText }}</span>
-                                    <span>系统总流量 ↓ {{ fmtRate(netTrafficSystem.rxRate) }} · ↑ {{ fmtRate(netTrafficSystem.txRate) }}</span>
-                                    <span class="dsk-traf-warn" v-if="netTrafficUnattributed.rxRate || netTrafficUnattributed.txRate">
-                                        未归属 ↓ {{ fmtRate(netTrafficUnattributed.rxRate) }} · ↑ {{ fmtRate(netTrafficUnattributed.txRate) }}
-                                    </span>
-                                    <span v-if="netTool.traffic.data && netTool.traffic.data.self && netTool.traffic.data.self.excluded"
-                                          class="dsk-traf-muted">
-                                        本工具 SSH ↓ {{ fmtRate(netTool.traffic.data.self.rxRate) }} · ↑ {{ fmtRate(netTool.traffic.data.self.txRate) }}
-                                    </span>
-                                    <span class="spacer"></span>
-                                    <span>{{ netTrafficRows.length }} / {{ netTool.traffic.data ? netTool.traffic.data.programCount : 0 }} 个程序</span>
-                                </div>
-                                <div class="dsk-traf-note"
-                                     :title="netTool.traffic.data ? netTool.traffic.data.note : ''">
-                                    {{ netTool.traffic.data ? netTool.traffic.data.note : '正在等待服务器采样…' }}
+
+                                <!-- 进程详情：复用任务管理器的详情浮层 -->
+                                <div class="tm-overlay" v-if="taskmgr.detail.overlayVisible"
+                                     @click.self="closeTaskmgrProcessDetail">
+                                    <div class="tm-overlay-card">
+                                        <div class="tm-overlay-head">
+                                            <b>进程详情</b>
+                                            <span class="tm-overlay-pid" v-if="taskmgr.detail.overlayRow">
+                                                PID {{ taskmgr.detail.overlayRow.pid }}
+                                            </span>
+                                            <span class="spacer"></span>
+                                            <button type="button" class="tm-icon-btn" @click="closeTaskmgrProcessDetail">
+                                                <i class="el-icon-close"></i>
+                                            </button>
+                                        </div>
+                                        <div class="tm-overlay-body" v-if="taskmgr.detail.overlayRow">
+                                            <div class="tm-kv-grid">
+                                                <div class="tm-kv"><span>名称</span><b>{{ taskmgr.detail.overlayRow.comm || '—' }}</b></div>
+                                                <div class="tm-kv"><span>PID</span><b>{{ taskmgr.detail.overlayRow.pid }}</b></div>
+                                                <div class="tm-kv"><span>父进程 PID</span><b>{{ taskmgr.detail.overlayRow.ppid || '—' }}</b></div>
+                                                <div class="tm-kv"><span>用户名</span><b>{{ taskmgr.detail.overlayRow.user || '—' }}</b></div>
+                                                <div class="tm-kv"><span>状态</span><b>{{ statText(taskmgr.detail.overlayRow.state) || '—' }}</b></div>
+                                                <div class="tm-kv"><span>CPU</span><b>{{ fmtProcCpu(taskmgr.detail.overlayRow) }}</b></div>
+                                                <div class="tm-kv"><span>内存</span><b>{{ fmtMb(taskmgr.detail.overlayRow.rssMb) }}</b></div>
+                                                <div class="tm-kv"><span>运行时长</span><b>{{ fmtUptime(taskmgr.detail.overlayRow.elapsedSecs) }}</b></div>
+                                            </div>
+                                            <div class="tm-cmd-head">
+                                                <span>命令行</span>
+                                                <i v-if="taskmgr.detail.overlayLoading" class="el-icon-loading"></i>
+                                                <span class="spacer"></span>
+                                                <button type="button" class="tm-btn small" @click="copyTaskmgrCmd">
+                                                    <i class="el-icon-document-copy"></i>复制
+                                                </button>
+                                            </div>
+                                            <pre class="tm-cmd">{{ taskmgr.detail.overlayCmd || '（无命令行信息）' }}</pre>
+                                        </div>
+                                        <div class="tm-overlay-foot">
+                                            <button type="button" class="tm-btn" @click="closeTaskmgrProcessDetail">关闭</button>
+                                            <button type="button" class="tm-btn danger"
+                                                    :disabled="!taskmgr.detail.overlayRow"
+                                                    @click="killTaskmgrProcess(false, taskmgr.detail.overlayRow)">
+                                                结束任务
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </template>
@@ -1662,12 +1676,13 @@
                     <i v-if="desktopTab && chatAnyBusy(desktopTab)" class="dsk-task-busy"
                        title="AI 正在执行任务"></i>
                 </button>
-                <button v-if="!desktopIsLocal" class="dsk-task-app dsk-terminal-app"
-                        title="新建一个终端窗口" @click.stop="openDesktopTerminalWindow()">
+                <button class="dsk-task-app dsk-terminal-app"
+                        :title="desktopIsLocal ? '打开本机 Shell 终端' : '新建一个终端窗口'"
+                        @click.stop="openDesktopTerminalWindow()">
                     <img v-if="desktopAppImageByAction('terminal')" :src="desktopAppImageByAction('terminal')"
                          class="dsk-task-upload-icon" alt="">
                     <i v-else :class="desktopAppIconByAction('terminal', 'el-icon-monitor')"></i>
-                    <span class="dsk-task-label">新建终端</span>
+                    <span class="dsk-task-label">{{ desktopIsLocal ? '本地终端' : '新建终端' }}</span>
                 </button>
                 <span class="dsk-taskbar-sep"></span>
                 <button v-for="w in desktopTaskWindows" :key="'tw' + w.id"
@@ -1873,7 +1888,7 @@
                         </button>
                     </div>
                     <div class="dsk-start-local-note" v-if="desktopIsLocal">
-                        <i class="el-icon-info"></i> 本地桌面不需要服务器：文件保存在 DeepShell 数据目录，终端、AI 终端、任务管理器等服务器功能已隐藏
+                        <i class="el-icon-info"></i> 本地桌面不需要服务器：文件保存在 DeepShell 数据目录，「终端」直接打开本机 Shell；AI 终端、任务管理器等服务器功能已隐藏
                     </div>
                     <div class="dsk-start-tip">
                         <i class="el-icon-info"></i> 输入关键字搜索应用、连接、文件与快捷操作，回车打开第一项；Ctrl+Shift+K 可随时呼出

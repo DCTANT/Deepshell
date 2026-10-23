@@ -1291,7 +1291,7 @@ function clearReconnectTimer(tab) {
 
 /* WebSocket 非主动关闭时按退避间隔自动重连；服务端保留会话时会直接附着并回放输出 */
 function scheduleReconnect(app, tab) {
-    if (!tab || tab.explicitClose || tab.serverClosed || tab.hostKeyPending) {
+    if (!tab || tab.localShell || tab.explicitClose || tab.serverClosed || tab.hostKeyPending) {
         return;
     }
     clearReconnectTimer(tab);
@@ -1958,7 +1958,8 @@ Vue.component('disk-analyzer', {
 Vue.component('term-cmd-bar', {
     props: {
         tab: { type: Object, required: true },
-        context: { type: String, default: 'workbench' }
+        context: { type: String, default: 'workbench' },
+        localTerminal: { type: Boolean, default: false }
     },
     template: '#term-cmd-bar-tpl',
     data: function () {
@@ -3890,6 +3891,10 @@ new Vue({
     data: {
         tabs: [],
         activeKey: '',
+        /* 终端分屏：splitMainKey 固定左侧/上方，splitKey 固定右侧/下方，activeKey 表示当前焦点 */
+        splitMainKey: '',
+        splitKey: '',
+        splitDir: '',
         connections: [],
         folders: [],
         snippets: [],
@@ -3933,7 +3938,7 @@ new Vue({
               category: '效率工具', desc: '新建、打开和编辑远程服务器上的文本文件' },
             { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
               icon: 'el-icon-monitor', color: '#22a06b',
-              category: '终端与连接', desc: '在当前桌面连接上打开新的 SSH 终端窗口' },
+              category: '终端与连接', desc: '打开新的终端窗口（本地桌面为当前机器的本地 Shell）' },
             { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
               icon: 'el-icon-s-promotion', color: '#0ea5a4',
               category: '文件与存储', desc: '查看所有会话的上传、下载任务与进度' },
@@ -3997,7 +4002,7 @@ new Vue({
         tmStartupApps: [
             { id: 'ai', label: 'AI 终端', desc: '进入桌面时自动打开 AI 对话窗口',
               impact: '中', impactLevel: 'mid', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
-            { id: 'terminal', label: '终端', desc: '进入桌面时自动打开一个 SSH 终端窗口',
+            { id: 'terminal', label: '终端', desc: '进入桌面时自动打开一个终端窗口（本地桌面为本地 Shell）',
               impact: '高', impactLevel: 'high', icon: 'el-icon-monitor', color: '#22a06b' },
             { id: 'transfers', label: '传输中心', desc: '进入桌面时自动打开传输中心',
               impact: '低', impactLevel: 'low', icon: 'el-icon-s-promotion', color: '#0ea5a4' },
@@ -4156,6 +4161,7 @@ new Vue({
                 keyword: '',
                 sortBy: 'rate',
                 sortDir: 'desc',
+                selectedPid: 0,
                 updatedAt: 0
             }
         },
@@ -4331,6 +4337,7 @@ new Vue({
             ['LOGIN_FAILURE', '登录失败'],
             ['LOGOUT', '退出登录'],
             ['AI_COMMAND', 'AI 命令'],
+            ['TERMINAL_COMMAND', '终端命令'],
             ['AI_CONTEXT_COMPACT', 'AI 上下文压缩'],
             ['FILE_UPLOAD', '上传'],
             ['FILE_DOWNLOAD', '下载'],
@@ -5929,6 +5936,11 @@ new Vue({
         /* ---------- 标签与会话 ---------- */
         openTab: function (connId, clientKey, autoAfterConnect, forceDesktop) {
             var self = this;
+            if (!this._creatingSplitTab && this.splitKey) {
+                this.splitMainKey = '';
+                this.splitKey = '';
+                this.splitDir = '';
+            }
             // 只有本次启动的首个连接才按设置自动进入桌面；强制桌面（新标签打开）不受此限制
             var firstConnect = consumeFirstConnect();
             var conn = this.connections.find(function (c) { return c.id === connId; });
@@ -8178,7 +8190,7 @@ new Vue({
             if (!this.desktop.local) {
                 return false;
             }
-            return ['ai', 'terminal', 'taskmgr', 'services', 'nettool', 'batchcmd',
+            return ['ai', 'taskmgr', 'services', 'nettool', 'batchcmd',
                 'dirs', 'cmd', 'disk', 'trash', 'sysinfo', 'newTerminal'].indexOf(id) >= 0;
         },
         resetDesktopShell: function (t) {
@@ -8439,6 +8451,9 @@ new Vue({
                 var tab = w.termTab;
                 if (!tab) {
                     return '';
+                }
+                if (tab.localShell) {
+                    return '本地 Shell · ' + this.statusText(tab);
                 }
                 var addr = tab.host ? (tab.host + ':' + (tab.port || 22)) : '';
                 return '终端 · ' + (addr ? addr + ' · ' : '') + this.statusText(tab);
@@ -9117,6 +9132,7 @@ new Vue({
             if (!this.desktopServerReady()) {
                 return null;
             }
+            this.closeTaskmgrProcessDetail();
             var t = this.desktopTab;
             if (!t || !t.sessionId) {
                 ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
@@ -9155,6 +9171,7 @@ new Vue({
             if (tab === 'traffic') {
                 this.startNetTraffic(!this.netTool.traffic.data);
             } else {
+                this.closeTaskmgrProcessDetail();
                 this.stopNetTraffic();
             }
         },
@@ -9259,6 +9276,60 @@ new Vue({
                 return '0%';
             }
             return Math.max(3, Math.round(row[key] * 100 / max)) + '%';
+        },
+        /** 实时流量右键：复用任务管理器的进程详情浮层，并异步补全 CPU / 内存等字段。 */
+        openNetTrafficProcessDetail: function (row) {
+            if (!row) {
+                return;
+            }
+            var t = this.desktopTab;
+            if (!t || !t.sessionId) {
+                ELEMENT.Message.warning('当前会话未就绪，无法读取进程详情');
+                return;
+            }
+            this.netTool.traffic.selectedPid = row.pid;
+            var proc = {
+                pid: row.pid,
+                ppid: 0,
+                user: row.user || '',
+                comm: row.name || '',
+                args: '',
+                state: 'S',
+                cpu: null,
+                cpuAvg: null,
+                memPct: null,
+                rssMb: 0,
+                elapsedSecs: -1
+            };
+            this.openTaskmgrProcessDetail(proc);
+            var self = this;
+            http.get('/api/process/list', {
+                params: { sessionId: t.sessionId },
+                silent: true
+            }).then(function (list) {
+                if (!self.taskmgr.detail.overlayVisible
+                        || self.taskmgr.detail.overlayRow !== proc) {
+                    return;
+                }
+                var full = null;
+                (list || []).some(function (p) {
+                    if (p && p.pid === row.pid) {
+                        full = p;
+                        return true;
+                    }
+                    return false;
+                });
+                if (!full) {
+                    return;
+                }
+                Object.keys(full).forEach(function (k) {
+                    if (full[k] !== null && full[k] !== undefined) {
+                        self.$set(proc, k, full[k]);
+                    }
+                });
+            }).catch(function () {
+                // 保留 PID / 名称 / 用户与命令行详情
+            });
         },
         fmtClockTime: function (ts) {
             if (!ts) {
@@ -9397,6 +9468,9 @@ new Vue({
             if (!this.desktop.visible) {
                 return null;
             }
+            if (this.desktop.local) {
+                return this.openLocalShellWindow();
+            }
             if (!this.desktopServerReady()) {
                 return null;
             }
@@ -9417,6 +9491,36 @@ new Vue({
             tab.sftpHome = src.sftpHome || null;
             tab.sftpPath = src.sftpPath || '';
             tab.termCwd = src.termCwd || null;
+            w.termTab = tab;
+            var self = this;
+            this.$nextTick(function () {
+                var ref = self.$refs['desk-term-' + w.id];
+                var el = Array.isArray(ref) ? ref[0] : ref;
+                self.initTerminal(tab, el);
+                if (self.$refs.desktopRoot) {
+                    self.$refs.desktopRoot.focus();
+                }
+            });
+            return w;
+        },
+        /** 本地桌面：为当前机器开一个本地 Shell 窗口（不经过 SSH） */
+        openLocalShellWindow: function () {
+            if (!this.desktop.visible || !this.desktop.local) {
+                return null;
+            }
+            var w = this.addDesktopWindow('terminal');
+            var tab = createTerminalState(null, null, newSessionKey());
+            tab.desktopOnly = true;
+            tab.localShell = true;
+            tab.localPty = false;
+            tab.windowId = w.id;
+            tab.title = '本地终端';
+            tab.host = '';
+            tab.port = 0;
+            tab.sftpHome = null;
+            tab.sftpPath = '';
+            tab.termCwd = null;
+            tab.status = 'connecting';
             w.termTab = tab;
             var self = this;
             this.$nextTick(function () {
@@ -9638,6 +9742,9 @@ new Vue({
             }
             if (w.type === 'terminal') {
                 this.closeDesktopTerminal(w);
+            }
+            if (w.type === 'nettool') {
+                this.closeTaskmgrProcessDetail();
             }
             if (this.desktop.taskMenu.visible && this.desktop.taskMenu.winId === w.id) {
                 this.desktop.taskMenu.visible = false;
@@ -18081,12 +18188,49 @@ new Vue({
             }
 
             term.onData(function (data) {
+                if (tab.localShell && tab.localLineMode) {
+                    self.handleLocalLineInput(tab, term, data);
+                    return;
+                }
+                var newlineCount = (String(data).match(/\r\n|\r|\n/g) || []).length;
+                var audit = self.terminalAuditCommand(tab);
+                var auditTyped = false;
+                var auditSkip = false;
+                var auditLine = '';
+                if (newlineCount === 0) {
+                    auditTyped = true;
+                    auditSkip = !(audit && audit.prompt);
+                } else if (newlineCount === 1) {
+                    auditTyped = true;
+                    if (audit && audit.prompt) {
+                        var rawCommand = String(data)
+                            .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+                            .replace(/[\r\n]+$/, '')
+                            .replace(/[\x00-\x1f\x7f]/g, '')
+                            .trim();
+                        auditLine = audit.command || rawCommand;
+                    } else {
+                        auditSkip = true;
+                    }
+                } else if (!audit || !audit.prompt) {
+                    auditTyped = true;
+                    auditSkip = true;
+                }
                 var sendData = function () {
                     if (tab.ws && tab.ws.readyState === 1) {
-                        tab.ws.send(JSON.stringify({ type: 'data', data: data }));
+                        var frame = { type: 'data', data: data };
+                        if (auditTyped) {
+                            frame.auditTyped = true;
+                            if (auditSkip) {
+                                frame.auditSkip = true;
+                            } else if (newlineCount === 1 && auditLine) {
+                                frame.auditLine = auditLine;
+                            }
+                        }
+                        tab.ws.send(JSON.stringify(frame));
                     }
                 };
-                if (data.indexOf('\r') < 0 && data.indexOf('\n') < 0) {
+                if (newlineCount === 0) {
                     self.trackTerminalDangerInput(tab, data);
                     sendData();
                     return;
@@ -18139,9 +18283,16 @@ new Vue({
             term.focus();
 
             var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-            var url = proto + location.host + '/ws/ssh?connId=' + tab.connId
-                + '&cols=' + (term.cols || 120) + '&rows=' + (term.rows || 30)
-                + '&sid=' + encodeURIComponent(tab.clientKey || '');
+            var url;
+            if (tab.localShell) {
+                url = proto + location.host + '/ws/local-shell?cols=' + (term.cols || 120)
+                    + '&rows=' + (term.rows || 30)
+                    + '&sid=' + encodeURIComponent(tab.clientKey || '');
+            } else {
+                url = proto + location.host + '/ws/ssh?connId=' + tab.connId
+                    + '&cols=' + (term.cols || 120) + '&rows=' + (term.rows || 30)
+                    + '&sid=' + encodeURIComponent(tab.clientKey || '');
+            }
             var ws = new WebSocket(url);
             ws.binaryType = 'arraybuffer';
             tab.ws = ws;
@@ -18151,7 +18302,13 @@ new Vue({
                     var msg;
                     try { msg = JSON.parse(ev.data); } catch (e) { return; }
                     if (msg.type === 'open') {
-                        tab.sessionId = msg.sessionId;
+                        tab.sessionId = tab.localShell ? null : msg.sessionId;
+                        tab.localPty = !!msg.pty;
+                        if (tab.localShell) {
+                            tab.localLineMode = !msg.pty;
+                            tab._localLine = '';
+                            tab._localPrompt = false;
+                        }
                         tab.status = 'open';
                         tab.serverClosed = false;
                         tab.explicitClose = false;
@@ -18168,11 +18325,12 @@ new Vue({
                         if (msg.notice) {
                             term.write('\r\n\x1b[33m● ' + msg.notice + '\x1b[0m\r\n');
                         }
-                        if (tab.desktopOnly && tab.initialDir && !msg.reattached) {
+                        if (!tab.localShell && tab.desktopOnly && tab.initialDir && !msg.reattached) {
                             try {
                                 ws.send(JSON.stringify({
                                     type: 'data',
-                                    data: 'cd ' + quoteShellPath(tab.initialDir) + '\r'
+                                    data: 'cd ' + quoteShellPath(tab.initialDir) + '\r',
+                                    audit: false
                                 }));
                             } catch (e) { /* ignore */ }
                         }
@@ -18222,6 +18380,11 @@ new Vue({
                 }
             };
             ws.onclose = function () {
+                if (tab.localShell) {
+                    tab.status = tab.explicitClose ? 'closed'
+                        : (tab.status === 'error' ? 'error' : 'closed');
+                    return;
+                }
                 if (tab.explicitClose || tab.serverClosed) {
                     tab.status = tab.status === 'error' ? 'error' : 'closed';
                     return;
@@ -18241,6 +18404,11 @@ new Vue({
         },
         activate: function (key) {
             var self = this;
+            if (this.splitKey && key !== this.splitMainKey && key !== this.splitKey) {
+                this.splitMainKey = '';
+                this.splitKey = '';
+                this.splitDir = '';
+            }
             this.activeKey = key;
             if (this.activeTab && this.activeTab.sftpSelected && this.activeTab.sftpSelected.length) {
                 this.activeTab.sftpSelected = [];
@@ -18253,7 +18421,9 @@ new Vue({
             saveOpenTabs(this);
             this.$nextTick(function () {
                 var t = self.activeTab;
-                if (t && t.fit) {
+                if (self.splitKey) {
+                    self.fitSplitPanes();
+                } else if (t && t.fit) {
                     try { t.fit.fit(); } catch (e) { /* ignore */ }
                 }
                 if (t && t.term) {
@@ -18265,9 +18435,14 @@ new Vue({
             });
         },
         closeTab: function (tab) {
+            var self = this;
             if (this.desktop.visible && tab.key === this.desktop.tabKey) {
                 this.closeAiDesktop();
             }
+            var splitClosing = !!this.splitKey
+                && (tab.key === this.splitMainKey || tab.key === this.splitKey);
+            var otherSplitKey = tab.key === this.splitMainKey ? this.splitKey
+                : (tab.key === this.splitKey ? this.splitMainKey : '');
             this.cancelTransfersForTab(tab);
             clearReconnectTimer(tab);
             tab.explicitClose = true;
@@ -18287,6 +18462,12 @@ new Vue({
             if (idx >= 0) {
                 this.tabs.splice(idx, 1);
             }
+            if (splitClosing) {
+                this.splitMainKey = '';
+                this.splitKey = '';
+                this.splitDir = '';
+                this.activeKey = otherSplitKey;
+            }
             if (this.activeKey === tab.key) {
                 var next = this.tabs[Math.max(0, idx - 1)];
                 if (next) {
@@ -18294,6 +18475,8 @@ new Vue({
                 } else {
                     this.activeKey = '';
                 }
+            } else if (splitClosing) {
+                this.$nextTick(function () { self.fitActive(); });
             }
             saveOpenTabs(this);
         },
@@ -18650,7 +18833,142 @@ new Vue({
                 tab.term.write('\r\n\x1b[33m● 已断开\x1b[0m\r\n');
             }
         },
+        /* ---------- 终端分屏 ---------- */
+        isTermVisible: function (t) {
+            if (!t) {
+                return false;
+            }
+            if (this.splitKey) {
+                return t.key === this.splitMainKey || t.key === this.splitKey;
+            }
+            return t.key === this.activeKey;
+        },
+        termPaneClass: function (t) {
+            if (!this.splitKey || !t) {
+                return '';
+            }
+            var position = t.key === this.splitMainKey ? 'split-main'
+                : (t.key === this.splitKey ? 'split-secondary' : '');
+            if (!position) {
+                return '';
+            }
+            return position + (t.key === this.activeKey ? ' split-focused' : '');
+        },
+        onTermPaneMouseDown: function (t) {
+            if (!this.splitKey || !t) {
+                return;
+            }
+            if (t.key !== this.splitMainKey && t.key !== this.splitKey) {
+                return;
+            }
+            if (this.activeKey === t.key) {
+                return;
+            }
+            this.activeKey = t.key;
+            saveOpenTabs(this);
+            var self = this;
+            this.$nextTick(function () {
+                self.fitSplitPanes();
+            });
+        },
+        splitTerminal: function (dir) {
+            var main = this.activeTab;
+            if (!main) {
+                return;
+            }
+            if (this.splitKey) {
+                if (this.splitDir === dir) {
+                    this.closeTerminalSplit();
+                    return;
+                }
+                this.splitDir = dir;
+                var self = this;
+                this.$nextTick(function () {
+                    self.fitSplitPanes();
+                });
+                return;
+            }
+            if (main.connId == null || main.localShell) {
+                ELEMENT.Message.warning('当前终端不支持分屏');
+                return;
+            }
+            var secondary = null;
+            var nextTab = null;
+            for (var i = 0; i < this.tabs.length; i++) {
+                var x = this.tabs[i];
+                if (x === main || x.desktopOnly) {
+                    continue;
+                }
+                if (!nextTab) {
+                    nextTab = x;
+                }
+                if (x.connId === main.connId) {
+                    secondary = x;
+                    break;
+                }
+            }
+            if (!secondary) {
+                secondary = nextTab;
+            }
+            if (!secondary) {
+                this._creatingSplitTab = true;
+                try {
+                    secondary = this.openTab(main.connId, null, false, false);
+                } finally {
+                    this._creatingSplitTab = false;
+                }
+            }
+            if (!secondary) {
+                ELEMENT.Message.warning('无法创建分屏终端');
+                return;
+            }
+            this.splitMainKey = main.key;
+            this.splitKey = secondary.key;
+            this.splitDir = dir;
+            this.activeKey = main.key;
+            saveOpenTabs(this);
+            var app = this;
+            this.$nextTick(function () {
+                app.fitSplitPanes();
+                if (main.term) {
+                    try { main.term.focus(); } catch (e) { /* ignore */ }
+                }
+            });
+        },
+        closeTerminalSplit: function () {
+            if (!this.splitKey) {
+                return;
+            }
+            this.splitMainKey = '';
+            this.splitKey = '';
+            this.splitDir = '';
+            var self = this;
+            this.$nextTick(function () {
+                self.fitActive();
+            });
+        },
+        fitSplitPanes: function () {
+            var self = this;
+            var main = this.tabs.find(function (t) { return t.key === self.splitMainKey; });
+            var secondary = this.tabs.find(function (t) { return t.key === self.splitKey; });
+            if (main) {
+                this.fitTab(main);
+            }
+            if (secondary) {
+                this.fitTab(secondary);
+            }
+            if (!main && !secondary) {
+                var t = this.activeTab;
+                if (t) {
+                    this.fitTab(t);
+                }
+            }
+        },
         fitActive: function () {
+            if (this.splitKey) {
+                this.fitSplitPanes();
+                return;
+            }
             var t = this.activeTab;
             if (t && t.fit) {
                 try { t.fit.fit(); } catch (e) { /* ignore */ }
@@ -21503,7 +21821,11 @@ new Vue({
             t.cmdVisible = !t.cmdVisible;
             var self = this;
             this.$nextTick(function () {
-                self.fitTab(t);
+                if (self.splitKey) {
+                    self.fitSplitPanes();
+                } else {
+                    self.fitTab(t);
+                }
                 if (t.cmdVisible) {
                     self.focusCmdInput(t);
                 }
@@ -21595,6 +21917,154 @@ new Vue({
                 return '';
             }
         },
+        /**
+         * 从 xterm 当前行提取用户提交的命令（去掉提示符），用于手敲命令审计。
+         * 无法识别提示符（密码 / SSH 确认 / 全屏程序等交互提示）时返回 skip，避免把口令写入审计。
+         */
+        terminalAuditCommand: function (tab) {
+            var raw = this.terminalCommandLine(tab);
+            if (raw == null) {
+                return { prompt: false, command: '' };
+            }
+            var text = String(raw).replace(/\s+$/, '');
+            if (!text.trim()) {
+                return { prompt: false, command: '' };
+            }
+            var m = text.match(/^[A-Za-z]:\\[^>]*>\s*(.*)$/);
+            if (m) {
+                return { prompt: true, command: m[1].trim() };
+            }
+            m = text.match(/^PS [^>]*>\s*(.*)$/);
+            if (m) {
+                return { prompt: true, command: m[1].trim() };
+            }
+            m = text.match(/^.*?[#$%❯]\s+(.*)$/);
+            if (m) {
+                return { prompt: true, command: m[1].trim() };
+            }
+            m = text.match(/^.*?>\s+(.*)$/);
+            if (m) {
+                return { prompt: true, command: m[1].trim() };
+            }
+            if (/[#$%❯>]\s*$/.test(text)) {
+                return { prompt: true, command: '' };
+            }
+            return { prompt: false, command: '' };
+        },
+        /**
+         * 本地 Shell 行模式（Windows cmd 的管道不提供行编辑）：前端负责回显与退格，
+         * 只在回车时把整行交给后端；密码等无法识别提示符的交互直接透传、不做本地回显。
+         */
+        handleLocalLineInput: function (tab, term, data) {
+            if (!tab || !term || data == null || data === '') {
+                return;
+            }
+            var self = this;
+            var sendFrame = function (text, auditLine, skip) {
+                if (!tab.ws || tab.ws.readyState !== 1) {
+                    return;
+                }
+                var frame = { type: 'data', data: text, auditTyped: true };
+                if (auditLine) {
+                    frame.auditLine = auditLine;
+                } else if (skip) {
+                    frame.auditSkip = true;
+                }
+                tab.ws.send(JSON.stringify(frame));
+            };
+            var newlineCount = (String(data).match(/\r\n|\r|\n/g) || []).length;
+            if (newlineCount > 1) {
+                // 多行粘贴：整段回显后交给后端逐行审计
+                var pasteAudit = self.terminalAuditCommand(tab);
+                var pasted = String(data).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                if (pasteAudit.prompt) {
+                    term.write(pasted.replace(/\n/g, '\r\n'));
+                    sendFrame(pasted, '', false);
+                } else {
+                    sendFrame(pasted, '', true);
+                }
+                tab._localLine = '';
+                tab._localPrompt = false;
+                return;
+            }
+            for (var i = 0; i < data.length; i++) {
+                var ch = data.charAt(i);
+                var code = data.charCodeAt(i);
+                if (code === 27) {
+                    // 本地行模式暂不支持方向键编辑，忽略 ESC 序列
+                    var j = i + 1;
+                    if (data.charAt(j) === '[') {
+                        j++;
+                        while (j < data.length) {
+                            var c = data.charCodeAt(j);
+                            if (c >= 0x40 && c <= 0x7e) {
+                                break;
+                            }
+                            j++;
+                        }
+                    } else if (data.charAt(j) === 'O') {
+                        j++;
+                    }
+                    i = Math.min(j, data.length - 1);
+                    continue;
+                }
+                if (ch === '\r' || ch === '\n') {
+                    if (ch === '\r' && data.charAt(i + 1) === '\n') {
+                        i++;
+                    }
+                    var line = tab._localLine || '';
+                    var atPrompt = !!tab._localPrompt;
+                    term.write('\r\n');
+                    sendFrame(line + '\n', atPrompt ? line : '', !atPrompt);
+                    tab._localLine = '';
+                    tab._localPrompt = false;
+                    continue;
+                }
+                if (code === 127 || code === 8) {
+                    if (tab._localLine && tab._localLine.length) {
+                        tab._localLine = tab._localLine.slice(0, -1);
+                        term.write('\b \b');
+                    }
+                    continue;
+                }
+                if (code === 3) {
+                    tab._localLine = '';
+                    tab._localPrompt = false;
+                    term.write('^C\r\n');
+                    if (tab.ws && tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({
+                            type: 'data', data: '\u0003', auditTyped: true, auditSkip: true
+                        }));
+                    }
+                    continue;
+                }
+                if (code === 9) {
+                    continue;
+                }
+                if (code < 32) {
+                    if (!tab._localLine && tab.ws && tab.ws.readyState === 1) {
+                        tab.ws.send(JSON.stringify({
+                            type: 'data', data: ch, auditTyped: true, auditSkip: true
+                        }));
+                    }
+                    continue;
+                }
+                if (!tab._localLine && !tab._localPrompt) {
+                    var audit = self.terminalAuditCommand(tab);
+                    if (!audit.prompt) {
+                        if (tab.ws && tab.ws.readyState === 1) {
+                            tab.ws.send(JSON.stringify({
+                                type: 'data', data: ch, auditTyped: true, auditSkip: true
+                            }));
+                        }
+                        continue;
+                    }
+                    tab._localPrompt = true;
+                }
+                tab._localLine = (tab._localLine || '') + ch;
+                term.write(ch);
+            }
+        },
         confirmDangerousCommand: function (command, proceed, forcedRule) {
             if (!this.dangerConfirmEnabled) {
                 if (this._dangerPromptOpen) {
@@ -21640,7 +22110,7 @@ new Vue({
         },
         sendCmd: function (tab) {
             var t = tab || this.activeTab;
-            if (!t || !t.sessionId) {
+            if (!t || (!t.sessionId && !t.localShell)) {
                 return;
             }
             var text = t.cmdText == null ? '' : t.cmdText;
@@ -21666,6 +22136,11 @@ new Vue({
             this.confirmDangerousCommand(text, function () {
                 targets.forEach(function (x) {
                     if (x.ws && x.ws.readyState === 1) {
+                        if (x.localShell && x.localLineMode && x.term) {
+                            x.term.write('\r\x1b[K' + text.replace(/\r?\n/g, '\r\n') + '\r\n');
+                            x._localLine = '';
+                            x._localPrompt = false;
+                        }
                         x.ws.send(data);
                     }
                 });

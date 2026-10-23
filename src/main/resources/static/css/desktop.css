@@ -7335,3 +7335,237 @@
     border-radius: 4px;
     object-fit: cover;
 }
+
+/* 实时流量：与任务管理器一致的浅色表格 / 行 / 按钮体系 */
+.dsk-traf-tm {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    display: flex;
+}
+
+.dsk-traf-tm .tm-page {
+    flex: 1;
+    width: 100%;
+}
+
+.tm-traf-search {
+    width: 190px;
+}
+
+.tm-traf-int {
+    width: 84px;
+}
+
+.tm-traf-int .el-input__inner {
+    height: 28px;
+    line-height: 28px;
+    border-color: #d3d7dd;
+    border-radius: 5px;
+    font-size: 12px;
+}
+
+.tm-traf-int .el-input__icon {
+    line-height: 28px;
+}
+
+.tm-traf-loop {
+    margin-left: 2px;
+}
+
+.tm-traf-loop .el-checkbox__label {
+    padding-left: 5px;
+    color: #5f6872;
+    font-size: 11.5px;
+}
+
+.tm-traf-summary {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px 14px;
+    flex-wrap: wrap;
+    margin: -2px 0 10px;
+    padding: 7px 10px;
+    border: 1px solid #e4e8ed;
+    border-radius: 6px;
+    background: #fff;
+    color: #4b5563;
+    font-size: 11.5px;
+}
+
+.tm-traf-summary b {
+    color: #1f2328;
+    font-weight: 600;
+}
+
+.tm-traf-summary .dim {
+    color: #8a929b;
+}
+
+.tm-traf-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #14804a;
+    font-weight: 600;
+}
+
+.tm-traf-live > i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #18a058;
+    box-shadow: 0 0 0 3px rgba(24, 160, 88, .12);
+    animation: dskTrafPulse 1.8s ease-in-out infinite;
+}
+
+.tm-traf-live.off {
+    color: #8a929b;
+    font-weight: 400;
+}
+
+.tm-traf-live.off > i {
+    background: #aeb8c6;
+    box-shadow: none;
+    animation: none;
+}
+
+.tm-traf-warn {
+    color: #b45309;
+}
+
+.tm-traf-box {
+    flex: 1;
+    min-height: 0;
+}
+
+.tm-traf-grid {
+    display: grid;
+    grid-template-columns: minmax(150px, 1.6fr) 64px 84px 96px 96px 118px 88px;
+    align-items: center;
+    column-gap: 8px;
+    min-width: 700px;
+}
+
+.tm-traf-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.tm-traf-row {
+    cursor: default;
+}
+
+.tm-traf-ico {
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    background: #e8f1ff;
+    color: #2468bd;
+    font-size: 12px;
+}
+
+.tm-traf-ico.loop {
+    background: #eef1f5;
+    color: #8491a5;
+}
+
+.tm-traf-hot {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #e8f1ff;
+    color: #1f65c5;
+    font-size: 9.5px;
+}
+
+.tm-traf-mono {
+    color: #5b6570;
+    font-family: Consolas, "SFMono-Regular", monospace;
+    font-size: 11px;
+}
+
+.tm-traf-dim {
+    overflow: hidden;
+    color: #8a929b;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tm-traf-down {
+    color: #0f6cbd;
+    font-variant-numeric: tabular-nums;
+}
+
+.tm-traf-up {
+    color: #b26a00;
+    font-variant-numeric: tabular-nums;
+}
+
+.tm-traf-row small {
+    margin-left: 2px;
+    color: #9aa3ad;
+    font-size: 9.5px;
+}
+
+.tm-traf-row.hottest {
+    background: #f7fbff;
+}
+
+.tm-traf-row.hottest:hover {
+    background: #f2f8ff;
+}
+
+/* 深色桌面主题下沿用任务管理器的深色表格 */
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-summary {
+    border-color: #2a3140;
+    background: #1b212b;
+    color: #9fa8b8;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-summary b,
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-mono {
+    color: #dbe4f3;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-summary .dim,
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-dim {
+    color: #6f7d91;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-ico {
+    background: #223247;
+    color: #6fa8e8;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-ico.loop {
+    background: #232a35;
+    color: #8491a5;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-hot {
+    background: #223247;
+    color: #7fb3ef;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-down {
+    color: #6fa8e8;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-up {
+    color: #e0a75a;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-warn {
+    color: #e0a75a;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-row.hottest {
+    background: #1c2836;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .tm-traf-row.hottest:hover {
+    background: #203044;
+}

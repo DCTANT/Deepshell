@@ -84,3 +84,8 @@ deepshell:
   protocol:
     enabled: true
     scheme: deepshell
+
+  # 本地桌面「终端」：留空使用系统默认 Shell（Windows cmd，Unix $SHELL）；
+  # 也可填本机 Shell 可执行文件绝对路径。仅本机回环 + 登录保护，不会暴露给局域网。
+  local-shell:
+    command: ""

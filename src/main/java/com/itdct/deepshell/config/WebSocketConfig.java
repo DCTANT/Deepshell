@@ -1,5 +1,6 @@
 package com.itdct.deepshell.config;
 
+import com.itdct.deepshell.ws.LocalShellWebSocketHandler;
 import com.itdct.deepshell.ws.SshWebSocketHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,18 +14,28 @@ import org.springframework.web.socket.server.standard.ServletServerContainerFact
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final SshWebSocketHandler handler;
+    private final LocalShellWebSocketHandler localShellHandler;
     private final AuthHandshakeInterceptor authHandshakeInterceptor;
+    private final LoopbackHandshakeInterceptor loopbackHandshakeInterceptor;
 
     public WebSocketConfig(SshWebSocketHandler handler,
-                           AuthHandshakeInterceptor authHandshakeInterceptor) {
+                           LocalShellWebSocketHandler localShellHandler,
+                           AuthHandshakeInterceptor authHandshakeInterceptor,
+                           LoopbackHandshakeInterceptor loopbackHandshakeInterceptor) {
         this.handler = handler;
+        this.localShellHandler = localShellHandler;
         this.authHandshakeInterceptor = authHandshakeInterceptor;
+        this.loopbackHandshakeInterceptor = loopbackHandshakeInterceptor;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(handler, "/ws/ssh")
                 .addInterceptors(authHandshakeInterceptor)
+                .setAllowedOrigins("*");
+        // 本机终端只接受回环连接；开启登录时仍需携带有效 Cookie
+        registry.addHandler(localShellHandler, "/ws/local-shell")
+                .addInterceptors(authHandshakeInterceptor, loopbackHandshakeInterceptor)
                 .setAllowedOrigins("*");
     }
 

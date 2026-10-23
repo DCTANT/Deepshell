@@ -102,6 +102,14 @@
                    @click.stop="transferCenterOpen = !transferCenterOpen"></i>
             </el-popover>
             <i class="el-icon-full-screen tbtn" title="终端自适应" @click="fitActive"></i>
+            <i v-if="activeTab" class="tbtn el-icon-s-grid"
+               :class="{ 'menu-active': splitKey && splitDir === 'row' }"
+               :title="splitKey && splitDir === 'row' ? '取消左右分屏' : '左右分屏'"
+               @click="splitTerminal('row')"></i>
+            <i v-if="activeTab" class="tbtn el-icon-s-operation"
+               :class="{ 'menu-active': splitKey && splitDir === 'col' }"
+               :title="splitKey && splitDir === 'col' ? '取消上下分屏' : '上下分屏'"
+               @click="splitTerminal('col')"></i>
             <i class="tbtn" :class="panelVisible ? 'el-icon-s-fold' : 'el-icon-s-unfold'"
                :title="panelVisible ? '隐藏侧栏' : '显示侧栏'"
                @click="panelVisible = !panelVisible"></i>
@@ -112,11 +120,15 @@
 
     <div class="ws-content">
         <div class="ws-main">
-            <div class="term-area">
+            <div class="term-area"
+                 :class="{ 'split-row': splitKey && splitDir === 'row',
+                           'split-col': splitKey && splitDir === 'col' }">
                 <div class="term-bg" v-if="bgSettings.url"
                      :style="{ backgroundImage: 'url(' + bgSettings.url + ')', opacity: bgSettings.opacity,
                                filter: bgSettings.blur ? ('blur(' + bgSettings.blur + 'px)') : 'none' }"></div>
-                <div v-for="t in tabs" :key="t.key" class="term-host" v-show="t.key === activeKey">
+                <div v-for="t in tabs" :key="t.key" class="term-host"
+                     :class="termPaneClass(t)" v-show="isTermVisible(t)"
+                     @mousedown.capture="onTermPaneMouseDown(t)">
                     <div class="term-box" :ref="'term-' + t.key"></div>
                 </div>
                 <div v-if="!tabs.length" class="ws-empty">
@@ -1079,7 +1091,7 @@
 
 <script type="text/x-template" id="term-cmd-bar-tpl">
 <div class="term-cmd-bar-wrap">
-    <div class="cmd-ai-bar" v-if="tab.cmdVisible && tab.aiVisible">
+    <div class="cmd-ai-bar" v-if="tab.cmdVisible && tab.aiVisible && !localTerminal">
         <i class="el-icon-magic-stick cmd-ai-icon"></i>
         <el-input ref="aiInput" size="mini" v-model="tab.aiText" class="cmd-ai-input"
                   placeholder="用一句话描述你要做的事，例如：查看磁盘占用最大的前 10 个目录（Enter 生成 ｜ Esc 关闭）"
@@ -1092,18 +1104,20 @@
         <el-button size="mini" type="primary" icon="el-icon-position" class="cmd-send-btn"
                    title="发送 (Enter)" @click="send"></el-button>
         <el-input ref="cmdInput" size="mini" v-model="tab.cmdText" class="cmd-input"
-                  :placeholder="tab.sessionId
-                      ? '输入命令：Enter 发送 ｜ Tab 补全 ｜ ↑↓ 历史 ｜ Alt 历史列表 ｜ Esc 关闭 ｜ 双击 Ctrl 显隐'
-                      : '等待连接…'"
+                  :placeholder="tab.localShell
+                      ? '输入本地命令：Enter 发送 ｜ Tab 补全 ｜ ↑↓ 历史 ｜ Esc 关闭 ｜ 双击 Ctrl 显隐'
+                      : (tab.sessionId
+                          ? '输入命令：Enter 发送 ｜ Tab 补全 ｜ ↑↓ 历史 ｜ Alt 历史列表 ｜ Esc 关闭 ｜ 双击 Ctrl 显隐'
+                          : '等待连接…')"
                   @keydown.native="onCmdKeydown" @keyup.native="onCmdKeyup" @input.native="resetComp"></el-input>
         <span class="cmd-tools">
-            <i class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
+            <i v-if="!localTerminal" class="el-icon-magic-stick cmd-tool" title="AI 生成命令（自然语言转 shell）"
                :class="{ 'cmd-tool-active': tab.aiVisible }" @click="toggleAi"></i>
             <i class="el-icon-bottom cmd-tool" :title="'自动跟随最新输出（当前终端，tail -f）：' + (tab.termAutoScrollEnabled ? '已开启，点击关闭' : '已关闭，点击开启')"
                :class="{ 'cmd-tool-active': tab.termAutoScrollEnabled }"
                @click="$root.toggleTermAutoScroll(tab)"></i>
-            <el-popover v-if="context === 'window'" placement="top-end" width="320" trigger="click"
-                        v-model="snippetsVisible" popper-class="cmd-pop">
+            <el-popover v-if="context === 'window' && !localTerminal" placement="top-end" width="320"
+                        trigger="click" v-model="snippetsVisible" popper-class="cmd-pop">
                 <div class="cmd-hist">
                     <div class="cmd-hist-head">
                         <span>快捷命令（{{ snippets.length }}）</span>
@@ -1211,7 +1225,7 @@
                @click="$root.editCurrentConnection()"></i>
             <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏"
                @click="$root.toggleFullscreen()"></i>
-            <i class="el-icon-guide cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
+            <i v-if="!localTerminal" class="el-icon-guide cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
         </span>
     </div>
 </div>

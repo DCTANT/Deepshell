@@ -1598,9 +1598,42 @@
                 if (!tab) {
                     return;
                 }
+                var newlineCount = (String(data).match(/\r\n|\r|\n/g) || []).length;
+                var audit = this.terminalAuditLine(tab);
+                var auditTyped = false;
+                var auditSkip = false;
+                var auditLine = '';
+                if (newlineCount === 0) {
+                    auditTyped = true;
+                    auditSkip = !audit.prompt;
+                } else if (newlineCount === 1) {
+                    auditTyped = true;
+                    if (audit.prompt) {
+                        var rawCommand = String(data)
+                            .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+                            .replace(/[\r\n]+$/, '')
+                            .replace(/[\x00-\x1f\x7f]/g, '')
+                            .trim();
+                        auditLine = audit.command || rawCommand;
+                    } else {
+                        auditSkip = true;
+                    }
+                } else if (!audit.prompt) {
+                    auditTyped = true;
+                    auditSkip = true;
+                }
                 var send = function () {
                     if (tab.ws && tab.ws.readyState === 1) {
-                        tab.ws.send(JSON.stringify({ type: 'data', data: data }));
+                        var frame = { type: 'data', data: data };
+                        if (auditTyped) {
+                            frame.auditTyped = true;
+                            if (auditSkip) {
+                                frame.auditSkip = true;
+                            } else if (newlineCount === 1 && auditLine) {
+                                frame.auditLine = auditLine;
+                            }
+                        }
+                        tab.ws.send(JSON.stringify(frame));
                     }
                 };
                 if (data.indexOf('\r') < 0 && data.indexOf('\n') < 0) {
@@ -1685,13 +1718,44 @@
                     try { tab.term.write(text); } catch (e) { /* ignore */ }
                 }
             },
+            /** 与桌面端一致：从当前行提取提交的命令；无法识别提示符时返回 prompt=false，避免泄露密码/交互输入。 */
+            terminalAuditLine: function (tab) {
+                var raw = this.terminalCommandLine(tab);
+                if (raw == null) {
+                    return { prompt: false, command: '' };
+                }
+                var text = String(raw).replace(/\s+$/, '');
+                if (!text.trim()) {
+                    return { prompt: false, command: '' };
+                }
+                var m = text.match(/^[A-Za-z]:\\[^>]*>\s*(.*)$/);
+                if (m) {
+                    return { prompt: true, command: m[1].trim() };
+                }
+                m = text.match(/^PS [^>]*>\s*(.*)$/);
+                if (m) {
+                    return { prompt: true, command: m[1].trim() };
+                }
+                m = text.match(/^.*?[#$%❯]\s+(.*)$/);
+                if (m) {
+                    return { prompt: true, command: m[1].trim() };
+                }
+                m = text.match(/^.*?>\s+(.*)$/);
+                if (m) {
+                    return { prompt: true, command: m[1].trim() };
+                }
+                if (/[#$%❯>]\s*$/.test(text)) {
+                    return { prompt: true, command: '' };
+                }
+                return { prompt: false, command: '' };
+            },
             sendSeq: function (seq) {
                 var tab = this.activeTab;
                 if (!tab || !tab.ws || tab.ws.readyState !== 1) {
                     this.toast('终端尚未连接', 'warn');
                     return;
                 }
-                tab.ws.send(JSON.stringify({ type: 'data', data: seq }));
+                tab.ws.send(JSON.stringify({ type: 'data', data: seq, auditTyped: true, auditSkip: true }));
             },
             sendCtrl: function (k) {
                 this.closeSheet();
