@@ -27,6 +27,9 @@ public class AuthWebConfig implements WebMvcConfigurer {
                         "/api/auth/captcha",
                         "/api/auth/status",
                         "/api/auth/logout",
+                        // 本机启动器转发外部调用；接口内部校验回环地址 + 数据目录握手密钥
+                        "/api/protocol/ping",
+                        "/api/protocol/handoff",
                         "/css/**",
                         "/js/**",
                         "/vendor/**",

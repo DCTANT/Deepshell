@@ -77,3 +77,10 @@ deepshell:
   # 可用 deepshell.browser-cmd 自定义打开命令，{url} 为地址占位符，如指定某浏览器完整路径）
   open-browser: true
   browser-cmd: ""
+
+  # 外部调用（跳板机客户端）：启动时把 deepshell:// 注册为当前用户的 URL 协议，
+  # 网页上的 <a href="deepshell://connect?..."> 即可拉起本机 DeepShell 并连接服务器。
+  # Windows 写入 HKCU，无需管理员权限；Linux 写入 xdg desktop 文件。IDE / classes 模式不注册。
+  protocol:
+    enabled: true
+    scheme: deepshell

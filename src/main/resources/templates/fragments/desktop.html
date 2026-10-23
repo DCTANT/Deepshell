@@ -211,6 +211,9 @@
                                             <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
                                                 <span><i class="el-icon-document-copy"></i> 复制连接</span>
                                             </div>
+                                            <div class="conn-set-row conn-set-action" @click="copyConnectionOpenLink(row.id)">
+                                                <span><i class="el-icon-link"></i> 复制调用链接</span>
+                                            </div>
                                             <div class="conn-set-row conn-set-action conn-set-danger"
                                                  @click="removeConnFromDialog(row.id)">
                                                 <span><i class="el-icon-delete"></i> 删除连接</span>

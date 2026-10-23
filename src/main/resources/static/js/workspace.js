@@ -4292,6 +4292,12 @@ new Vue({
         bgVisible: false,
         helpVisible: false,
         aboutVisible: false,
+        protocolVisible: false,
+        protocolLoading: false,
+        protocolInfo: {
+            enabled: true, scheme: 'deepshell', state: 'PENDING', detail: '',
+            launcher: '', platform: ''
+        },
         /* DeepShell 后端自身的关闭 / 重启状态 */
         appLifecycle: {
             visible: false,
@@ -4343,6 +4349,8 @@ new Vue({
             ['CONNECTION_DELETE', '删除连接'],
             ['CONNECTION_IMPORT', '导入连接'],
             ['CONNECTION_EXPORT', '导出连接'],
+            ['PROTOCOL_OPEN', '外部调用'],
+            ['PROTOCOL_REGISTER', '注册外部调用'],
             ['HOST_KEY', '主机指纹'],
             ['PORT_FORWARD', '端口转发'],
             ['AUTH_SETTINGS', '认证设置']
@@ -4384,7 +4392,8 @@ new Vue({
             authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
             tlsSelfSigned: false, tlsNextEnabled: false
         },
-        appInfo: { version: '1.3.0', java: '', os: '', dataDir: '', buildTime: '' },
+        appInfo: { version: '1.3.0', java: '', os: '', dataDir: '', buildTime: '',
+            protocolState: '', protocolScheme: 'deepshell', protocolDetail: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
         bgSettings: loadBgSettings(),
@@ -4549,6 +4558,13 @@ new Vue({
         }
     },
     computed: {
+        /** 外部调用示例：优先使用列表中的第一条已保存连接，链接不含密码 */
+        protocolExampleLink: function () {
+            if (this.connections && this.connections.length) {
+                return 'deepshell://connect?id=' + this.connections[0].id;
+            }
+            return 'deepshell://connect?host=192.168.1.10&port=22&username=root&name=Demo&password=your-password';
+        },
         appLifecycleTitle: function () {
             var s = this.appLifecycle;
             if (s.mode === 'shutdown') {
@@ -6406,6 +6422,8 @@ new Vue({
                 this.lanVisible = true;
             } else if (cmd === 'auth') {
                 this.openAuthSettings();
+            } else if (cmd === 'protocol') {
+                this.openProtocolDialog();
             } else if (cmd === 'audit') {
                 this.openAudit();
             } else if (cmd === 'ai') {
@@ -17447,6 +17465,82 @@ new Vue({
                 }
             }).catch(function () { /* 忽略 */ });
         },
+        /* ---------- 外部调用 / 跳板机客户端（deepshell://） ---------- */
+        openProtocolDialog: function () {
+            this.protocolVisible = true;
+            this.loadProtocolStatus();
+        },
+        loadProtocolStatus: function () {
+            var self = this;
+            this.protocolLoading = true;
+            return http.get('/api/protocol/status').then(function (d) {
+                if (d) {
+                    self.protocolInfo = d;
+                }
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.protocolLoading = false;
+            });
+        },
+        reregisterProtocol: function () {
+            var self = this;
+            this.protocolLoading = true;
+            http.post('/api/protocol/register').then(function (d) {
+                if (d) {
+                    self.protocolInfo = d;
+                }
+                self.loadAppInfo();
+                if (d && d.state === 'REGISTERED') {
+                    ELEMENT.Message.success('已注册 ' + (d.scheme || 'deepshell') + ':// 协议');
+                } else {
+                    ELEMENT.Message.warning((d && d.detail) || '注册未完成，请查看状态说明');
+                }
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.protocolLoading = false;
+            });
+        },
+        protocolStateText: function (state) {
+            var value = state || (this.protocolInfo && this.protocolInfo.state) || '';
+            var map = {
+                REGISTERED: '已注册',
+                PENDING: '注册中',
+                DISABLED: '已关闭',
+                UNSUPPORTED: '当前环境不支持',
+                DEVELOPMENT: '开发模式未注册',
+                FAILED: '注册失败'
+            };
+            return map[value] || (value || '未知');
+        },
+        protocolStateType: function (state) {
+            var value = state || (this.protocolInfo && this.protocolInfo.state) || '';
+            if (value === 'REGISTERED') {
+                return 'success';
+            }
+            if (value === 'FAILED') {
+                return 'error';
+            }
+            if (value === 'DEVELOPMENT' || value === 'PENDING') {
+                return 'warning';
+            }
+            return 'info';
+        },
+        copyProtocolLink: function () {
+            this.copyText(this.protocolExampleLink);
+        },
+        copyConnectionOpenLink: function (id) {
+            this.connMenuKey = null;
+            var c = null;
+            for (var i = 0; i < this.connections.length; i++) {
+                if (this.connections[i].id === id) {
+                    c = this.connections[i];
+                    break;
+                }
+            }
+            if (!c) {
+                ELEMENT.Message.warning('连接不存在或已被删除');
+                return;
+            }
+            this.copyText('deepshell://connect?id=' + c.id);
+        },
         exportConns: function () {
             var a = document.createElement('a');
             a.href = '/api/connections/export';
@@ -22070,9 +22164,17 @@ new Vue({
                 self.openLocalDesktop();
                 return;
             }
+            var external = params.get('external') === '1';
+            var externalSource = params.get('source') || '';
+            var protocolError = params.get('protocolError');
+            if (protocolError) {
+                // 外部调用失败：现有实例 / 冷启动进程已在浏览器中打开提示页
+                history.replaceState(null, '', '/workspace');
+                ELEMENT.Message.error(protocolError);
+            }
             var cid = params.get('connId');
             if (cid) {
-                // 带参打开（连接管理页「连接」/「返回终端」/ 新标签打开桌面）：仅本次生效，
+                // 带参打开（连接管理页「连接」/「返回终端」/ 新标签打开桌面 / 外部调用）：仅本次生效，
                 // 校验存在后立即清理地址栏参数，避免参数陈旧后被反复重开成「连接 #id」
                 var view = params.get('view');
                 var forceWorkbench = view === 'workbench';
@@ -22085,11 +22187,18 @@ new Vue({
                     var tab = self.openTab(id, null, !forceWorkbench, forceDesktop);
                     if (tab) {
                         tab.desktopOpenPath = desktopPath;
+                        if (external) {
+                            ELEMENT.Message.success('已通过外部调用打开「' + tab.title + '」'
+                                + (externalSource ? ' · 来源：' + externalSource : ''));
+                        }
                     }
                 } else {
                     ELEMENT.Message.warning('连接不存在或已被删除');
                 }
                 return;
+            }
+            if (external) {
+                history.replaceState(null, '', '/workspace');
             }
             self.restoreOpenTabs();
         });

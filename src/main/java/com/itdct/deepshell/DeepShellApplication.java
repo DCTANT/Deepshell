@@ -2,6 +2,7 @@ package com.itdct.deepshell;
 
 import com.itdct.deepshell.common.AppRestartSupport;
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.protocol.ProtocolLaunchSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -23,6 +24,11 @@ public class DeepShellApplication {
         // 界面发起的「重启 DeepShell」会以该参数拉起重启助手：等旧进程退出后再启动新实例
         if (AppRestartSupport.isHelper(args)) {
             AppRestartSupport.runHelper(args);
+            return;
+        }
+        // deepshell:// 外部调用：已有实例在运行就交给它并立即退出，避免重复启动 / 端口冲突；
+        // 没有实例则继续启动，ProtocolBootstrap 会在就绪后打开对应连接。
+        if (ProtocolLaunchSupport.handleEarly(args)) {
             return;
         }
         Path dataDir = DataDir.root();

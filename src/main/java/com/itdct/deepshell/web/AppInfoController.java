@@ -2,6 +2,7 @@ package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.protocol.ProtocolRegistrar;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,6 +19,12 @@ import java.util.Map;
 @RequestMapping("/api/app-info")
 public class AppInfoController {
 
+    private final ProtocolRegistrar protocolRegistrar;
+
+    public AppInfoController(ProtocolRegistrar protocolRegistrar) {
+        this.protocolRegistrar = protocolRegistrar;
+    }
+
     @GetMapping
     public R<Map<String, String>> info() {
         Map<String, String> m = new HashMap<>();
@@ -30,6 +37,10 @@ public class AppInfoController {
         m.put("dataDir", DataDir.root().toString());
         // 进程启动时间：前端重启后用它判断响应是否已来自新进程
         m.put("startedAt", String.valueOf(ManagementFactory.getRuntimeMXBean().getStartTime()));
+        Map<String, Object> protocol = protocolRegistrar.status();
+        m.put("protocolState", String.valueOf(protocol.get("state")));
+        m.put("protocolScheme", String.valueOf(protocol.get("scheme")));
+        m.put("protocolDetail", String.valueOf(protocol.get("detail")));
         return R.ok(m);
     }
 

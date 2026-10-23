@@ -71,6 +71,9 @@
                             <div class="conn-set-row conn-set-action" @click="copyConnFromDialog(row.id)">
                                 <span><i class="el-icon-document-copy"></i> 复制连接</span>
                             </div>
+                            <div class="conn-set-row conn-set-action" @click="copyConnectionOpenLink(row.id)">
+                                <span><i class="el-icon-link"></i> 复制调用链接</span>
+                            </div>
                             <div class="conn-set-row conn-set-action conn-set-danger"
                                  @click="removeConnFromDialog(row.id)">
                                 <span><i class="el-icon-delete"></i> 删除连接</span>
@@ -897,6 +900,50 @@
         </div>
     </el-dialog>
 
+    <!-- 外部调用（跳板机客户端） -->
+    <el-dialog title="外部调用（跳板机客户端）" :visible.sync="protocolVisible" width="680px"
+               top="7vh" custom-class="protocol-dlg" append-to-body>
+        <div class="protocol-box" v-loading="protocolLoading">
+            <el-alert :title="'deepshell:// 协议 · ' + protocolStateText(protocolInfo.state)"
+                      :description="protocolInfo.detail || ''"
+                      :type="protocolStateType(protocolInfo.state)" :closable="false" show-icon>
+            </el-alert>
+            <div class="protocol-grid">
+                <div class="protocol-k">协议</div>
+                <div class="protocol-v"><code>{{ protocolInfo.scheme }}://</code></div>
+                <div class="protocol-k">调用程序</div>
+                <div class="protocol-v protocol-path">{{ protocolInfo.launcher || '—' }}</div>
+                <div class="protocol-k">运行平台</div>
+                <div class="protocol-v">{{ protocolInfo.platform || '—' }}</div>
+            </div>
+            <div class="protocol-tip">
+                在网页 / 运维门户中放入一个 <code>deepshell://connect?...</code> 链接，点击后由操作系统拉起本机
+                DeepShell：已运行时交给现有实例打开新标签页，未运行时自动启动。无需浏览器插件，也不会另起一个重复进程。
+            </div>
+            <div class="protocol-example-head">调用链接示例（推荐用已保存连接的 ID，链接不含密码）</div>
+            <el-input :value="protocolExampleLink" readonly size="small">
+                <el-button slot="append" icon="el-icon-document-copy" @click="copyProtocolLink">复制</el-button>
+            </el-input>
+            <div class="protocol-tip">
+                <b>按主机直连：</b><br>
+                <code>deepshell://connect?host=192.168.1.10&amp;port=22&amp;username=root&amp;name=Demo&amp;password=...</code><br>
+                参数：<code>id</code> / <code>host</code> / <code>port</code> / <code>username</code> /
+                <code>name</code> / <code>password</code> / <code>authType</code> / <code>keyPath</code> /
+                <code>passphrase</code> / <code>view</code>（desktop / workbench）/ <code>source</code>；
+                参数值需 URL 编码。已有相同主机、端口与用户名的连接会复用已保存凭据，否则新建并保存连接。
+            </div>
+            <div class="protocol-warn">
+                <i class="el-icon-warning"></i>
+                外部调用接口只接受本机回环请求并校验数据目录中的握手密钥；建议开启登录，不要把带密码的链接放到公开页面。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="protocolVisible = false">关闭</el-button>
+            <el-button size="small" type="primary" :loading="protocolLoading"
+                       :disabled="!protocolInfo.enabled" @click="reregisterProtocol">重新注册协议</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 帮助 -->
     <el-dialog title="DeepShell 帮助手册" :visible.sync="helpVisible" width="720px" top="4vh" append-to-body>
         <div class="help-box">
@@ -916,6 +963,15 @@
                     <li>页面刷新（F5）后会自动<b>恢复之前打开的会话标签并重新连接</b>，不会丢失工作现场</li>
                     <li>标签：<b>拖动</b>可排序；<b>右键</b>支持复制 IP / 系统信息 / 重新连接 / 断开 / 关闭（其他、左边、右边、全部）；中键点击快速关闭</li>
                     <li>终端顶栏实时显示远端 CPU / 内存 / 交换 / 网络利用率，悬浮查看主机、负载与运行时长</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-link"></i>外部调用（跳板机客户端）</div>
+                <ul>
+                    <li>使用分发包（<code>java -jar</code>）启动后会自动把 <code>deepshell://</code> 注册为当前用户的 URL 协议：Windows 写入 HKCU 注册表、无需管理员权限，Linux 写入 xdg desktop 文件；IDE / classes 模式不注册。可在右上角菜单「安全与访问 → 外部调用」查看状态或重新注册</li>
+                    <li>网页 / 门户里的 <code>&lt;a href="deepshell://connect?id=12"&gt;打开服务器&lt;/a&gt;</code> 点击后由系统拉起本机 DeepShell：已运行时交给现有实例打开新标签页，未运行时自动启动；无需浏览器插件</li>
+                    <li>按主机直连可传 <code>host</code> / <code>port</code> / <code>username</code> / <code>password</code>（或 <code>authType=KEY&amp;keyPath=...</code>）/ <code>name</code> / <code>source</code>；本机已有相同主机、端口与用户名的连接会复用已保存凭据，否则新建并保存连接。建议优先用 <code>id</code> 或省略密码，避免密码出现在链接里</li>
+                    <li>外部调用接口只接受本机回环请求并校验数据目录中的 <code>protocol.key</code>，但网页仍可触发打开已保存连接；请开启登录，不要把带密码的链接放到公开页面</li>
                 </ul>
             </div>
             <div class="help-section">
@@ -1020,6 +1076,7 @@
             <el-divider></el-divider>
             <div class="about-line dim">运行环境：Java {{ appInfo.java }} ｜ {{ appInfo.os }}</div>
             <div class="about-line dim">数据目录：{{ appInfo.dataDir }}</div>
+            <div class="about-line dim">外部调用：{{ appInfo.protocolScheme || 'deepshell' }}:// · {{ protocolStateText(appInfo.protocolState) }}</div>
             <div class="about-line dim">本地工具 · 连接与账号信息仅保存在本机</div>
         </div>
     </el-dialog>

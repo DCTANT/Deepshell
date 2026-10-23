@@ -68,10 +68,22 @@ public final class AppRestartSupport {
         List<String> command = baseCommand();
         command.add(HELPER_PREFIX + currentPid());
         if (sourceArgs != null) {
-            for (String arg : sourceArgs) {
-                if (arg != null) {
-                    command.add(arg);
+            for (int i = 0; i < sourceArgs.length; i++) {
+                String arg = sourceArgs[i];
+                if (arg == null) {
+                    continue;
                 }
+                // 外部调用链接只在本次启动生效，重启后不应再次自动打开连接
+                if (arg.startsWith("--deepshell.protocol-uri")) {
+                    if ("--deepshell.protocol-uri".equals(arg)) {
+                        i++;
+                    }
+                    continue;
+                }
+                if (arg.regionMatches(true, 0, "deepshell:", 0, 10)) {
+                    continue;
+                }
+                command.add(arg);
             }
         }
         ProcessBuilder pb = new ProcessBuilder(command);
@@ -115,6 +127,11 @@ public final class AppRestartSupport {
             }
             // 自动重启不再弹新浏览器窗口，当前页面会在检测到服务恢复后自行刷新
             if (arg.startsWith("--deepshell.open-browser")) {
+                continue;
+            }
+            // 外部调用链接属于一次性启动参数，重启后不再重复打开
+            if (arg.startsWith("--deepshell.protocol-uri")
+                    || arg.regionMatches(true, 0, "deepshell:", 0, 10)) {
                 continue;
             }
             appArgs.add(arg);

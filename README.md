@@ -48,6 +48,7 @@
 
 ## 功能
 
+- **外部调用（跳板机客户端）**：启动后自动把 `deepshell://` 注册为当前用户的 URL 协议（无需浏览器插件），网页 / 运维门户用 `deepshell://connect?id=...` 或 `host/username/password` 链接即可拉起本机 DeepShell 并打开对应连接；已运行时交给现有实例，不会重复启动，调用目标、来源与结果记入审计
 - **连接管理**：主机/端口/用户名、密码或密钥认证、备注；**多级文件夹树**（新建/重命名/删除文件夹，删除后内容自动上移不丢数据；编辑连接时以级联选择器归入任意层级）；**置顶与收藏**（每个连接可独立设置，收藏支持筛选）；密码基于本机密钥 AES-GCM 加密存储；**主机指纹校验**——首次连接必须核对 SHA256 指纹，后续指纹变化默认拒绝并提示风险，信任记录存入 SQLite；**HTTP / SOCKS5 代理**与**多级跳板机**（跳板机直接选择已保存连接，可递归成链，目标指纹仍按原始 host:port 校验）
 - **多标签终端**：WebSocket 实时流式传输、窗口尺寸自适应（PTY Resize）、连接状态指示、断线提示；标签右键支持**复制 IP / 查看服务器系统信息**（主机名、发行版、内核、CPU、内存、磁盘占用、IP、运行时长、负载、系统时间，经独立 exec 通道采集）；**会话保持与自动重连**——WebSocket 断开或刷新页面后，服务端保留 SSH 会话 10 分钟并缓冲最近 256KB 输出，浏览器自动退避重连、重新附着并把输出回放，前台正在运行的命令不会因为 F5 被直接杀掉；远端重启等被动断开时同样自动退避重连，重试期间可在桌面任务栏连接状态处手动重连；点击标签关闭或「断开」才立即结束会话；**tmux 持久会话**——连接默认使用 tmux（可在连接编辑中关闭），程序重启 / 升级后浏览器标签自动重连并附着回原 tmux 会话，前台命令不中断；服务器未安装 tmux 时自动回退为普通会话并提示；命令底栏「搜索」支持在终端输出中**高亮全部匹配**，并支持**区分大小写、全词匹配、正则表达式**（Alt+C / Alt+W / Alt+R），实时显示当前序号 / 匹配总数；上一个 / 下一个跳转并自动滚动到命中行
 - **端口转发**：按连接保存**本机监听（-L）**与**服务器监听（-R）**规则，支持自动启动、运行状态与错误提示、启动 / 停止 / 编辑 / 删除；监听地址默认 `127.0.0.1`，也可显式填写 `0.0.0.0` 对外开放；转发规则在每次会话建立后自动恢复，终端底栏最右侧的路线图标可随时管理
@@ -128,6 +129,52 @@ deepshell-1.3.0/
    - **文件 SFTP**：双击目录进入 / 双击文件在线编辑；顶部支持路径直达、上传、新建文件夹
    - **快捷命令**：点击 = 执行（自动追加回车）；点右侧 `+` = 仅填入终端，人工确认后回车
 4. 顶部标签可开多个会话；中键或 × 关闭标签（会断开对应 SSH 连接）
+
+## 外部调用（跳板机客户端）
+
+DeepShell 可以作为被网页 / 运维门户拉起的本地 SSH 客户端，类似 JumpServer「拉起本地客户端」，但**不需要安装浏览器插件**：网页上放一个 `deepshell://` 链接，浏览器交给操作系统启动 DeepShell，DeepShell 自动找到 / 新建连接并打开对应标签页。
+
+### 注册
+
+- 用分发包或 `java -jar` 启动一次后，会自动把 `deepshell://` 注册为**当前用户**的 URL 协议：Windows 写入 `HKCU\Software\Classes\deepshell`（无需管理员权限），Linux 写入 `~/.local/share/applications/deepshell-protocol.desktop` 并通过 `xdg-mime` 设为默认
+- IDE / classes 模式不会注册；可打开工作台右上角菜单「安全与访问 → 外部调用（跳板机）」查看注册状态、复制调用链接或手动重新注册
+- 协议名与开关：`deepshell.protocol.scheme` / `deepshell.protocol.enabled`（修改后重启生效）；关闭只会停止自动注册，已写入系统的协议项需手动删除（Windows：`HKCU\Software\Classes\deepshell`）
+- 冷启动时会用当前 Java 与 jar 路径生成调用命令，并带上当前数据目录与当前生效的外置 `application.yml`（若存在）；升级 / 移动目录后启动一次会自动刷新
+
+### 两种链接
+
+**打开已保存连接**（推荐，链接不含密码）：在连接右侧 ⚙ →「复制调用链接」。
+
+```html
+<a href="deepshell://connect?id=12">打开「生产服务器」</a>
+```
+
+**按主机直连**（门户可以从资产表直接生成；参数值必须 URL 编码）：
+
+```html
+<a href="deepshell://connect?host=192.168.0.34&port=22&username=root&name=%E7%94%9F%E4%BA%A7%E6%9C%8D%E5%8A%A1%E5%99%A8&password=P%40ssw0rd&source=%E8%BF%90%E7%BB%B4%E9%97%A8%E6%88%B7">打开服务器</a>
+```
+
+| 参数 | 说明 |
+|---|---|
+| `id` | DeepShell **本地**连接 ID（也接受 `connId`，不是门户 / JumpServer 的资产 ID）；存在时直接打开，其余参数仅 `view` / `source` 生效 |
+| `host` / `port` / `username` | 目标服务器；本机有相同 host + port + username 的连接时**复用已保存凭据，不会用链接里的密码覆盖**（同名连接优先，否则用最近打开的） |
+| `name` | 新建连接时的名称，缺省为 `username@host` |
+| `password` | 新建密码认证连接时必填；匹配已有连接时不需要 |
+| `authType` / `keyPath` / `passphrase` | 私钥认证：`authType=KEY` + 本机私钥绝对路径（可选口令） |
+| `view` | `desktop` 直接进入 AI 可视化桌面，`workbench` 留在终端工作台；省略则按用户「连接后进入桌面」的设置 |
+| `source` | 调用方名称，仅用于工作台提示与审计日志 |
+
+- 匹配不到已保存连接且没有 `password` / `keyPath` 时，会在工作台提示无法新建，避免生成不可用连接
+- 已运行时由现有进程打开新浏览器标签，不会重复启动 / 抢端口；未运行时自动启动后再打开
+- 开启登录后，新标签页仍会走正常登录流程
+- 调用结果与启动器排错信息写入数据目录 `logs/protocol.log`；握手密钥在 `protocol.key`，当前实例地址在 `runtime.properties`
+
+### 安全说明
+
+- `ping` / `handoff` 只接受本机回环地址，并校验数据目录中的随机密钥；带 `Origin` 的浏览器跨域请求会被拒绝
+- 但任何网页都可以通过系统协议弹窗尝试调用 DeepShell 打开**已保存连接**（浏览器会先要求用户确认打开）；请开启登录、不要将带密码的链接放到公开页面；不需要此能力时将 `deepshell.protocol.enabled` 设为 `false`
+- 链接里的 `password` 可能出现在浏览器历史、门户日志中，优先使用 `id` 或「主机匹配已保存连接」方式
 
 ## 桌面应用插件
 
@@ -282,7 +329,9 @@ public interface DesktopPluginModule {
 | 插件解压临时目录 | `plugin-staging/`（安装过程使用，启动时自动清理） |
 | 官方插件签名私钥 | 仅维护者本机 `~/.deepshell/signing/`；不进入仓库和分发包 |
 | 审计日志 | `db/deepshell.db` 的 `audit_log` 表（默认最多 5 万条） |
-| 运行日志 | `logs/` |
+| 外部调用握手密钥 | `protocol.key`（首次启动自动生成，仅当前用户可读；删除后重启会重新生成） |
+| 当前实例地址 | `runtime.properties`（协议转发使用；进程退出后可由下一次启动覆盖） |
+| 运行日志 | `logs/`（外部调用排错看 `logs/protocol.log`） |
 
 > 数据目录：分发包默认为程序目录下的 `data/`（可在同级 `application.yml` 中修改）；开发模式为 `~/.deepshell`。拷贝该目录即可迁移全部数据（含密钥与数据库）；需要在新安装上恢复桌面外观、浏览器设置等配置时，使用右上角菜单的「备份与还原」导出 / 导入 ZIP。
 
@@ -321,6 +370,10 @@ src/assembly/      maven-assembly 打包描述（dist.xml）
 server.port: 17777             # 服务端口（默认 17777）
 deepshell.data-dir: ./data     # 数据目录（默认 ~/.deepshell；分发包为 ./data）
 deepshell.open-browser: true   # 启动后自动打开浏览器
+
+# 外部调用（跳板机客户端）：启动时注册 deepshell:// URL 协议，供网页 / 门户拉起本机
+deepshell.protocol.enabled: true
+deepshell.protocol.scheme: deepshell
 
 # 登录认证（默认关闭；开启后必须登录才能访问工作台）
 deepshell.auth.enabled: false
