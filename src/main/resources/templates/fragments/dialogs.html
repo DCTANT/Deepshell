@@ -944,6 +944,66 @@
         </div>
     </el-dialog>
 
+    <!-- HTTP 集成接口（JumpServer / 门户） -->
+    <el-dialog title="HTTP 集成接口（JumpServer / 门户）" :visible.sync="integrationVisible"
+               width="740px" top="6vh" custom-class="protocol-dlg" append-to-body>
+        <div class="protocol-box" v-loading="integrationLoading">
+            <el-alert :title="'HTTP 接口可用 · 当前在线页面 ' + (integrationInfo.clients || 0) + ' 个'"
+                      :description="integrationInfo.configured
+                          ? 'Token 由 application.yml 固定配置；接口只接受服务端调用，不支持浏览器跨域。'
+                          : 'Token 自动保存在数据目录 integration.token；接口只接受服务端调用，不支持浏览器跨域。'"
+                      type="success" :closable="false" show-icon></el-alert>
+            <div class="protocol-grid">
+                <div class="protocol-k">接口地址</div>
+                <div class="protocol-v">
+                    <el-input :value="integrationEndpointUrl" readonly size="mini">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyIntegrationEndpoint">复制</el-button>
+                    </el-input>
+                </div>
+                <div class="protocol-k">调用 Token</div>
+                <div class="protocol-v">
+                    <el-input :value="integrationInfo.token" readonly size="mini" class="integration-token"
+                              placeholder="加载中…">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyIntegrationToken">复制</el-button>
+                    </el-input>
+                </div>
+            </div>
+            <div class="protocol-tip">
+                JumpServer / 门户后端调用该接口时，在请求头携带
+                <code>X-DeepShell-Integration-Token</code>（或 <code>Authorization: Bearer &lt;token&gt;</code>）。
+                接口会按 <code>host + port + username</code> 匹配并更新已有连接，匹配不到时新建连接，
+                随后通知已打开的 DeepShell 页面自动打开连接标签。
+                <b>没有在线页面时</b>响应会返回 <code>workspaceUrl</code>，门户可自行跳转；也可传
+                <code>openInBrowser=true</code> 让 DeepShell 所在机器打开浏览器。
+            </div>
+            <div class="protocol-example-head">请求示例（cURL）</div>
+            <el-input type="textarea" :rows="7" readonly :value="integrationCurl"
+                      class="integration-code"></el-input>
+            <div class="protocol-tip">
+                JSON 字段：<code>id</code>（更新已有连接）/ <code>name</code> / <code>host</code> /
+                <code>port</code> / <code>username</code> / <code>password</code> /
+                <code>authType</code>（PASSWORD / KEY）/ <code>keyPath</code> / <code>passphrase</code> /
+                <code>view</code>（desktop / workbench）/ <code>source</code> /
+                <code>open</code>（默认 true）/ <code>openInBrowser</code>。
+            </div>
+            <div class="protocol-warn">
+                <i class="el-icon-warning"></i>
+                接口会新增或更新连接凭据，请只在内网 / HTTPS 下调用，并像密码一样保管 Token；
+                重新生成 Token 后，已配置的 JumpServer / 门户需要同步更新。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="integrationVisible = false">关闭</el-button>
+            <el-button size="small" icon="el-icon-refresh" :loading="integrationLoading"
+                       @click="loadIntegrationStatus">刷新状态</el-button>
+            <el-button size="small" type="warning" :disabled="integrationInfo.configured"
+                       :title="integrationInfo.configured ? 'Token 已在 application.yml 配置，请修改配置后重启' : ''"
+                       @click="regenerateIntegrationToken">重新生成 Token</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 帮助 -->
     <el-dialog title="DeepShell 帮助手册" :visible.sync="helpVisible" width="720px" top="4vh" append-to-body>
         <div class="help-box">
@@ -974,6 +1034,15 @@
                     <li>网页 / 门户里的 <code>&lt;a href="deepshell://connect?id=12"&gt;打开服务器&lt;/a&gt;</code> 点击后由系统拉起本机 DeepShell：已运行时交给现有实例打开新标签页，未运行时自动启动；无需浏览器插件</li>
                     <li>按主机直连可传 <code>host</code> / <code>port</code> / <code>username</code> / <code>password</code>（或 <code>authType=KEY&amp;keyPath=...</code>）/ <code>name</code> / <code>source</code>；本机已有相同主机、端口与用户名的连接会复用已保存凭据，否则新建并保存连接。建议优先用 <code>id</code> 或省略密码，避免密码出现在链接里</li>
                     <li>外部调用接口只接受本机回环请求并校验数据目录中的 <code>protocol.key</code>，但网页仍可触发打开已保存连接；请开启登录，不要把带密码的链接放到公开页面</li>
+                </ul>
+            </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-connection"></i>HTTP 集成接口（JumpServer / 门户）</div>
+                <ul>
+                    <li>右上角菜单「安全与访问 → 集成接口（HTTP）」可查看接口地址、调用 Token 与 cURL 示例；Token 优先使用 <code>deepshell.integration.token</code>，未配置时自动生成到数据目录 <code>integration.token</code></li>
+                    <li>JumpServer / 门户后端向 <code>POST /api/integration/connections/open</code> 发送 JSON，并在请求头携带 <code>X-DeepShell-Integration-Token</code>（或 Bearer Token）。接口按 host + port + username 更新已有连接，匹配不到时新建连接，然后通知已打开的 DeepShell 页面自动打开连接标签</li>
+                    <li>关键字段：<code>id</code> 更新指定连接；<code>password</code> / <code>keyPath</code> 更新凭据；<code>view=desktop|workbench</code> 指定打开视图；<code>open=false</code> 只保存不打开；<code>openInBrowser=true</code> 在没有在线页面时让 DeepShell 所在机器打开浏览器</li>
+                    <li>接口只面向服务端调用（拒绝浏览器 Origin 请求，不开启 CORS），请在内网 / HTTPS 下使用；没有在线页面时响应会返回 <code>workspaceUrl</code>，由门户把用户浏览器跳转到该地址即可</li>
                 </ul>
             </div>
             <div class="help-section">

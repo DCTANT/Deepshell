@@ -6592,3 +6592,23 @@ body.resizing .term-host {
     0% { left: -40%; }
     100% { left: 105%; }
 }
+
+/* HTTP 集成接口弹窗 */
+.integration-token .el-input__inner {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+}
+
+.integration-code textarea {
+    background: #f7f8fa;
+    color: #303133;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.ai-desktop.dsk-scheme-dark .integration-code textarea {
+    background: #111722;
+    color: #d7e1f0;
+    border-color: #2a3140;
+}

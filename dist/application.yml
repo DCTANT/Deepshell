@@ -89,3 +89,8 @@ deepshell:
   # 也可填本机 Shell 可执行文件绝对路径。仅本机回环 + 登录保护，不会暴露给局域网。
   local-shell:
     command: ""
+
+  # HTTP 集成接口（JumpServer / 门户）Token：留空自动生成到数据目录 integration.token，
+  # 在工作台「安全与访问 → 集成接口（HTTP）」中查看 / 重新生成；也可在此固定配置。
+  integration:
+    token: ""

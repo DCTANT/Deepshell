@@ -4304,6 +4304,12 @@ new Vue({
             enabled: true, scheme: 'deepshell', state: 'PENDING', detail: '',
             launcher: '', platform: ''
         },
+        integrationVisible: false,
+        integrationLoading: false,
+        integrationInfo: {
+            endpoint: '/api/integration/connections/open',
+            token: '', configured: false, clients: 0, scheme: 'http', port: 0
+        },
         /* DeepShell 后端自身的关闭 / 重启状态 */
         appLifecycle: {
             visible: false,
@@ -4358,6 +4364,8 @@ new Vue({
             ['CONNECTION_EXPORT', '导出连接'],
             ['PROTOCOL_OPEN', '外部调用'],
             ['PROTOCOL_REGISTER', '注册外部调用'],
+            ['INTEGRATION_OPEN', '接口打开连接'],
+            ['INTEGRATION_TOKEN', '集成接口 Token'],
             ['HOST_KEY', '主机指纹'],
             ['PORT_FORWARD', '端口转发'],
             ['AUTH_SETTINGS', '认证设置']
@@ -4571,6 +4579,18 @@ new Vue({
                 return 'deepshell://connect?id=' + this.connections[0].id;
             }
             return 'deepshell://connect?host=192.168.1.10&port=22&username=root&name=Demo&password=your-password';
+        },
+        integrationEndpointUrl: function () {
+            return location.origin + (this.integrationInfo.endpoint || '/api/integration/connections/open');
+        },
+        integrationCurl: function () {
+            var token = this.integrationInfo.token || 'YOUR_TOKEN';
+            return "curl -X POST '" + this.integrationEndpointUrl + "' \\\n"
+                + "  -H 'Content-Type: application/json' \\\n"
+                + "  -H 'X-DeepShell-Integration-Token: " + token + "' \\\n"
+                + "  -d '{\"name\":\"生产服务器\",\"host\":\"10.0.0.10\",\"port\":22,"
+                + "\"username\":\"root\",\"password\":\"******\","
+                + "\"view\":\"desktop\",\"source\":\"jumpserver\"}'";
         },
         appLifecycleTitle: function () {
             var s = this.appLifecycle;
@@ -6436,6 +6456,8 @@ new Vue({
                 this.openAuthSettings();
             } else if (cmd === 'protocol') {
                 this.openProtocolDialog();
+            } else if (cmd === 'integration') {
+                this.openIntegrationDialog();
             } else if (cmd === 'audit') {
                 this.openAudit();
             } else if (cmd === 'ai') {
@@ -17648,6 +17670,136 @@ new Vue({
             }
             this.copyText('deepshell://connect?id=' + c.id);
         },
+        /* ---------- HTTP 集成接口（JumpServer / 门户） ---------- */
+        openIntegrationDialog: function () {
+            this.integrationVisible = true;
+            this.loadIntegrationStatus();
+        },
+        loadIntegrationStatus: function () {
+            var self = this;
+            this.integrationLoading = true;
+            return http.get('/api/integration/status').then(function (d) {
+                if (d) {
+                    self.integrationInfo = d;
+                }
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.integrationLoading = false;
+            });
+        },
+        regenerateIntegrationToken: function () {
+            var self = this;
+            this.$confirm('重新生成后，现有 JumpServer / 门户配置的 Token 将立即失效。确定继续？',
+                '重新生成集成 Token', { type: 'warning' })
+                .then(function () {
+                    return http.post('/api/integration/token/regenerate');
+                })
+                .then(function (d) {
+                    if (d) {
+                        self.integrationInfo = d;
+                    }
+                    self.loadAppInfo();
+                    ELEMENT.Message.success('已重新生成集成接口 Token');
+                })
+                .catch(function () { /* 取消或已由拦截器提示 */ });
+        },
+        copyIntegrationEndpoint: function () {
+            this.copyText(this.integrationEndpointUrl);
+        },
+        copyIntegrationToken: function () {
+            if (!this.integrationInfo.token) {
+                ELEMENT.Message.warning('Token 尚未生成');
+                return;
+            }
+            this.copyText(this.integrationInfo.token);
+        },
+        copyIntegrationCurl: function () {
+            if (!this.integrationInfo.token) {
+                ELEMENT.Message.warning('Token 尚未生成');
+                return;
+            }
+            this.copyText(this.integrationCurl);
+        },
+        /* ---------- 工作台事件通道：HTTP 接口打开连接 ---------- */
+        connectWorkspaceEvents: function () {
+            var self = this;
+            if (this._eventClosed) {
+                return;
+            }
+            if (this._eventWs && (this._eventWs.readyState === 0 || this._eventWs.readyState === 1)) {
+                return;
+            }
+            var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+            var ws = new WebSocket(proto + location.host + '/ws/events');
+            this._eventWs = ws;
+            ws.onmessage = function (ev) {
+                var msg = null;
+                try { msg = JSON.parse(ev.data); } catch (e) { return; }
+                self.onWorkspaceEvent(msg);
+            };
+            ws.onclose = function () {
+                if (self._eventWs !== ws) {
+                    return;
+                }
+                self._eventWs = null;
+                if (!self._eventClosed) {
+                    setTimeout(function () { self.connectWorkspaceEvents(); }, 3000);
+                }
+            };
+            ws.onerror = function () {
+                try { ws.close(); } catch (e) { /* ignore */ }
+            };
+        },
+        onWorkspaceEvent: function (msg) {
+            if (!msg) {
+                return;
+            }
+            if (msg.type === 'connections-changed') {
+                this.loadConnections();
+                return;
+            }
+            if (msg.type !== 'open-connection') {
+                return;
+            }
+            var connId = Number(msg.connId);
+            if (!connId) {
+                return;
+            }
+            var self = this;
+            var source = msg.source || '';
+            var view = msg.view || '';
+            var path = msg.workspaceUrl || ('/workspace?connId=' + connId + '&external=1');
+            this.loadConnections().then(function () {
+                var conn = self.connections.find(function (c) { return c.id === connId; });
+                if (!conn) {
+                    ELEMENT.Message.warning('接口请求打开的连接不存在或已被删除');
+                    return;
+                }
+                if (self.desktop.visible) {
+                    // 桌面内不能安全地原地插入一个工作台标签，打开新浏览器标签页
+                    var win = window.open(path, '_blank');
+                    if (!win) {
+                        ELEMENT.Notification({
+                            title: '接口请求打开连接',
+                            message: '点击打开「' + conn.name + '」' + (source ? ' · ' + source : ''),
+                            type: 'success',
+                            duration: 0,
+                            onClick: function () {
+                                window.open(path, '_blank');
+                            }
+                        });
+                    }
+                    return;
+                }
+                var forceWorkbench = view === 'workbench';
+                var forceDesktop = view === 'desktop';
+                var auto = !forceWorkbench;
+                var tab = self.openTab(connId, null, auto, forceDesktop);
+                if (tab) {
+                    ELEMENT.Message.success('接口已打开「' + conn.name + '」'
+                        + (source ? ' · 来源：' + source : ''));
+                }
+            });
+        },
         exportConns: function () {
             var a = document.createElement('a');
             a.href = '/api/connections/export';
@@ -22683,6 +22835,13 @@ new Vue({
         self.loadDesktopPlugins(false);
         self.loadBuiltinPlugins(false);
         window.addEventListener('message', self.onPluginBridgeMessage);
+        self.connectWorkspaceEvents();
+        window.addEventListener('beforeunload', function () {
+            self._eventClosed = true;
+            if (self._eventWs) {
+                try { self._eventWs.close(); } catch (e) { /* ignore */ }
+            }
+        });
         self.loadLocalDownloadStatus();
         self.loadAuthStatus();
         self.loadAiRuntimeConfig();

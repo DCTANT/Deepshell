@@ -30,6 +30,8 @@ public class AuthWebConfig implements WebMvcConfigurer {
                         // 本机启动器转发外部调用；接口内部校验回环地址 + 数据目录握手密钥
                         "/api/protocol/ping",
                         "/api/protocol/handoff",
+                        // JumpServer / 门户 HTTP 接口：接口内部校验集成 Token
+                        "/api/integration/connections/open",
                         "/css/**",
                         "/js/**",
                         "/vendor/**",
