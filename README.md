@@ -224,7 +224,7 @@ public interface DesktopPluginModule {
 ### 内置 Elasticsearch 管理器
 
 - 在桌面「安装 / 管理」的「内置应用」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名与 `backend/elasticsearch-backend.jar`，安装或更新后需重启 DeepShell 加载后端
-- 使用插件自带的轻量 REST 客户端直连 Elasticsearch（6.x / 7.x / 8.x / 9.x），支持 HTTP / HTTPS、Basic 认证、API Key 与自签名证书忽略校验；连接会话只保存在内存中，最多 8 个、空闲 30 分钟释放
+- 使用插件自带的轻量 REST 客户端直连 Elasticsearch（7.x / 8.x / 9.x），支持 HTTP / HTTPS、Basic 认证、API Key 与自签名证书忽略校验；连接会话只保存在内存中，最多 8 个、空闲 30 分钟释放
 - 概览页展示集群健康、节点角色 / 堆 / 磁盘 / CPU、索引数、文档总数与主分片存储；索引页支持按名称筛选、查看映射 / 设置 / 别名、创建与删除索引、手动刷新索引
 - 文档页支持 Lucene 查询语法搜索、分页浏览、查看 / 新建 / 编辑 / 删除文档；REST 控制台可执行 GET / POST / PUT / DELETE / HEAD 请求并查看状态码、耗时与格式化响应，仅允许以 `/` 开头的集群内路径
 - 保存的连接配置（名称、地址、用户名、认证方式、超时、TLS、最近使用时间）持久化在 `plugin-data/com.deepshell.elasticsearch/connections.properties`；密码 / API Key 使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接
