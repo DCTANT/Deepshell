@@ -723,7 +723,7 @@
                                 <i class="el-icon-loading"></i> {{ activeRun.phase }}
                             </span>
                             <span class="spacer"></span>
-                            <el-button size="mini" icon="el-icon-s-fold"
+                            <el-button size="mini" icon="el-icon-coin"
                                        :title="contextPercent <= 50 ? '上下文使用未超过 50%，暂不需要压缩' : '压缩较早上下文'"
                                        :disabled="!canCompact"
                                        @click="compact"></el-button>
@@ -777,7 +777,7 @@
                                          :class="m.role">
                                         <div v-if="m.role === 'compact'" class="aichat-compact">
                                             <div class="aichat-compact-head" @click="m.open = !m.open">
-                                                <i class="el-icon-s-fold aichat-compact-ico"></i>
+                                                <i class="el-icon-coin aichat-compact-ico"></i>
                                                 <span class="aichat-compact-title">上下文已压缩</span>
                                                 <span class="aichat-compact-meta">
                                                     合并 {{ m.beforeMessages }} 条 · {{ fmtTokens(m.beforeTokens) }} → {{ fmtTokens(m.afterTokens) }}
@@ -1000,7 +1000,7 @@
                                                         上下文已超过窗口的 80%，建议先压缩较早对话再继续。
                                                     </div>
                                                     <div class="aichat-ctx-actions">
-                                                        <el-button size="mini" type="primary" icon="el-icon-s-fold"
+                                                        <el-button size="mini" type="primary" icon="el-icon-coin"
                                                                    :loading="compacting"
                                                                    :disabled="!canCompact"
                                                                    @click="compact">压缩上下文</el-button>
