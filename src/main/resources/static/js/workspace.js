@@ -4059,9 +4059,6 @@ new Vue({
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
               icon: 'el-icon-setting', color: '#54657e',
               category: '系统工具', desc: '调整桌面外观、时钟、网络与系统设置' },
-            { key: 'app:appcenter', type: 'app', action: 'appcenter', label: '应用中心',
-              icon: 'el-icon-shopping-bag-1', color: '#8b5cf6',
-              category: '系统工具', desc: '浏览、安装和管理桌面应用（功能建设中）' },
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
               icon: 'el-icon-chat-dot-round', color: '#3d7eff',
               category: 'AI 助手', desc: '使用 AI 助手执行命令、排查服务器问题' }
