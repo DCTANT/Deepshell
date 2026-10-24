@@ -80,6 +80,8 @@ public class AiAgentService {
         public AiChatClient.Usage usage;
         /** 模型输出里只有无法解析的 DSML/工具调用标记 */
         public boolean dsmlUnrecognized;
+        /** 模型只返回了思考过程或空正文，没有给出可执行命令 */
+        public boolean reasoningOnly;
     }
 
     /** 一轮对话：调用模型并解析；auto=false 时命令不自动执行，auto=true 时高危命令仍需确认 */
@@ -128,35 +130,47 @@ public class AiAgentService {
             throw new AiCancellationToken.CancelledException();
         }
         AgentResult r = buildResult(s, cwd, auto, result, token);
-        if (r.dsmlUnrecognized && !token.isCancelled()) {
-            // 模型输出了无法识别的 DSML：自动让它改写成 JSON 再试一次，而不是直接把错误丢给用户
-            List<Map<String, String>> repair = new ArrayList<>(messages);
-            Map<String, String> assistant = new LinkedHashMap<>();
-            assistant.put("role", "assistant");
-            String malformed = result.text == null ? "" : result.text;
-            if (malformed.length() > MAX_CONTENT_CHARS) {
-                malformed = malformed.substring(0, MAX_CONTENT_CHARS);
-            }
-            assistant.put("content", malformed);
-            repair.add(assistant);
+        List<Map<String, String>> repairHistory = new ArrayList<>(messages);
+        for (int attempt = 0; attempt < 2
+                && (r.dsmlUnrecognized || r.reasoningOnly) && !token.isCancelled(); attempt++) {
+            // 模型没有给出可执行 JSON：把上一轮输出（含 reasoning）带回并要求改写，最多重试两次
+            repairHistory.add(repairAssistant(result));
             Map<String, String> notice = new LinkedHashMap<>();
             notice.put("role", "user");
-            notice.put("content", DSML_REPAIR_PROMPT);
-            repair.add(notice);
-            log.info("模型返回无法解析的 DSML，尝试让其改写为 JSON（长度 {}）",
-                    result.text == null ? 0 : result.text.length());
-            AiChatClient.ChatResult repaired = readModel(system, repair, onTextDelta, onReasoning, token);
+            notice.put("content", MODEL_REPAIR_PROMPT);
+            repairHistory.add(notice);
+            log.info("模型未给出可执行命令（dsml={}, reasoningOnly={}），自动要求改写 JSON（第 {} 次）",
+                    r.dsmlUnrecognized, r.reasoningOnly, attempt + 1);
+            result = readModel(system, repairHistory, onTextDelta, onReasoning, token);
             if (token.isCancelled()) {
                 throw new AiCancellationToken.CancelledException();
             }
-            AgentResult r2 = buildResult(s, cwd, auto, repaired, token);
-            if (!r2.dsmlUnrecognized) {
-                r = r2;
-            } else {
-                r.text = "模型连续两次返回了无法解析的工具调用格式（DSML/XML），本轮已停止。请重试或到 AI 设置中切换模型。";
-            }
+            r = buildResult(s, cwd, auto, result, token);
+        }
+        if (r.dsmlUnrecognized || r.reasoningOnly) {
+            r.kind = "reply";
+            r.text = "模型连续多次只返回思考过程或无法解析的工具调用，未能给出可执行命令。"
+                    + "请重试或到 AI 设置中切换模型。";
         }
         return r;
+    }
+
+    /** 把上一轮模型输出整理成 assistant 消息，供修复重试使用；只有 reasoning 时也带回去 */
+    private static Map<String, String> repairAssistant(AiChatClient.ChatResult result) {
+        String content = result.text == null ? "" : result.text;
+        if (content.trim().isEmpty() && result.reasoning != null) {
+            content = result.reasoning;
+        }
+        if (content.trim().isEmpty()) {
+            content = "（上一轮没有正文）";
+        }
+        if (content.length() > MAX_CONTENT_CHARS) {
+            content = content.substring(0, MAX_CONTENT_CHARS);
+        }
+        Map<String, String> message = new LinkedHashMap<>();
+        message.put("role", "assistant");
+        message.put("content", content);
+        return message;
     }
 
     /** 流式读取一次模型输出；每次调用使用独立的展示累积器，修复重试时不会混入上一次的文本 */
@@ -191,9 +205,11 @@ public class AiAgentService {
                     r = fromReasoning;
                 }
             }
-            if ("reply".equals(r.kind) && (r.text == null || r.text.trim().isEmpty())
-                    && !reasoning.isEmpty()) {
-                r.text = "模型只返回了思考过程，没有可执行命令。请点击重试。";
+            if ("reply".equals(r.kind) && (r.text == null || r.text.trim().isEmpty())) {
+                r.reasoningOnly = true;
+                if (!reasoning.isEmpty()) {
+                    r.text = "模型只返回了思考过程，没有可执行命令。请点击重试。";
+                }
             }
         }
         r.usage = result.usage;
@@ -519,12 +535,13 @@ public class AiAgentService {
     private static final String DSML_MARK_BODY =
             "\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*";
 
-    /** 无法解析 DSML 时自动发给模型，让它改写成约定的 JSON */
-    private static final String DSML_REPAIR_PROMPT =
-            "你上一条输出包含无法解析的 DSML/XML 工具调用。请重新输出，且只输出以下两种 JSON 之一：\n"
+    /** 无法解析 DSML 或只有思考过程时自动发给模型，让它继续输出约定的 JSON */
+    private static final String MODEL_REPAIR_PROMPT =
+            "你上一条没有给出可执行的 JSON（可能只输出了思考过程，或工具调用格式无法解析）。"
+                    + "请基于当前任务继续，只输出以下两种 JSON 之一：\n"
                     + "1. 需要执行命令：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n"
-                    + "2. 不需要执行命令：{\"reply\":\"给用户的回复\"}\n"
-                    + "不要输出任何 XML、DSML、<parameter> 标签或 markdown 代码块。";
+                    + "2. 任务完成 / 不需要命令：{\"reply\":\"给用户的回复\"}\n"
+                    + "不要输出任何 XML、DSML、<parameter> 标签或 markdown 代码块，也不要只输出思考过程。";
 
     private static final Pattern DSML_PARAMETER = Pattern.compile(
             "<\\s*(?:" + DSML_MARK_BODY + ")?parameter\\b([^>]*)>(.*?)"

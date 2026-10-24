@@ -76,4 +76,34 @@ class AiAgentDsmlRepairTest {
         assertTrue(repair.get(repair.size() - 2).get("content").contains("<parameter"));
         assertTrue(repair.get(repair.size() - 1).get("content").contains("只输出以下两种 JSON"));
     }
+
+    @Test
+    void retriesWhenModelReturnsReasoningOnly() throws Exception {
+        SshSessionManager.SshSession session = mock(SshSessionManager.SshSession.class);
+        when(session.getConnectionId()).thenReturn(1L);
+        when(sessions.get("s1")).thenReturn(session);
+        SshConnection cfg = new SshConnection();
+        cfg.setUsername("u");
+        cfg.setHost("h");
+        when(connections.get(1L)).thenReturn(cfg);
+
+        AiChatClient.ChatResult reasoningOnly = new AiChatClient.ChatResult(
+                "", null, "I should list the files first.");
+        AiChatClient.ChatResult fixed = new AiChatClient.ChatResult(
+                "{\"cmd\":\"ls -la\",\"note\":\"列目录\"}", null);
+        when(chatClient.streamDetailed(anyString(), anyList(), any(), any(), any()))
+                .thenReturn(reasoningOnly, fixed);
+
+        AiAgentService service = new AiAgentService(chatClient, sessions, connections, audit);
+        AiAgentService.AgentMessage user = new AiAgentService.AgentMessage();
+        user.role = "user";
+        user.content = "查看当前目录";
+        AiAgentService.AgentResult r = service.stepStream("s1", "/tmp", false,
+                Collections.singletonList(user), s -> { }, s -> { }, new AiCancellationToken());
+
+        assertEquals("cmd", r.kind);
+        assertEquals("ls -la", r.command);
+        assertTrue(r.needConfirm);
+        verify(chatClient, times(2)).streamDetailed(anyString(), anyList(), any(), any(), any());
+    }
 }
