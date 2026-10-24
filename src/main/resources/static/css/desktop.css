@@ -5312,6 +5312,15 @@
     background: var(--dsk-win-hover);
 }
 
+/* Element UI 的斑马纹默认是 #fafafa，深色窗口里会变成刺眼的白条；跟随窗口明暗使用 subtle 色 */
+.ai-desktop .dsk-window .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+    background: var(--dsk-win-subtle);
+}
+
+.ai-desktop .dsk-window .el-table--striped .el-table__body tr.el-table__row--striped:hover > td.el-table__cell {
+    background: var(--dsk-win-hover);
+}
+
 .ai-desktop.dsk-scheme-dark .dsk-window .el-table__empty-block {
     background: transparent;
 }
