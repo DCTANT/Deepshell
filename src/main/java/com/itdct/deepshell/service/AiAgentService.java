@@ -80,6 +80,8 @@ public class AiAgentService {
         public boolean dsmlUnrecognized;
         /** 模型只返回了思考过程或空正文，没有给出可执行命令 */
         public boolean reasoningOnly;
+        /** 模型输出看起来是命令 JSON，但格式损坏到无法提取 cmd（会自动重试） */
+        public boolean malformedCommand;
     }
 
     /** 一轮对话：调用模型并解析；auto=false 时命令不自动执行，auto=true 时高危命令仍需确认 */
@@ -130,24 +132,27 @@ public class AiAgentService {
         AgentResult r = buildResult(s, cwd, auto, result, token);
         List<Map<String, String>> repairHistory = new ArrayList<>(messages);
         for (int attempt = 0; attempt < 2
-                && (r.dsmlUnrecognized || r.reasoningOnly) && !token.isCancelled(); attempt++) {
+                && (r.dsmlUnrecognized || r.reasoningOnly || r.malformedCommand)
+                && !token.isCancelled(); attempt++) {
             // 模型没有给出可执行 JSON：把上一轮输出（含 reasoning）带回并要求改写，最多重试两次
             repairHistory.add(repairAssistant(result));
             Map<String, String> notice = new LinkedHashMap<>();
             notice.put("role", "user");
             notice.put("content", MODEL_REPAIR_PROMPT);
             repairHistory.add(notice);
-            log.info("模型未给出可执行命令（dsml={}, reasoningOnly={}），自动要求改写 JSON（第 {} 次）",
-                    r.dsmlUnrecognized, r.reasoningOnly, attempt + 1);
+            log.info("模型未给出可执行命令（dsml={}, reasoningOnly={}, malformedJson={}），自动要求改写 JSON（第 {} 次）",
+                    r.dsmlUnrecognized, r.reasoningOnly, r.malformedCommand, attempt + 1);
             result = readModel(system, repairHistory, onTextDelta, onReasoning, token);
             if (token.isCancelled()) {
                 throw new AiCancellationToken.CancelledException();
             }
             r = buildResult(s, cwd, auto, result, token);
         }
-        if (r.dsmlUnrecognized || r.reasoningOnly) {
+        if (r.dsmlUnrecognized || r.reasoningOnly || r.malformedCommand) {
             r.kind = "reply";
-            r.text = "模型连续多次只返回思考过程或无法解析的工具调用，未能给出可执行命令。"
+            r.text = r.malformedCommand
+                    ? "模型返回的命令 JSON 格式不完整，已自动重试但仍无法解析。请重试或到 AI 设置中切换模型。"
+                    : "模型连续多次只返回思考过程或无法解析的工具调用，未能给出可执行命令。"
                     + "请重试或到 AI 设置中切换模型。";
         }
         return r;
@@ -237,6 +242,7 @@ public class AiAgentService {
 
         AgentResult r = new AgentResult();
         r.dsmlUnrecognized = parsed.dsmlUnrecognized;
+        r.malformedCommand = parsed.malformedCommand;
         if (parsed.command != null && !parsed.command.isEmpty()) {
             r.kind = "cmd";
             r.command = parsed.command;
@@ -255,7 +261,9 @@ public class AiAgentService {
             return r;
         }
         r.kind = "reply";
-        r.text = parsed.reply == null || parsed.reply.isEmpty() ? content : parsed.reply;
+        r.text = parsed.malformedCommand
+                ? "模型返回的命令格式不完整，正在自动重试…"
+                : (parsed.reply == null || parsed.reply.isEmpty() ? content : parsed.reply);
         return r;
     }
 
@@ -365,6 +373,7 @@ public class AiAgentService {
         String note;
         String reply;
         boolean dsmlUnrecognized;
+        boolean malformedCommand;
     }
 
     /**
@@ -472,14 +481,31 @@ public class AiAgentService {
      * 字符串内允许真实换行；未转义引号只有在后面紧跟 , 或 } 时才视为字段结束。
      */
     static String lenientJsonReply(String content) {
-        if (content == null) {
+        return lenientJsonField(content, "reply");
+    }
+
+    /** 宽松提取命令：只有 cmd 字符串正常闭合才返回，避免把被截断的半条命令直接执行 */
+    static String lenientJsonCommand(String content) {
+        return lenientJsonField(content, "cmd", true);
+    }
+
+    /**
+     * 宽松提取 JSON 字符串字段：允许字符串里有真实换行、未转义引号，
+     * 也兼容模型漏掉字符串末尾引号（例如 {"cmd":"ls","note":"查看目录}）。
+     */
+    static String lenientJsonField(String content, String key) {
+        return lenientJsonField(content, key, false);
+    }
+
+    private static String lenientJsonField(String content, String key, boolean requireClosed) {
+        if (content == null || key == null || key.isEmpty()) {
             return null;
         }
-        int key = content.indexOf("\"reply\"");
-        if (key < 0) {
+        int keyAt = content.indexOf("\"" + key + "\"");
+        if (keyAt < 0) {
             return null;
         }
-        int colon = content.indexOf(':', key + 7);
+        int colon = content.indexOf(':', keyAt + key.length() + 2);
         if (colon < 0) {
             return null;
         }
@@ -491,6 +517,7 @@ public class AiAgentService {
             return null;
         }
         StringBuilder sb = new StringBuilder();
+        boolean unescapedQuote = false;
         for (int i = start + 1; i < content.length(); i++) {
             char c = content.charAt(i);
             if (c == '\\' && i + 1 < content.length()) {
@@ -539,13 +566,30 @@ public class AiAgentService {
                     j++;
                 }
                 if (j >= content.length() || content.charAt(j) == ',' || content.charAt(j) == '}') {
-                    return sb.toString();
+                    // 命令里出现未转义引号说明 JSON 本身已损坏，不能按截断后的命令执行
+                    return requireClosed && unescapedQuote ? null : sb.toString();
                 }
                 sb.append('"');
+                unescapedQuote = true;
                 continue;
             }
             sb.append(c);
         }
+        if (requireClosed) {
+            return null;
+        }
+        // 缺少收尾引号：把被吞进字符串值的对象右括号去掉
+        int end = sb.length();
+        while (end > 0 && Character.isWhitespace(sb.charAt(end - 1))) {
+            end--;
+        }
+        if (end > 0 && sb.charAt(end - 1) == '}') {
+            end--;
+        }
+        while (end > 0 && Character.isWhitespace(sb.charAt(end - 1))) {
+            end--;
+        }
+        sb.setLength(end);
         return sb.length() > 0 ? sb.toString() : null;
     }
 
@@ -602,10 +646,27 @@ public class AiAgentService {
             }
         }
         if (t.trim().startsWith("{")) {
-            // 模型偶尔输出带真实换行/未转义引号的“漂亮 JSON”，标准解析失败但内容仍是回复
+            // 模型偶尔输出带真实换行/未转义引号或漏掉收尾引号的“漂亮 JSON”，宽松提取命令字段
+            int cmdAt = t.indexOf("\"cmd\"");
+            int replyAt = t.indexOf("\"reply\"");
+            boolean commandFirst = cmdAt >= 0 && (replyAt < 0 || cmdAt < replyAt);
+            if (commandFirst) {
+                String lenientCmd = lenientJsonCommand(t);
+                if (lenientCmd != null && !lenientCmd.trim().isEmpty()) {
+                    p.command = lenientCmd.trim();
+                    String lenientNote = lenientJsonField(t, "note");
+                    p.note = lenientNote == null ? "" : lenientNote.trim();
+                    return p;
+                }
+            }
+            // 普通回复的 JSON 包裹同样宽松解析
             String lenientReply = lenientJsonReply(t);
             if (lenientReply != null && !lenientReply.trim().isEmpty()) {
                 p.reply = lenientReply.trim();
+                return p;
+            }
+            if (commandFirst) {
+                p.malformedCommand = true;
                 return p;
             }
         }

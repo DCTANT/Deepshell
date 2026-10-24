@@ -89,6 +89,19 @@ public class AiAgentDsmlTest {
     }
 
     @Test
+    void extractsCommandWhenClosingQuoteIsMissing() {
+        String json = "{\"cmd\":\"ls -R /data/a /data/b\",\"note\":\"列出框架 file 包下所有内容}";
+
+        assertEquals("ls -R /data/a /data/b", AiAgentService.lenientJsonCommand(json));
+        assertEquals("列出框架 file 包下所有内容", AiAgentService.lenientJsonField(json, "note"));
+        assertNull(AiAgentService.lenientJsonReply(json));
+        assertNull(AiAgentService.lenientJsonCommand("{\"cmd\":\"rm -rf /tmp/unsafe"));
+        assertNull(AiAgentService.lenientJsonCommand("{\"cmd\":\"echo \"hello, world\"\"}"));
+        assertEquals("echo \"hello, world\"",
+                AiAgentService.lenientJsonCommand("{\"cmd\":\"echo \\\"hello, world\\\"\"}"));
+    }
+
+    @Test
     void extractsReplyFromPrettyJsonWithLiteralNewlines() {
         String json = "{\n"
                 + "  \"reply\": \"## 修复完成\n\n### 报错 1\n- 内容\",\n"
