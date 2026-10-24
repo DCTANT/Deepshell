@@ -1150,6 +1150,10 @@ function stripDsmlText(src) {
         .replace(/\u3000/g, ' ')
         .replace(/＂/g, '"')
         .replace(/＇/g, "'");
+    // 模型偶尔把 <system>...</system> 当成正文/思考输出，直接清掉
+    text = text.replace(/<\s*system\b[^>]*>[\s\S]*?<\s*\/\s*system\s*>/gi, ' ');
+    text = text.replace(/<\s*\|?\s*system\s*\|?\s*>[\s\S]*?<\s*\/\s*\|?\s*system\s*\|?\s*>/gi, ' ');
+    text = text.replace(/<\s*\/?\s*\|?\s*system\s*\|?\s*>/gi, ' ');
     var mark = '\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*';
     text = text.replace(new RegExp('<\\s*' + mark + 'calls\\s*>[\\s\\S]*?'
             + '<\\s*\\/\\s*' + mark + 'calls\\s*>', 'gi'), ' ');
@@ -1160,6 +1164,10 @@ function stripDsmlText(src) {
     text = text.replace(/<\s*\/?\s*parameter\b[^>]*>/gi, ' ');
     return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
+
+Vue.filter('cleanReasoning', function (text) {
+    return stripDsmlText(text);
+});
 
 function aiInlineMarkdown(text) {
     var codes = [];

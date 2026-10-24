@@ -809,7 +809,7 @@
                                                 <span>思考过程</span>
                                                 <span class="aichat-think-hint">{{ m.reasonOpen ? '收起' : '展开' }}</span>
                                             </div>
-                                            <pre v-if="m.reasonOpen" class="aichat-think-body">{{ m.reasoning }}</pre>
+                                            <pre v-if="m.reasonOpen" class="aichat-think-body">{{ m.reasoning | cleanReasoning }}</pre>
                                         </div>
                                         <div v-if="m.text && m.role === 'ai'" class="aichat-bubble aichat-md"
                                              v-html="renderMd(m.text)"></div>
@@ -898,7 +898,7 @@
                                                 <span>思考过程</span>
                                                 <span class="aichat-think-hint">实时</span>
                                             </div>
-                                            <pre class="aichat-think-body">{{ activeRun.reasonText }}</pre>
+                                            <pre class="aichat-think-body">{{ activeRun.reasonText | cleanReasoning }}</pre>
                                         </div>
                                         <div v-if="activeRun.streamText" class="aichat-bubble aichat-md"
                                              v-html="renderMd(activeRun.streamText)"></div>

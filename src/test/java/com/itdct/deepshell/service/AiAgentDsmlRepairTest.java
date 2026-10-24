@@ -106,4 +106,34 @@ class AiAgentDsmlRepairTest {
         assertTrue(r.needConfirm);
         verify(chatClient, times(2)).streamDetailed(anyString(), anyList(), any(), any(), any());
     }
+
+    @Test
+    void retriesWhenModelRepliesWithSystemTagOnly() throws Exception {
+        SshSessionManager.SshSession session = mock(SshSessionManager.SshSession.class);
+        when(session.getConnectionId()).thenReturn(1L);
+        when(sessions.get("s1")).thenReturn(session);
+        SshConnection cfg = new SshConnection();
+        cfg.setUsername("u");
+        cfg.setHost("h");
+        when(connections.get(1L)).thenReturn(cfg);
+
+        AiChatClient.ChatResult systemOnly = new AiChatClient.ChatResult(
+                "<system>你正在执行一个运维任务。请继续。</system>", null);
+        AiChatClient.ChatResult fixed = new AiChatClient.ChatResult(
+                "{\"cmd\":\"pwd\",\"note\":\"查看当前目录\"}", null);
+        when(chatClient.streamDetailed(anyString(), anyList(), any(), any(), any()))
+                .thenReturn(systemOnly, fixed);
+
+        AiAgentService service = new AiAgentService(chatClient, sessions, connections, audit);
+        AiAgentService.AgentMessage user = new AiAgentService.AgentMessage();
+        user.role = "user";
+        user.content = "继续";
+        AiAgentService.AgentResult r = service.stepStream("s1", "/tmp", false,
+                Collections.singletonList(user), s -> { }, s -> { }, new AiCancellationToken());
+
+        assertEquals("cmd", r.kind);
+        assertEquals("pwd", r.command);
+        assertTrue(r.needConfirm);
+        verify(chatClient, times(2)).streamDetailed(anyString(), anyList(), any(), any(), any());
+    }
 }

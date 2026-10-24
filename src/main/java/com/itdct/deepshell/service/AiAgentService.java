@@ -159,7 +159,9 @@ public class AiAgentService {
         if (content.trim().isEmpty() && result.reasoning != null) {
             content = result.reasoning;
         }
-        if (content.trim().isEmpty()) {
+        content = SYSTEM_BLOCK.matcher(content).replaceAll(" ").trim();
+        content = SYSTEM_TAG.matcher(content).replaceAll(" ").trim();
+        if (content.isEmpty()) {
             content = "（上一轮没有正文）";
         }
         if (content.length() > MAX_CONTENT_CHARS) {
@@ -169,6 +171,16 @@ public class AiAgentService {
         message.put("role", "assistant");
         message.put("content", content);
         return message;
+    }
+
+    /** 只有 <system> 标签或空白，没有实际内容 */
+    private static boolean isMetaOnly(String text) {
+        if (text == null) {
+            return true;
+        }
+        String cleaned = SYSTEM_BLOCK.matcher(text).replaceAll(" ").trim();
+        cleaned = SYSTEM_TAG.matcher(cleaned).replaceAll(" ").trim();
+        return cleaned.isEmpty();
     }
 
     /** 流式读取一次模型输出；每次调用使用独立的展示累积器，修复重试时不会混入上一次的文本 */
@@ -194,6 +206,10 @@ public class AiAgentService {
     private AgentResult buildResult(SshSessionManager.SshSession s, String cwd, boolean auto,
                                     AiChatClient.ChatResult result, AiCancellationToken token) {
         AgentResult r = handleContent(s, cwd, auto, result.text, token);
+        if ("reply".equals(r.kind) && isMetaOnly(r.text)) {
+            // 模型把 <system>...</system> 当成回复：视为空正文，进入自动续写
+            r.text = "";
+        }
         if (!"cmd".equals(r.kind) && !r.needConfirm) {
             String reasoning = result.reasoning == null ? "" : result.reasoning.trim();
             // 部分模型会把 DSML 工具调用只写在 reasoning_content 里：正文没有命令时从思考过程补解析
@@ -526,13 +542,20 @@ public class AiAgentService {
     private static final String DSML_MARK_BODY =
             "\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*";
 
+    /** 模型有时会把 <system>...</system> 之类的系统消息当正文/思考输出 */
+    private static final Pattern SYSTEM_BLOCK = Pattern.compile(
+            "<\\s*\\|?\\s*system\\s*\\|?\\s*>[\\s\\S]*?<\\s*/\\s*\\|?\\s*system\\s*\\|?\\s*>",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern SYSTEM_TAG = Pattern.compile(
+            "<\\s*/?\\s*\\|?\\s*system\\s*\\|?\\s*>", Pattern.CASE_INSENSITIVE);
+
     /** 无法解析 DSML 或只有思考过程时自动发给模型，让它继续输出约定的 JSON */
     private static final String MODEL_REPAIR_PROMPT =
             "你上一条没有给出可执行的 JSON（可能只输出了思考过程，或工具调用格式无法解析）。"
                     + "请基于当前任务继续，只输出以下两种 JSON 之一：\n"
                     + "1. 需要执行命令：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n"
                     + "2. 任务完成 / 不需要命令：{\"reply\":\"给用户的回复\"}\n"
-                    + "不要输出任何 XML、DSML、<parameter> 标签或 markdown 代码块，也不要只输出思考过程。";
+                    + "不要输出任何 XML、DSML、<parameter>、<system> 标签，不要扮演系统消息，也不要只输出思考过程。";
 
     private static final Pattern DSML_PARAMETER = Pattern.compile(
             "<\\s*(?:" + DSML_MARK_BODY + ")?parameter\\b([^>]*)>(.*?)"
