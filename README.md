@@ -100,6 +100,8 @@
 
 不用安装 JDK，双击 `DeepShell.exe` 即可运行。构建绿色版需要 **JDK 17+**（提供 jlink / jpackage）和 Maven：
 
+> **一键打包**：直接双击仓库根目录的 `build-release.cmd`。脚本会自动查找 JDK 与 Maven（PATH 中没有 Maven 时使用 IDEA 自带的），生成传统分发包、Windows 绿色版和对应的 `.sha256`，完成后打开 `target` 目录。
+
 ```bash
 # 1. 先打 jar（同时生成传统分发包 target/deepshell-1.5.1.zip）
 mvn -DskipTests package

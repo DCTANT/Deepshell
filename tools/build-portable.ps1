@@ -55,6 +55,8 @@ if (-not (Test-Path $jlink) -or -not (Test-Path $jpackage)) {
     Fail "JDK 目录缺少 jlink / jpackage：$JdkHome"
 }
 Info "JDK: $JdkHome"
+# 双击运行时进程环境里不一定有 JAVA_HOME，显式设置后 Maven 才会用同一个 JDK
+$env:JAVA_HOME = $JdkHome
 
 # ---------- Maven 构建 ----------
 if (-not $SkipMaven) {
@@ -62,6 +64,19 @@ if (-not $SkipMaven) {
         $mvn = Get-Command mvn -ErrorAction SilentlyContinue
         if ($mvn) {
             $MavenCmd = $mvn.Source
+        }
+    }
+    if (-not $MavenCmd) {
+        # 未安装独立 Maven 时，使用 IntelliJ IDEA 自带的 Maven
+        $mvnPatterns = @(
+            'C:\Program Files\JetBrains\IntelliJ IDEA *\plugins\maven\lib\maven3\bin\mvn.cmd',
+            "$env:LOCALAPPDATA\JetBrains\Toolbox\apps\IDEA-*\*\plugins\maven\lib\maven3\bin\mvn.cmd",
+            'C:\Software\JetBrains\IntelliJ IDEA *\plugins\maven\lib\maven3\bin\mvn.cmd'
+        )
+        $ideaMvn = Get-ChildItem -Path $mvnPatterns -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($ideaMvn) {
+            $MavenCmd = $ideaMvn.FullName
         }
     }
     if (-not $MavenCmd) {
