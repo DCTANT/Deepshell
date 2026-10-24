@@ -2615,6 +2615,16 @@ Vue.component('term-cmd-bar', {
                 }
             });
         },
+        openSearchWith: function (text) {
+            var self = this;
+            this.searchVisible = true;
+            this.searchText = text || '';
+            this.searchInvalid = false;
+            this.$nextTick(function () {
+                self.focusSearchInput();
+                self.runTerminalSearch('next', false);
+            });
+        },
         clearSearchHighlights: function () {
             if (this.tab && this.tab.searchAddon && this.tab.searchAddon.clearDecorations) {
                 try { this.tab.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
@@ -4793,6 +4803,7 @@ new Vue({
         snippetTarget: loadSnippetTarget(),
         snippetTargets: [],
         tabMenu: { visible: false, x: 0, y: 0, tab: null },
+        termMenu: { visible: false, x: 0, y: 0, text: '', context: '', tabKey: '', windowId: '', hasSelection: false, canAi: false },
         hostKeyVisible: false,
         hostKeyTrusting: false,
         hostKeyChecked: false,
@@ -19861,6 +19872,7 @@ new Vue({
             try { fit.fit(); } catch (e) { /* 容器未就绪时忽略 */ }
             tab.term = term;
             tab.fit = fit;
+            self.bindTerminalContextMenu(tab, el);
             tab._dangerInput = '';
             tab._dangerInputUnknown = false;
             tab._termLogPending = '';
@@ -24205,6 +24217,243 @@ new Vue({
                 }
             });
         },
+        bindTerminalContextMenu: function (tab, el) {
+            var self = this;
+            if (!el) {
+                return;
+            }
+            if (el._deepTermMenu && el._deepTermTab === tab) {
+                return;
+            }
+            if (el._deepTermMenu) {
+                el.removeEventListener('contextmenu', el._deepTermMenu);
+            }
+            el._deepTermTab = tab;
+            el._deepTermMenu = function (ev) {
+                if (ev.button !== 2) {
+                    return;
+                }
+                ev.preventDefault();
+                self.openTerminalMenu(tab, ev, el);
+            };
+            el.addEventListener('contextmenu', el._deepTermMenu);
+        },
+        openTerminalMenu: function (tab, ev, el) {
+            if (!tab || !tab.term) {
+                return;
+            }
+            if (!tab.desktopOnly && this.activeKey !== tab.key) {
+                this.activate(tab.key);
+            }
+            var text = '';
+            try {
+                text = tab.term.getSelection() || '';
+            } catch (e) { /* ignore */ }
+            text = text.replace(/\r\n?/g, '\n');
+            this.termMenu = {
+                visible: true,
+                x: ev.clientX,
+                y: ev.clientY,
+                text: text,
+                context: tab.desktopOnly ? 'desktop' : 'workbench',
+                tabKey: tab.key,
+                windowId: tab.windowId || '',
+                hasSelection: !!text.trim(),
+                canAi: !tab.localShell && !!tab.sessionId
+            };
+            var self = this;
+            this.$nextTick(function () {
+                var menu = self.$refs.termMenu;
+                if (!menu) {
+                    return;
+                }
+                var mw = menu.offsetWidth || 180;
+                var mh = menu.offsetHeight || 0;
+                var rect = el && el.getBoundingClientRect
+                    ? el.getBoundingClientRect()
+                    : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+                var pad = 4;
+                var x = Math.min(Math.max(ev.clientX, rect.left + pad), rect.right - mw - pad);
+                var y = Math.min(Math.max(ev.clientY, rect.top + pad), rect.bottom - mh - pad);
+                self.termMenu.x = Math.round(Math.max(4, Math.min(x, window.innerWidth - mw - 4)));
+                self.termMenu.y = Math.round(Math.max(4, Math.min(y, window.innerHeight - mh - 4)));
+            });
+        },
+        closeTerminalMenu: function () {
+            this.termMenu.visible = false;
+        },
+        termMenuTab: function () {
+            var menu = this.termMenu;
+            if (menu.context === 'desktop' && menu.windowId) {
+                var w = this.desktop.windows.find(function (x) {
+                    return x.id === menu.windowId;
+                });
+                return w && w.termTab ? w.termTab : null;
+            }
+            return this.tabs.find(function (t) {
+                return t.key === menu.tabKey;
+            }) || null;
+        },
+        termMenuCopy: function () {
+            var text = this.termMenu.text;
+            this.closeTerminalMenu();
+            if (text) {
+                this.copyText(text);
+            }
+        },
+        termMenuPasteSelection: function () {
+            var t = this.termMenuTab();
+            var text = this.termMenu.text;
+            this.closeTerminalMenu();
+            if (!t || !text) {
+                return;
+            }
+            var oneLine = text.replace(/\n+/g, ' ').trim();
+            if (!oneLine) {
+                return;
+            }
+            this.insertTextToCmdInput(t, oneLine);
+        },
+        termMenuExplain: function () {
+            var t = this.termMenuTab();
+            var text = this.termMenu.text;
+            var context = this.termMenu.context;
+            var self = this;
+            this.closeTerminalMenu();
+            if (!t || !text.trim()) {
+                return;
+            }
+            if (t.localShell) {
+                ELEMENT.Message.warning('本地终端没有 AI 终端，请连接服务器后使用');
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var prompt = this.terminalExplainPrompt(text);
+            var target = t;
+            if (context === 'desktop') {
+                if (!this.openAiDesktopWindow()) {
+                    return;
+                }
+                target = this.desktopTab;
+            } else {
+                this.panelVisible = true;
+                this.panelTab = 'ai';
+            }
+            if (!target) {
+                return;
+            }
+            this.$nextTick(function () {
+                self.aiExplainSelection(target, prompt);
+            });
+        },
+        terminalExplainPrompt: function (text) {
+            var t = String(text == null ? '' : text).replace(/\r\n?/g, '\n').trim();
+            if (t.length > 6000) {
+                t = t.slice(0, 1000) + '\n…（中间内容已省略）…\n' + t.slice(-5000);
+            }
+            return '请解释下面这段终端内容是什么、是否出现错误。'
+                + '如果失败，请分析可能原因并给出解决方向；需要更多信息时，只告诉我该运行哪些命令，'
+                + '不要自己执行任何命令。\n\n'
+                + '--- 终端内容开始 ---\n' + t + '\n--- 终端内容结束 ---';
+        },
+        aiExplainSelection: function (t, prompt) {
+            if (!t || !prompt) {
+                return;
+            }
+            if (t.chatLoading) {
+                t.chatInput = prompt;
+                ELEMENT.Message.info('AI 对话加载中，解释请求已填入输入框，加载完成后回车发送');
+                return;
+            }
+            var conv = this.aiActiveConv(t);
+            if (!conv) {
+                t.chatInput = prompt;
+                ELEMENT.Message.info('AI 对话尚未就绪，解释请求已填入输入框');
+                return;
+            }
+            if (conv._run && conv._run.busy) {
+                t.chatInput = prompt;
+                ELEMENT.Message.info('当前 AI 对话正在执行，解释请求已填入输入框');
+                return;
+            }
+            t.chatInput = prompt;
+            this.aiChatSend(t);
+        },
+        termMenuSearch: function () {
+            var t = this.termMenuTab();
+            var text = (this.termMenu.text || '').trim();
+            var self = this;
+            this.closeTerminalMenu();
+            if (!t || !text) {
+                return;
+            }
+            t.cmdVisible = true;
+            this.$nextTick(function () {
+                self.fitTab(t);
+                var bar = t._cmdBar;
+                if (bar && bar.openSearchWith) {
+                    bar.openSearchWith(text);
+                } else if (t.searchAddon) {
+                    try {
+                        t.searchAddon.findNext(text, self.buildSearchOptions(false, {}));
+                    } catch (e) { /* ignore */ }
+                }
+            });
+        },
+        termMenuSelectAll: function () {
+            var t = this.termMenuTab();
+            this.closeTerminalMenu();
+            if (t && t.term) {
+                t.term.selectAll();
+                t.term.focus();
+            }
+        },
+        termMenuClear: function () {
+            var t = this.termMenuTab();
+            this.closeTerminalMenu();
+            if (!t || !t.term) {
+                return;
+            }
+            t.term.clear();
+            try { t.term.clearSelection(); } catch (e) { /* ignore */ }
+            if (t.searchAddon && t.searchAddon.clearDecorations) {
+                try { t.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
+            }
+            t.searchResultIndex = -1;
+            t.searchResultCount = 0;
+            t.term.focus();
+        },
+        insertTextToCmdInput: function (tab, text, inputComp) {
+            var self = this;
+            var t = tab || this.activeTab;
+            var txt = text == null ? '' : String(text);
+            if (!t || !txt) {
+                return;
+            }
+            t.cmdVisible = true;
+            this.$nextTick(function () {
+                self.fitTab(t);
+                var comp = inputComp || (t._cmdBar && t._cmdBar.$refs.cmdInput) || self.$refs.cmdInput;
+                var el = comp && comp.$refs.input;
+                var cur = t.cmdText || '';
+                if (el) {
+                    var s = el.selectionStart == null ? cur.length : el.selectionStart;
+                    var e2 = el.selectionEnd == null ? s : el.selectionEnd;
+                    t.cmdText = cur.slice(0, s) + txt + cur.slice(e2);
+                    var caret = s + txt.length;
+                    self.$nextTick(function () {
+                        el.setSelectionRange(caret, caret);
+                        el.focus();
+                    });
+                } else {
+                    t.cmdText = cur + txt;
+                    self.focusCmdInput(t);
+                }
+            });
+        },
         copySelection: function (tab) {
             var t = tab || this.activeTab;
             if (!t) {
@@ -24247,21 +24496,7 @@ new Vue({
                     if (!txt) {
                         return;
                     }
-                    var comp = inputComp || (t._cmdBar && t._cmdBar.$refs.cmdInput) || self.$refs.cmdInput;
-                    var el = comp && comp.$refs.input;
-                    var cur = t.cmdText || '';
-                    if (el) {
-                        var s = el.selectionStart == null ? cur.length : el.selectionStart;
-                        var e2 = el.selectionEnd == null ? s : el.selectionEnd;
-                        t.cmdText = cur.slice(0, s) + txt + cur.slice(e2);
-                        var caret = s + txt.length;
-                        self.$nextTick(function () {
-                            el.setSelectionRange(caret, caret);
-                            el.focus();
-                        });
-                    } else {
-                        t.cmdText = cur + txt;
-                    }
+                    self.insertTextToCmdInput(t, txt, inputComp);
                 }).catch(function () {
                     ELEMENT.Message.warning('浏览器未授予剪贴板读取权限，请直接 Ctrl+V');
                 });
@@ -24677,6 +24912,7 @@ new Vue({
             }
         }, 60 * 1000);
         window.addEventListener('resize', function () {
+            self.termMenu.visible = false;
             self.fitActive();
             self.fitDesktopWindows();
         });
@@ -24718,6 +24954,9 @@ new Vue({
         });
         // 右键菜单关闭时机：点击空白 / Esc / 窗口失焦 / 在他处右键
         document.addEventListener('click', function () {
+            if (self.termMenu.visible) {
+                self.termMenu.visible = false;
+            }
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
             }
@@ -24760,6 +24999,12 @@ new Vue({
             self.closeDesktopSubMenus();
         });
         document.addEventListener('contextmenu', function (e) {
+            var target = e.target;
+            var inTerminal = target && target.closest && target.closest('.term-box, .dsk-term');
+            if (self.termMenu.visible && !inTerminal
+                && !(target && target.closest && target.closest('.term-menu'))) {
+                self.termMenu.visible = false;
+            }
             if (self.tabMenu.visible
                 && !(e.target && e.target.closest && e.target.closest('.ws-topbar'))) {
                 self.tabMenu.visible = false;
@@ -24788,6 +25033,9 @@ new Vue({
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
+                if (self.termMenu.visible) {
+                    self.termMenu.visible = false;
+                }
                 if (self.tabMenu.visible) {
                     self.tabMenu.visible = false;
                 }
@@ -24807,6 +25055,7 @@ new Vue({
         window.addEventListener('blur', function () {
             self.cancelDesktopMarquee();
             self.cancelDesktopIconMarquee();
+            self.termMenu.visible = false;
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
             }

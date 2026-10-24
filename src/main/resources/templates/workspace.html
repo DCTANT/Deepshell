@@ -695,6 +695,32 @@
         </div>
     </div>
 
+    <!-- 终端选区右键菜单：工作台终端与 AI 桌面终端窗口共用 -->
+    <div ref="termMenu" class="tab-menu term-menu" v-if="termMenu.visible"
+         :style="{ left: termMenu.x + 'px', top: termMenu.y + 'px' }"
+         @mousedown.stop @contextmenu.prevent>
+        <div class="tab-menu-item" :class="{ disabled: !termMenu.hasSelection }" @click="termMenuCopy">
+            <i class="el-icon-document-copy"></i>复制
+        </div>
+        <div class="tab-menu-item" :class="{ disabled: !termMenu.hasSelection }" @click="termMenuPasteSelection">
+            <i class="el-icon-bottom"></i>粘贴到输入框
+        </div>
+        <div class="tab-menu-item" v-if="termMenu.canAi"
+             :class="{ disabled: !termMenu.hasSelection }" @click="termMenuExplain">
+            <i class="el-icon-magic-stick"></i>AI 解释
+        </div>
+        <div class="tab-menu-item" :class="{ disabled: !termMenu.hasSelection }" @click="termMenuSearch">
+            <i class="el-icon-search"></i>查找
+        </div>
+        <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" @click="termMenuSelectAll">
+            <i class="el-icon-full-screen"></i>全选
+        </div>
+        <div class="tab-menu-item" @click="termMenuClear">
+            <i class="el-icon-delete"></i>清空终端
+        </div>
+    </div>
+
     <!-- DeepShell 后端关闭 / 重启遮罩 -->
     <div class="app-service-mask" v-if="appLifecycle.visible">
         <div class="app-service-box" :class="['mode-' + appLifecycle.mode, 'status-' + appLifecycle.status]">
