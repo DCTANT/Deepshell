@@ -1143,7 +1143,13 @@ function terminalLogHighlightChunk(pending, chunk) {
 
 /* 去掉思考过程 / 正文里残留的 DSML、DSLM 工具调用标记（部分模型会把工具调用写在 reasoning_content） */
 function stripDsmlText(src) {
-    var text = String(src == null ? '' : src);
+    var text = String(src == null ? '' : src)
+        .replace(/｜/g, '|')
+        .replace(/＜/g, '<')
+        .replace(/＞/g, '>')
+        .replace(/\u3000/g, ' ')
+        .replace(/＂/g, '"')
+        .replace(/＇/g, "'");
     var mark = '\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*';
     text = text.replace(new RegExp('<\\s*' + mark + 'calls\\s*>[\\s\\S]*?'
             + '<\\s*\\/\\s*' + mark + 'calls\\s*>', 'gi'), ' ');

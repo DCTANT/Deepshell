@@ -52,6 +52,43 @@ public class AiAgentDsmlTest {
     }
 
     @Test
+    void supportsFullWidthPipesFromChineseModel() {
+        String command = "cd ~/Project/deepseek-harness && ls -la";
+        String dsml = "<｜｜DSML｜｜ calls>\n"
+                + "<｜｜DSML｜｜ invoke name=\"code_execution\">\n"
+                + "<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">" + command
+                + "</｜｜DSML｜｜ parameter>\n"
+                + "<｜｜DSML｜｜ parameter name=\"note\" string=\"true\">查看目录"
+                + "</｜｜DSML｜｜ parameter>\n"
+                + "</｜｜DSML｜｜ invoke>\n"
+                + "</｜｜DSML｜｜ calls>";
+
+        assertTrue(AiAgentService.containsDsml(dsml));
+        assertEquals(command, AiAgentService.dsmlParameter(dsml, "cmd"));
+        assertEquals("查看目录", AiAgentService.dsmlParameter(dsml, "note"));
+        assertEquals("", AiAgentService.visibleReplyText(dsml));
+    }
+
+    @Test
+    void supportsSpacedClosingTagFromScreenshot() {
+        String command = "cd ~/Project/deepseek-harness && cat ~/rebuild.log | head -20; "
+                + "echo '--- bins ---'; node -e \"console.log(require('/node_modules/tsdown/package.json').bin)\" "
+                + ";ls node_modules/typescript/bin.tsc";
+        String dsml = "< | | DSML | | calls>\n"
+                + "< | | DSML | | invoke name=\"code_execution\">\n"
+                + "< | | DSML | | parameter name=\"cmd\" string=\"true\">" + command
+                + "</ | | DSML | | parameter>\n"
+                + "< | | DSML | | parameter name=\"note\" string=\"true\">查看失败日志与工具二进制路径"
+                + "</ | | DSML | | parameter>\n"
+                + "</ | | DSML | | invoke>\n"
+                + "</ | | DSML | | calls>";
+
+        assertTrue(AiAgentService.containsDsml(dsml));
+        assertEquals(command, AiAgentService.dsmlParameter(dsml, "cmd"));
+        assertEquals("查看失败日志与工具二进制路径", AiAgentService.dsmlParameter(dsml, "note"));
+    }
+
+    @Test
     void acceptsCommandParameterAlias() {
         String dsml = "<|DSML|parameter name=\"command\">ls -la</|DSML|parameter>";
         assertTrue(AiAgentService.containsDsml(dsml));

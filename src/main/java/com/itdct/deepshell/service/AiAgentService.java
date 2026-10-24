@@ -562,19 +562,35 @@ public class AiAgentService {
             "<\\s*/?\\s*(?:parameter|invoke)\\b", Pattern.CASE_INSENSITIVE);
 
     static boolean containsDsml(String content) {
-        if (content == null || content.isEmpty()) {
+        String normalized = normalizeDsml(content);
+        if (normalized == null || normalized.isEmpty()) {
             return false;
         }
-        return DSML_MARKER.matcher(content).find() || BARE_DSML_TAG.matcher(content).find();
+        return DSML_MARKER.matcher(normalized).find() || BARE_DSML_TAG.matcher(normalized).find();
+    }
+
+    /** 部分中文模型会把 | < > 等写成全角字符，解析前统一成 ASCII */
+    private static String normalizeDsml(String content) {
+        if (content == null) {
+            return null;
+        }
+        return content
+                .replace('\uFF5C', '|')  // ｜
+                .replace('\uFF1C', '<')  // ＜
+                .replace('\uFF1E', '>')  // ＞
+                .replace('\u3000', ' ')  // 全角空格
+                .replace('\uFF02', '"')  // ＂
+                .replace('\uFF07', '\''); // ＇
     }
 
     /** 从 DSML 参数块中提取 cmd / note；未闭合或不是 DSML 时返回 null */
     static String dsmlParameter(String content, String name) {
-        if (content == null || content.isEmpty()) {
+        String normalized = normalizeDsml(content);
+        if (normalized == null || normalized.isEmpty()) {
             return null;
         }
         Pattern namePattern = "cmd".equals(name) ? DSML_NAME_CMD : DSML_NAME_NOTE;
-        Matcher matcher = DSML_PARAMETER.matcher(content);
+        Matcher matcher = DSML_PARAMETER.matcher(normalized);
         while (matcher.find()) {
             if (!namePattern.matcher(matcher.group(1)).find()) {
                 continue;
