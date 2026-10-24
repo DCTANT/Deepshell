@@ -37,6 +37,21 @@ public class AiAgentDsmlTest {
     }
 
     @Test
+    void supportsDsmlSpellingAndPlainParameterTag() {
+        String command = "curl -s -o /dev/null -w '%{http_code}' http://192.168.0.151:3080/; "
+                + "curl -s -m 10 -o /dev/null -w 'public14005:%{http_code}' http://43.137.3.86:14005/ 2>&1";
+        String dsml = "< | | DSML | | calls>\n"
+                + "< | | DSML | | invoke name=\"code_execution\">\n"
+                + "< parameter name=\"cmd\">" + command + "</ parameter>\n"
+                + "</ | | DSML | | invoke>\n"
+                + "</ | | DSML | | calls>";
+
+        assertTrue(AiAgentService.containsDsml(dsml));
+        assertEquals(command, AiAgentService.dsmlParameter(dsml, "cmd"));
+        assertEquals("", AiAgentService.visibleReplyText(dsml));
+    }
+
+    @Test
     void truncatedDsmlIsDetectedButDoesNotExecute() {
         String dsml = "<|| DSLM || calls>\n<|| DSLM || parameter name=\"cmd\" string=\"true\">rm -rf /tmp/x";
         assertTrue(AiAgentService.containsDsml(dsml));

@@ -1141,6 +1141,20 @@ function terminalLogHighlightChunk(pending, chunk) {
 }
 
 
+/* 去掉思考过程 / 正文里残留的 DSML、DSLM 工具调用标记（部分模型会把工具调用写在 reasoning_content） */
+function stripDsmlText(src) {
+    var text = String(src == null ? '' : src);
+    var mark = '\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*';
+    text = text.replace(new RegExp('<\\s*' + mark + 'calls\\s*>[\\s\\S]*?'
+            + '<\\s*\\/\\s*' + mark + 'calls\\s*>', 'gi'), ' ');
+    text = text.replace(new RegExp('<\\s*' + mark + 'parameter\\b[^>]*>[\\s\\S]*?'
+            + '<\\s*\\/\\s*' + mark + 'parameter\\s*>', 'gi'), ' ');
+    text = text.replace(/<\s*parameter\b[^>]*>[\s\S]*?<\s*\/\s*parameter\s*>/gi, ' ');
+    text = text.replace(new RegExp('<\\s*\\/?\\s*' + mark + '(?:invoke|parameter)\\b[^>]*>', 'gi'), ' ');
+    text = text.replace(/<\s*\/?\s*parameter\b[^>]*>/gi, ' ');
+    return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function aiInlineMarkdown(text) {
     var codes = [];
     var s = escapeAiHtml(text);
@@ -7896,7 +7910,7 @@ new Vue({
                 if (seq !== run.seq) {
                     return;
                 }
-                var reasoning = (run.reasonText || '').trim();
+                var reasoning = stripDsmlText(run.reasonText || '').trim();
                 run.reasonText = '';
                 if (!r || !r.kind) {
                     self.aiChatFinish(t, conv, 'AI 未返回有效内容', 'retry');

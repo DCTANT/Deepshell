@@ -137,6 +137,20 @@ public class AiAgentService {
             throw new AiCancellationToken.CancelledException();
         }
         AgentResult r = handleContent(s, cwd, auto, result.text, token);
+        if (!"cmd".equals(r.kind) && !r.needConfirm) {
+            String reasoning = result.reasoning == null ? "" : result.reasoning.trim();
+            // 部分模型会把 DSML 工具调用只写在 reasoning_content 里：正文没有命令时从思考过程补解析
+            if (!reasoning.isEmpty() && dsmlParameter(reasoning, "cmd") != null) {
+                AgentResult fromReasoning = handleContent(s, cwd, auto, reasoning, token);
+                if ("cmd".equals(fromReasoning.kind) || fromReasoning.needConfirm) {
+                    r = fromReasoning;
+                }
+            }
+            if ("reply".equals(r.kind) && (r.text == null || r.text.trim().isEmpty())
+                    && !reasoning.isEmpty()) {
+                r.text = "模型只返回了思考过程，没有可执行命令。请点击重试。";
+            }
+        }
         r.usage = result.usage;
         return r;
     }
@@ -256,8 +270,8 @@ public class AiAgentService {
                 .append("- 需要执行命令时，只输出一个 JSON 对象：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n")
                 .append("- 任务完成、需要说明结果或需要向用户确认/提问时，输出：{\"reply\":\"展示给用户的内容\"}\n")
                 .append("- 不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n")
-                .append("- 严禁输出 DSML、<|| DSLM ||>、tool_calls、function_call 等任何工具调用协议或 XML 包装；"
-                        + "即使你的训练数据习惯使用这些格式，也必须改写成上面的 JSON。\n\n")
+                .append("- 只输出上面约定的 JSON，不要输出 tool_calls、function_call 或任何 XML / 协议包装；"
+                        + "即使你的训练数据习惯使用其他工具调用格式，也必须改写成上面的 JSON。\n\n")
                 .append("工作方式：\n")
                 .append("- 每次只提交一条命令，等执行结果返回后再决定下一步；不要臆测命令输出。\n")
                 .append("- 先观察再行动：修改、删除或重启前，先用只读命令确认当前状态，优先使用保守写法。\n")
@@ -453,9 +467,13 @@ public class AiAgentService {
 
     /* ---------- DSML 工具调用格式兼容 ---------- */
 
+    /** DSML / DSLM 标记：兼容两种拼写、单双竖线，以及模型 token 之间的空格 */
+    private static final String DSML_MARK_BODY =
+            "\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*";
+
     private static final Pattern DSML_PARAMETER = Pattern.compile(
-            "<\\|{1,}\\s*DSLM\\s*\\|{1,}\\s*parameter\\b([^>]*)>(.*?)"
-                    + "</\\|{1,}\\s*DSLM\\s*\\|{1,}\\s*parameter>",
+            "<\\s*(?:" + DSML_MARK_BODY + ")?parameter\\b([^>]*)>(.*?)"
+                    + "</\\s*(?:" + DSML_MARK_BODY + ")?parameter\\s*>",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private static final Pattern DSML_NAME_CMD = Pattern.compile(
@@ -465,7 +483,7 @@ public class AiAgentService {
             "name\\s*=\\s*[\"']note[\"']", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern DSML_MARKER = Pattern.compile(
-            "<\\s*\\|{1,2}\\s*DSLM\\s*\\|{1,2}", Pattern.CASE_INSENSITIVE);
+            "<\\s*" + DSML_MARK_BODY, Pattern.CASE_INSENSITIVE);
 
     static boolean containsDsml(String content) {
         return content != null && !content.isEmpty() && DSML_MARKER.matcher(content).find();
@@ -473,7 +491,7 @@ public class AiAgentService {
 
     /** 从 DSML 参数块中提取 cmd / note；未闭合或不是 DSML 时返回 null */
     static String dsmlParameter(String content, String name) {
-        if (content == null || content.isEmpty()) {
+        if (content == null || content.isEmpty() || !containsDsml(content)) {
             return null;
         }
         Pattern namePattern = "cmd".equals(name) ? DSML_NAME_CMD : DSML_NAME_NOTE;
