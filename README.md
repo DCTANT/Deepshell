@@ -101,7 +101,7 @@
 不用安装 JDK，双击 `DeepShell.exe` 即可运行。构建绿色版需要 **JDK 17+**（提供 jlink / jpackage）和 Maven：
 
 ```bash
-# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.5.0.zip）
+# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.5.1.zip）
 mvn -DskipTests package
 
 # 2. 生成内置精简 JRE 的 Windows 绿色版
@@ -111,9 +111,9 @@ powershell -ExecutionPolicy Bypass -File tools/build-portable.ps1 -SkipMaven
 产物：
 
 ```
-target/deepshell-1.5.0-windows-x64-portable/        可直接运行的目录
-target/deepshell-1.5.0-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
-target/deepshell-1.5.0-windows-x64-portable.zip.sha256
+target/deepshell-1.5.1-windows-x64-portable/        可直接运行的目录
+target/deepshell-1.5.1-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
+target/deepshell-1.5.1-windows-x64-portable.zip.sha256
 ```
 
 绿色版特性：
@@ -132,7 +132,7 @@ target/deepshell-1.5.0-windows-x64-portable.zip.sha256
 前置要求：JDK 8+、Maven（仅构建需要）。
 
 ```bash
-# 构建（同时生成传统分发包 target/deepshell-1.5.0.zip）
+# 构建（同时生成传统分发包 target/deepshell-1.5.1.zip）
 mvn -DskipTests package
 
 # 或直接运行 jar（开发调试）
@@ -141,10 +141,10 @@ java -jar target/deepshell.jar
 
 ### 分发包
 
-解压 `target/deepshell-1.5.0.zip` 后的目录结构：
+解压 `target/deepshell-1.5.1.zip` 后的目录结构：
 
 ```
-deepshell-1.5.0/
+deepshell-1.5.1/
 ├─ deepshell.jar      主程序
 ├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
 ├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）

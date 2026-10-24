@@ -25,7 +25,7 @@ public class AppIntegrationController {
     private final ShortcutService shortcuts;
     private final TrayService tray;
 
-    @Value("${deepshell.version:1.5.0}")
+    @Value("${deepshell.version:1.5.1}")
     private String version;
 
     public AppIntegrationController(AppPrefsService prefs, AutoStartService autoStart,
