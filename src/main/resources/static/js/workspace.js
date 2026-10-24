@@ -9996,6 +9996,25 @@ new Vue({
             }
             return this.openDesktopWindow(path || this.desk.path || this.desktopHomeDir || '/');
         },
+        /** 资源管理器图标默认目录：Termux 的 / 不可写，打开可访问的 Termux 家目录；普通服务器保持 / */
+        desktopExplorerStartPath: function () {
+            var home = this.desktopHomeDir;
+            return home && home.indexOf('/com.termux/files/home') >= 0 ? home : '/';
+        },
+        openDesktopExplorerFromIcon: function () {
+            var self = this;
+            var t = this.desktopTab;
+            if (t && !t.local && !t.sftpHome && t.sessionId) {
+                // 图标可能先于 /api/sftp/home 返回被点击，先补齐家目录
+                this.loadHome(t).then(function () {
+                    self.openDesktopExplorerWindow(self.desktopExplorerStartPath());
+                }).catch(function () {
+                    self.openDesktopExplorerWindow('/');
+                });
+                return;
+            }
+            this.openDesktopExplorerWindow(this.desktopExplorerStartPath());
+        },
         /* Alt+Tab / Alt+` 切换桌面窗口：按 z 序循环，最小化窗口会被还原 */
         cycleDesktopWindows: function (dir) {
             if (!this.desktop.visible) {
@@ -12343,7 +12362,7 @@ new Vue({
                     return;
                 }
                 if (item.action === 'explorer') {
-                    this.openDesktopExplorerWindow('/');
+                    this.openDesktopExplorerFromIcon();
                 } else if (item.action === 'editor') {
                     this.openDesktopEditorApp();
                 } else if (item.action === 'terminal') {

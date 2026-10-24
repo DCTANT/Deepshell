@@ -111,8 +111,33 @@ public class SftpService {
         });
     }
 
+    /** Termux 的默认家目录；部分 sshd 会把 home 解析成 /，需要单独兜底 */
+    static final String TERMUX_HOME = "/data/data/com.termux/files/home";
+
     public String home(String sessionId) throws Exception {
-        return withSftp(sessionId, ChannelSftp::getHome);
+        return withSftp(sessionId, c -> {
+            String home = c.getHome();
+            String value = home == null ? "" : home.trim();
+            if (isTermuxHome(value)) {
+                return value;
+            }
+            // Termux 上 / 通常是只读的，不能作为资源管理器默认目录
+            if (value.isEmpty() || "/".equals(value)) {
+                try {
+                    SftpATTRS attrs = c.stat(TERMUX_HOME);
+                    if (attrs != null && attrs.isDir()) {
+                        return TERMUX_HOME;
+                    }
+                } catch (Exception ignore) {
+                    // 非 Termux 或没有权限，保持 sshd 返回的 home
+                }
+            }
+            return home;
+        });
+    }
+
+    static boolean isTermuxHome(String path) {
+        return path != null && path.replace('\\', '/').contains("/com.termux/files/home");
     }
 
     /** 修改文件/目录权限（八进制模式，如 0644、0755） */
