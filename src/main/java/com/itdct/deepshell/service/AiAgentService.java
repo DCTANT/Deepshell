@@ -62,10 +62,8 @@ public class AiAgentService {
         public String text;
         public String command;
         public String note;
-        /** true 表示未执行、等前端让用户确认（高危命令或手动模式） */
+        /** true 表示未执行、等前端让用户确认（手动「每步确认」模式） */
         public boolean needConfirm;
-        /** 高危原因，如「递归删除（rm -r / -rf）」 */
-        public String danger;
         public boolean executed;
         public String output;
         public Integer exitCode;
@@ -230,13 +228,6 @@ public class AiAgentService {
             if (token.isCancelled()) {
                 r.kind = "reply";
                 r.text = "已停止";
-                return r;
-            }
-            String danger = dangerReason(parsed.command);
-            if (danger != null) {
-                r.needConfirm = true;
-                r.danger = danger;
-                audit.record("AI_COMMAND", parsed.command, "CONFIRM", "待确认：" + danger);
                 return r;
             }
             if (!auto) {
@@ -608,60 +599,6 @@ public class AiAgentService {
                 .replace("&apos;", "'")
                 .replace("&#39;", "'")
                 .replace("&amp;", "&");
-    }
-
-    /* ---------- 高危命令识别（自动模式下的二次确认） ---------- */
-
-    private static final Pattern[] DANGER_PATTERNS = {
-            Pattern.compile("\\brm(\\s+-[a-z]+)*\\s+-[a-z]*r[a-z]*", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\brm\\b[^\\n|;&]*\\s--recursive\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bfind\\b[^\\n|;&]*\\s-delete\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bshred\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bmkfs(\\.[a-z0-9]+)?\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bdd\\b[^\\n|;&]*\\bof=/dev/", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\b(fdisk|parted|wipefs|mkswap)\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile(">\\s*/dev/(sd|vd|nvme|hd)"),
-            Pattern.compile("\\b(shutdown|reboot|halt|poweroff)\\b"),
-            Pattern.compile("\\binit\\s+[06]\\b"),
-            Pattern.compile("\\bsystemctl\\s+(reboot|poweroff|halt)\\b"),
-            Pattern.compile("\\bsystemctl\\s+(stop|disable|mask)\\s+(sshd|network|networking|firewalld|systemd-networkd)\\b"),
-            Pattern.compile(":\\s*\\(\\s*\\)\\s*\\{"),
-            Pattern.compile("\\bchmod\\s+-[a-z]*R[a-z]*\\s+777\\s+/(\\s|$)"),
-            Pattern.compile("\\b(userdel|groupdel)\\b"),
-            Pattern.compile("\\bufw\\s+disable\\b|\\biptables\\s+-F\\b|\\bnft\\s+flush\\s+ruleset\\b"),
-            Pattern.compile("\\bkill\\s+-9\\s+1\\b|\\bkillall5\\b"),
-    };
-
-    private static final String[] DANGER_REASONS = {
-            "递归删除文件（rm -r / -rf）",
-            "递归删除文件（rm --recursive）",
-            "find -delete 批量删除",
-            "不可恢复地擦除文件（shred）",
-            "格式化文件系统（mkfs）",
-            "向块设备写入数据（dd）",
-            "修改磁盘分区 / 交换分区",
-            "向磁盘设备重定向写入",
-            "关机 / 重启服务器",
-            "切换运行级别（关机 / 重启）",
-            "关机 / 重启服务器",
-            "停用关键系统服务（SSH / 网络 / 防火墙）",
-            "疑似 fork 炸弹",
-            "递归放开根目录权限",
-            "删除系统用户 / 用户组",
-            "关闭防火墙规则",
-            "强杀 init 进程",
-    };
-
-    static String dangerReason(String command) {
-        if (command == null || command.isEmpty()) {
-            return null;
-        }
-        for (int i = 0; i < DANGER_PATTERNS.length; i++) {
-            if (DANGER_PATTERNS[i].matcher(command).find()) {
-                return DANGER_REASONS[i];
-            }
-        }
-        return null;
     }
 
     /* ---------- 杂项 ---------- */

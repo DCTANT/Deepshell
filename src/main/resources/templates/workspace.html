@@ -779,8 +779,7 @@
                                             <span v-for="eg in examples" :key="eg" class="aichat-eg"
                                                   @click="useExample(eg)">{{ eg }}</span>
                                         </div>
-                                        <p class="aichat-hint">自动执行模式下，删除 / 格式化 / 重启等高风险命令会先暂停，
-                                            等你点击确认后才执行；输入 <b>/</b> 可打开快捷命令</p>
+                                        <p class="aichat-hint">自动执行模式下 AI 会连续执行命令；切到「每步确认」后，每条命令都需要你确认。输入 <b>/</b> 可打开快捷命令</p>
                                     </div>
                                     <div v-for="(m, i) in tab.chatMsgs" :key="i" class="aichat-msg"
                                          :class="m.role">
@@ -857,7 +856,7 @@
                                             <div v-if="m.note" class="aicard-note">{{ m.note }}</div>
                                             <div v-if="m.state === 'confirm'" class="aicard-confirm">
                                                 <i class="el-icon-warning-outline"></i>
-                                                <span>高风险操作{{ m.danger ? '（' + m.danger + '）' : '' }}，是否执行？</span>
+                                                <span>AI 请求执行这条命令，是否执行？</span>
                                                 <el-button size="mini" type="danger"
                                                            @click="confirm(m, true)">执行</el-button>
                                                 <el-button size="mini"

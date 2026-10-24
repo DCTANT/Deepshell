@@ -301,9 +301,6 @@
                                         </button>
                                     </div>
                                     <div class="m-cmd-note" v-if="m.note">{{ m.note }}</div>
-                                    <div class="m-cmd-danger" v-if="m.danger">
-                                        <i class="el-icon-warning-outline"></i>{{ m.danger }}
-                                    </div>
                                     <div class="m-cmd-actions" v-if="m.state === 'confirm'">
                                         <button type="button" class="m-btn" @click="skipAiCmd(m)">跳过</button>
                                         <button type="button" class="m-btn danger" @click="execAiCmd(m)">执行</button>

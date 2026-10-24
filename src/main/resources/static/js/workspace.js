@@ -7934,7 +7934,7 @@ new Vue({
                 }
                 // 字段需一次性建全：Vue 2 对后加的属性不做响应式
                 var m = {
-                    role: 'ai', cmd: r.command, note: r.note || '', danger: r.danger || '',
+                    role: 'ai', cmd: r.command, note: r.note || '',
                     state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: '',
                     reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0,
                     usage: r.usage || null, usageAt: r.usage ? Date.now() : null

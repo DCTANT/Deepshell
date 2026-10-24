@@ -2991,7 +2991,6 @@
                         role: 'ai',
                         cmd: r.command || '',
                         note: r.note || '',
-                        danger: r.danger || '',
                         state: 'done',
                         output: '',
                         rc: null,
@@ -3004,7 +3003,6 @@
                     };
                     if (r.needConfirm) {
                         m.state = 'confirm';
-                        m.danger = r.danger || '';
                         t.aiMsgs.push(m);
                         t.aiBusy = true;
                         t.aiPhase = '等待你确认命令…';
