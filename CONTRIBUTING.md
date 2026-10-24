@@ -16,7 +16,7 @@
 - 建议使用 IntelliJ IDEA 直接运行 `DeepShellApplication`
 
 ```bash
-# 编译并打包（同时生成分发包 target/deepshell-1.5.1.zip）
+# 编译并打包（同时生成分发包 target/deepshell-1.6.0.zip）
 mvn -DskipTests package
 
 # 运行测试
