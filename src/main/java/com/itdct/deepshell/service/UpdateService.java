@@ -329,9 +329,9 @@ public class UpdateService implements ApplicationListener<ApplicationReadyEvent>
         if ("downloading".equals(state)) {
             return downloadView();
         }
-        String version = String.valueOf(last.get("latestVersion"));
+        String version = safeVersion(String.valueOf(last.get("latestVersion")));
         String url = String.valueOf(asset.get("url"));
-        String name = String.valueOf(asset.get("name"));
+        String name = safeAssetName(String.valueOf(asset.get("name")));
         long expectedSize = asset.get("size") instanceof Number
                 ? ((Number) asset.get("size")).longValue() : 0L;
         lastCheck = last;
@@ -363,18 +363,25 @@ public class UpdateService implements ApplicationListener<ApplicationReadyEvent>
     }
 
     private void doDownload(String url, String name, String version, DownloadState st) {
-        Path dir = DataDir.root().resolve("updates").resolve(version);
-        Path part = dir.resolve(name + ".part");
-        Path target = dir.resolve(name);
+        Path updatesRoot = DataDir.root().resolve("updates").toAbsolutePath().normalize();
+        Path dir = updatesRoot.resolve(version).normalize();
+        Path part = dir.resolve(name + ".part").normalize();
+        Path target = dir.resolve(name).normalize();
         try {
             if (!isGiteeUrl(url)) {
                 throw new IOException("下载地址不是 Gitee 发布资产");
+            }
+            if (!dir.startsWith(updatesRoot) || !part.startsWith(dir) || !target.startsWith(dir)) {
+                throw new IOException("更新包路径不合法");
             }
             Files.createDirectories(dir);
             HttpURLConnection conn = openConnection(url);
             int code = conn.getResponseCode();
             if (code >= 400) {
                 throw new IOException("下载失败（HTTP " + code + "）");
+            }
+            if (!isGiteeUrl(conn.getURL().toString())) {
+                throw new IOException("下载被重定向到非 Gitee 地址");
             }
             long total = conn.getContentLengthLong();
             if (total > 0) {
@@ -445,6 +452,9 @@ public class UpdateService implements ApplicationListener<ApplicationReadyEvent>
                 return null;
             }
             HttpURLConnection conn = openConnection(url);
+            if (conn.getResponseCode() >= 400 || !isGiteeUrl(conn.getURL().toString())) {
+                return null;
+            }
             try (InputStream in = conn.getInputStream()) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 byte[] buf = new byte[4096];
@@ -485,13 +495,26 @@ public class UpdateService implements ApplicationListener<ApplicationReadyEvent>
         if (!st.verified) {
             throw new IllegalStateException("更新包未通过 SHA256 校验，不能自动安装");
         }
+        if (st.sha256 == null || st.sha256.trim().isEmpty()) {
+            throw new IllegalStateException("更新包缺少 SHA256 记录，不能自动安装");
+        }
         Path launcher = RuntimeSupport.launcher();
         if (launcher == null) {
             throw new IllegalStateException("当前不是绿色版运行，无法自动替换程序；请手动解压覆盖");
         }
+        Path updatesRoot = DataDir.root().resolve("updates").toAbsolutePath().normalize();
+        Path workDir = updatesRoot.resolve(st.version).resolve("extract").normalize();
+        if (!workDir.startsWith(updatesRoot)) {
+            throw new IllegalStateException("更新包路径不合法");
+        }
         Path installDir = launcher.toAbsolutePath().getParent();
-        Path workDir = DataDir.root().resolve("updates").resolve(st.version).resolve("extract");
         try {
+            // 安装前重新计算一次哈希，避免下载完成后文件被替换
+            String actual = sha256Of(st.file);
+            if (!actual.equalsIgnoreCase(st.sha256.trim())) {
+                st.verified = false;
+                throw new IllegalStateException("更新包 SHA256 校验失败，文件可能已被修改，已停止安装");
+            }
             deleteRecursively(workDir);
             Files.createDirectories(workDir);
             unzip(st.file, workDir);
@@ -655,6 +678,41 @@ public class UpdateService implements ApplicationListener<ApplicationReadyEvent>
             v = v.substring(1);
         }
         return v;
+    }
+
+    /** 版本号会拼进本机目录：只接受字母数字和 . _ -，避免 tag 中带路径分隔符 */
+    private static String safeVersion(String tag) {
+        String v = normalizeVersion(tag);
+        if (!v.matches("[0-9A-Za-z][0-9A-Za-z._-]{0,63}") || v.contains("..")) {
+            throw new IllegalArgumentException("更新版本号不合法: " + tag);
+        }
+        return v;
+    }
+
+    /** 资产名只保留文件名本身，且只允许安全字符，避免写到 updates 目录之外 */
+    private static String safeAssetName(String assetName) {
+        String name = assetName == null ? "" : assetName.replace('\\', '/').trim();
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        if (!name.matches("[0-9A-Za-z][0-9A-Za-z._-]{0,159}")
+                || name.contains("..") || name.endsWith(".")) {
+            throw new IllegalArgumentException("更新包文件名不合法: " + assetName);
+        }
+        return name;
+    }
+
+    private static String sha256Of(Path file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream in = Files.newInputStream(file)) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                digest.update(buf, 0, n);
+            }
+        }
+        return hex(digest.digest());
     }
 
     static int compareVersion(String a, String b) {

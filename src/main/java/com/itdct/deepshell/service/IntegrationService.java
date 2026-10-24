@@ -164,8 +164,30 @@ public class IntegrationService {
         form.setFolderId(existing.getFolderId());
         form.setFavorite(existing.getFavorite());
         form.setPinned(existing.getPinned());
+        // 已保存的密码只用于原目标：调用方把主机 / 端口 / 用户名改成别处时必须重传密码，
+        // 否则等于把用户保存的凭据转发到攻击者指定的服务器
+        boolean targetChanged = !sameText(existing.getHost(), form.getHost())
+                || !samePort(existing.getPort(), form.getPort())
+                || !sameText(existing.getUsername(), form.getUsername());
+        if (targetChanged && "PASSWORD".equalsIgnoreCase(authType)
+                && blankToNull(req.getPassword()) == null) {
+            throw new IllegalArgumentException(
+                    "更换主机 / 端口 / 用户名时必须同时提供 password；已保存的密码不会转发到新目标");
+        }
         validateBasics(form);
         return form;
+    }
+
+    private static boolean sameText(String a, String b) {
+        String left = a == null ? "" : a.trim();
+        String right = b == null ? "" : b.trim();
+        return left.equalsIgnoreCase(right);
+    }
+
+    private static boolean samePort(Integer a, Integer b) {
+        int left = a == null ? 22 : a;
+        int right = b == null ? 22 : b;
+        return left == right;
     }
 
     private ConnectionForm formForNew(IntegrationOpenReq req, String source) {

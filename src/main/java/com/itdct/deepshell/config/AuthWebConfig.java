@@ -12,13 +12,20 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class AuthWebConfig implements WebMvcConfigurer {
 
     private final AuthInterceptor authInterceptor;
+    private final OriginGuardInterceptor originGuardInterceptor;
 
-    public AuthWebConfig(AuthInterceptor authInterceptor) {
+    public AuthWebConfig(AuthInterceptor authInterceptor,
+                         OriginGuardInterceptor originGuardInterceptor) {
         this.authInterceptor = authInterceptor;
+        this.originGuardInterceptor = originGuardInterceptor;
     }
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // 先做跨站校验（与是否开启登录无关），再校验登录态
+        registry.addInterceptor(originGuardInterceptor)
+                .addPathPatterns("/**")
+                .excludePathPatterns("/ws/**", "/plugin-assets/**", "/css/**", "/js/**", "/vendor/**");
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(

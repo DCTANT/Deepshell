@@ -1,6 +1,7 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.common.LocalRequest;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.common.RuntimeSupport;
 import com.itdct.deepshell.protocol.ProtocolRegistrar;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.servlet.http.HttpServletRequest;
 import java.io.File;
 import java.lang.management.ManagementFactory;
 import java.net.URL;
@@ -31,7 +33,7 @@ public class AppInfoController {
     }
 
     @GetMapping
-    public R<Map<String, String>> info() {
+    public R<Map<String, String>> info(HttpServletRequest request) {
         Map<String, String> m = new HashMap<>();
         m.put("name", "DeepShell");
         String v = AppInfoController.class.getPackage().getImplementationVersion();
@@ -39,12 +41,14 @@ public class AppInfoController {
         m.put("buildTime", resolveBuildTime());
         m.put("java", System.getProperty("java.version"));
         m.put("os", System.getProperty("os.name") + " " + System.getProperty("os.arch"));
-        m.put("dataDir", DataDir.root().toString());
+        // 数据 / 安装目录只对本机展示，避免局域网客户端获知宿主路径
+        boolean local = LocalRequest.isLoopback(request);
+        m.put("dataDir", local ? DataDir.root().toString() : "");
         m.put("packaged", String.valueOf(RuntimeSupport.isPackaged()));
-        m.put("launcher", RuntimeSupport.launcher() == null ? ""
-                : RuntimeSupport.launcher().toAbsolutePath().toString());
-        m.put("installDir", RuntimeSupport.appDir() == null ? ""
-                : RuntimeSupport.appDir().toAbsolutePath().toString());
+        m.put("launcher", local && RuntimeSupport.launcher() != null
+                ? RuntimeSupport.launcher().toAbsolutePath().toString() : "");
+        m.put("installDir", local && RuntimeSupport.appDir() != null
+                ? RuntimeSupport.appDir().toAbsolutePath().toString() : "");
         // 进程启动时间：前端重启后用它判断响应是否已来自新进程
         m.put("startedAt", String.valueOf(ManagementFactory.getRuntimeMXBean().getStartTime()));
         Map<String, Object> protocol = protocolRegistrar.status();

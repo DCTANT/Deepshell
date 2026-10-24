@@ -1,6 +1,7 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.DataDir;
+import com.itdct.deepshell.common.LocalRequest;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.service.AuthService;
 import com.itdct.deepshell.service.TlsService;
@@ -8,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletRequest;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Inet4Address;
@@ -63,7 +65,7 @@ public class NetworkController {
     @GetMapping
     public R<Map<String, Object>> info() {
         boolean saved = savedLanEnabled();
-        boolean effective = "0.0.0.0".equals(boundAddress);
+        boolean effective = isLanBind(boundAddress);
         Map<String, Object> m = new HashMap<>();
         m.put("lanEnabled", saved);
         m.put("effectiveLan", effective);
@@ -82,8 +84,13 @@ public class NetworkController {
     }
 
     @PostMapping
-    public R<Map<String, Object>> update(@RequestBody Map<String, Object> body) throws Exception {
+    public R<Map<String, Object>> update(@RequestBody Map<String, Object> body,
+                                         HttpServletRequest request) throws Exception {
         boolean enable = Boolean.parseBoolean(String.valueOf(body.get("lanEnabled")));
+        if (enable) {
+            // 扩大监听范围只允许在本机操作；关闭局域网访问不限制，方便远程收回暴露面
+            LocalRequest.requireLocal(request, "开启局域网访问");
+        }
         if (enable) {
             if (!auth.isEnabled()) {
                 throw new IllegalArgumentException("开放局域网访问前，请先在 application.yml 中设置 "
@@ -101,7 +108,7 @@ public class NetworkController {
         try (OutputStream out = Files.newOutputStream(f)) {
             p.store(out, "DeepShell network settings");
         }
-        boolean effective = "0.0.0.0".equals(boundAddress);
+        boolean effective = isLanBind(boundAddress);
         Map<String, Object> m = new HashMap<>();
         m.put("lanEnabled", enable);
         m.put("restartRequired", enable != effective);
@@ -110,6 +117,24 @@ public class NetworkController {
                 ? "设置已生效"
                 : ("已保存，重启应用后生效" + (enable ? "；局域网访问将使用 " + nextScheme : "")));
         return R.ok(m);
+    }
+
+    private static boolean isLanBind(String address) {
+        if (address == null || address.trim().isEmpty()) {
+            return false;
+        }
+        String value = address.trim();
+        if (value.startsWith("[") && value.endsWith("]")) {
+            value = value.substring(1, value.length() - 1);
+        }
+        if ("localhost".equalsIgnoreCase(value)) {
+            return false;
+        }
+        try {
+            return !InetAddress.getByName(value).isLoopbackAddress();
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     private List<String> lanUrls() {

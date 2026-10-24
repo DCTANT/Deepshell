@@ -139,6 +139,12 @@ public class SftpService {
         if (rel.isEmpty()) {
             throw new IllegalArgumentException("目标文件名不能为空");
         }
+        for (String part : rel.split("/")) {
+            if (part.isEmpty() || ".".equals(part) || "..".equals(part)
+                    || part.indexOf('\0') >= 0 || part.indexOf('\\') >= 0) {
+                throw new IllegalArgumentException("目标路径不合法");
+            }
+        }
         final String target = join(dirPath, rel);
         withSftp(sessionId, c -> {
             ensureDir(c, parentOf(target));
@@ -213,11 +219,21 @@ public class SftpService {
     }
 
     public void rename(String sessionId, String path, String newName) throws Exception {
-        if (newName == null || newName.trim().isEmpty() || newName.contains("/")) {
+        if (newName == null || newName.trim().isEmpty() || newName.contains("/")
+                || newName.contains("\\") || newName.indexOf('\0') >= 0) {
             throw new IllegalArgumentException("新名称不合法");
         }
+        String name = newName.trim();
+        if (".".equals(name) || "..".equals(name)) {
+            throw new IllegalArgumentException("新名称不合法");
+        }
+        for (int i = 0; i < name.length(); i++) {
+            if (name.charAt(i) < 0x20 || name.charAt(i) == 0x7f) {
+                throw new IllegalArgumentException("新名称不能包含控制字符");
+            }
+        }
         withSftp(sessionId, c -> {
-            c.rename(path, join(parentOf(path), newName.trim()));
+            c.rename(path, join(parentOf(path), name));
             return null;
         });
     }

@@ -1,6 +1,7 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.ImageThumbnails;
+import com.itdct.deepshell.common.LocalRequest;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.dto.ArchiveReq;
 import com.itdct.deepshell.dto.CopyReq;
@@ -768,7 +769,10 @@ public class SftpController {
 
     /** 下载到本地并用 VSCode 打开，保存后自动同步回服务器 */
     @PostMapping("/vscode")
-    public R<Map<String, Object>> vscode(@RequestBody SftpReq req) throws Exception {
+    public R<Map<String, Object>> vscode(@RequestBody SftpReq req, HttpServletRequest request)
+            throws Exception {
+        // 会在运行 DeepShell 的本机拉起 VSCode 进程，只允许本机操作
+        LocalRequest.requireLocal(request, "在 VSCode 中编辑服务器文件");
         return R.ok(vscodeEditService.open(req.getSessionId(), req.getPath()));
     }
 

@@ -391,6 +391,20 @@ public class SshSessionManager {
         return null;
     }
 
+    /** 某条连接当前存活的所有交互会话（端口转发按连接管理运行状态） */
+    public List<SshSession> liveSessionsForConnection(Long connectionId) {
+        List<SshSession> out = new ArrayList<>();
+        if (connectionId == null) {
+            return out;
+        }
+        for (SshSession s : sessions.values()) {
+            if (!s.isClosed() && Objects.equals(s.getConnectionId(), connectionId)) {
+                out.add(s);
+            }
+        }
+        return out;
+    }
+
     private static ChannelSftp openSftpChannel(Session session) throws Exception {
         ChannelSftp channel = (ChannelSftp) session.openChannel("sftp");
         try {

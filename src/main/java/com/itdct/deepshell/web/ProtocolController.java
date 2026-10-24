@@ -1,5 +1,6 @@
 package com.itdct.deepshell.web;
 
+import com.itdct.deepshell.common.LocalRequest;
 import com.itdct.deepshell.common.R;
 import com.itdct.deepshell.protocol.ProtocolClient;
 import com.itdct.deepshell.protocol.ProtocolFiles;
@@ -80,7 +81,9 @@ public class ProtocolController {
     }
 
     @PostMapping("/register")
-    public R<Map<String, Object>> register() {
+    public R<Map<String, Object>> register(HttpServletRequest request) {
+        // 会写本机注册表 / xdg 桌面文件，只允许本机操作
+        LocalRequest.requireLocal(request, "注册 deepshell:// 协议");
         Map<String, Object> status = registrar.register();
         audit.record("PROTOCOL_REGISTER", String.valueOf(status.get("scheme")), "OK",
                 String.valueOf(status.get("detail")));
