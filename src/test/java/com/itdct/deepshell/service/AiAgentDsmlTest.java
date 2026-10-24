@@ -52,6 +52,20 @@ public class AiAgentDsmlTest {
     }
 
     @Test
+    void supportsBareParameterTagsWithoutMarker() {
+        String command = "cat /tmp/dsh_cookies.txt; echo '---HEADERS---'; "
+                + "curl -s -D - -o /dev/null -m 10 'http://43.137.3.86:14005/?token=abc' | head -20";
+        String dsml = "<parameter name=\"cmd\">" + command + "</parameter>\n"
+                + "<parameter name=\"note\">查看登录响应头与设置的具体 cookie</parameter>";
+
+        assertTrue(AiAgentService.containsDsml(dsml));
+        assertEquals(command, AiAgentService.dsmlParameter(dsml, "cmd"));
+        assertEquals("查看登录响应头与设置的具体 cookie",
+                AiAgentService.dsmlParameter(dsml, "note"));
+        assertEquals("", AiAgentService.visibleReplyText(dsml));
+    }
+
+    @Test
     void truncatedDsmlIsDetectedButDoesNotExecute() {
         String dsml = "<|| DSLM || calls>\n<|| DSLM || parameter name=\"cmd\" string=\"true\">rm -rf /tmp/x";
         assertTrue(AiAgentService.containsDsml(dsml));

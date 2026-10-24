@@ -485,13 +485,20 @@ public class AiAgentService {
     private static final Pattern DSML_MARKER = Pattern.compile(
             "<\\s*" + DSML_MARK_BODY, Pattern.CASE_INSENSITIVE);
 
+    /** 部分模型会把 DSML 退化成裸 <parameter> / <invoke>，没有外层 marker */
+    private static final Pattern BARE_DSML_TAG = Pattern.compile(
+            "<\\s*/?\\s*(?:parameter|invoke)\\b", Pattern.CASE_INSENSITIVE);
+
     static boolean containsDsml(String content) {
-        return content != null && !content.isEmpty() && DSML_MARKER.matcher(content).find();
+        if (content == null || content.isEmpty()) {
+            return false;
+        }
+        return DSML_MARKER.matcher(content).find() || BARE_DSML_TAG.matcher(content).find();
     }
 
     /** 从 DSML 参数块中提取 cmd / note；未闭合或不是 DSML 时返回 null */
     static String dsmlParameter(String content, String name) {
-        if (content == null || content.isEmpty() || !containsDsml(content)) {
+        if (content == null || content.isEmpty()) {
             return null;
         }
         Pattern namePattern = "cmd".equals(name) ? DSML_NAME_CMD : DSML_NAME_NOTE;
