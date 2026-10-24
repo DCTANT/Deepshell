@@ -1577,7 +1577,10 @@ Vue.component('ai-chat-panel', {
         return {
             stick: true,
             slashOpen: false,
-            slashIndex: 0
+            slashIndex: 0,
+            convMenu: { visible: false, x: 0, y: 0, conv: null },
+            renamingId: null,
+            renameText: ''
         };
     },
     computed: {
@@ -1721,6 +1724,20 @@ Vue.component('ai-chat-panel', {
     },
     mounted: function () {
         this.scrollToBottom(true);
+        var self = this;
+        this._onConvMenuKey = function (e) {
+            if (e.key === 'Escape') {
+                self.closeConvMenu();
+                self.cancelRename();
+            }
+        };
+        window.addEventListener('keydown', this._onConvMenuKey);
+    },
+    beforeDestroy: function () {
+        if (this._onConvMenuKey) {
+            window.removeEventListener('keydown', this._onConvMenuKey);
+            this._onConvMenuKey = null;
+        }
     },
     methods: {
         onListScroll: function (e) {
@@ -1819,10 +1836,189 @@ Vue.component('ai-chat-panel', {
             this.tab.chatInput = '';
             this.$root.aiRunSlash(item.id, this.tab);
         },
+        openConvMenu: function (e, c) {
+            if (!c) {
+                return;
+            }
+            var width = 168;
+            var height = 186;
+            this.renamingId = null;
+            this.convMenu = {
+                visible: true,
+                x: Math.max(8, Math.min(e.clientX, window.innerWidth - width - 8)),
+                y: Math.max(8, Math.min(e.clientY, window.innerHeight - height - 8)),
+                conv: c
+            };
+        },
+        closeConvMenu: function () {
+            if (this.convMenu.visible) {
+                this.convMenu.visible = false;
+                this.convMenu.conv = null;
+            }
+        },
+        menuRename: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.startRename(c);
+        },
+        menuExport: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.exportConv(c);
+        },
+        menuPin: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.togglePin(c);
+        },
+        menuDelete: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.delConv(c);
+        },
+        startRename: function (c) {
+            if (!c || c.id == null) {
+                return;
+            }
+            var self = this;
+            this.renamingId = c.id;
+            this.renameText = c.title || '';
+            this.$nextTick(function () {
+                var ref = self.$refs.renameInput;
+                var el = Array.isArray(ref) ? ref[0] : ref;
+                if (el) {
+                    el.focus();
+                    if (el.select) {
+                        el.select();
+                    }
+                }
+            });
+        },
+        cancelRename: function () {
+            this.renamingId = null;
+            this.renameText = '';
+        },
+        saveRename: function (c) {
+            if (!c || this.renamingId !== c.id) {
+                return;
+            }
+            var title = (this.renameText || '').trim();
+            if (!title || title === c.title) {
+                this.cancelRename();
+                return;
+            }
+            if (title.length > 60) {
+                var self = this;
+                ELEMENT.Message.warning('对话名称不能超过 60 个字符');
+                this.$nextTick(function () {
+                    var ref = self.$refs.renameInput;
+                    var el = Array.isArray(ref) ? ref[0] : ref;
+                    if (el) {
+                        el.focus();
+                    }
+                });
+                return;
+            }
+            this.renamingId = null;
+            this.renameText = '';
+            var self = this;
+            http.put('/api/ai/convs/' + c.id, { title: title }).then(function (d) {
+                self.$set(c, 'title', d && d.title ? d.title : title);
+                ELEMENT.Message.success('已重命名');
+            }).catch(function () { /* 拦截器已提示 */ });
+        },
+        exportConv: function (c) {
+            if (!c) {
+                return;
+            }
+            var tab = this.tab || {};
+            var lines = [];
+            lines.push('# ' + (c.title || 'AI 对话'));
+            lines.push('');
+            lines.push('- 主机：' + (tab.host || '') + (tab.username ? ' (' + tab.username + ')' : ''));
+            lines.push('- 导出时间：' + new Date().toLocaleString());
+            lines.push('');
+            (c.msgs || []).forEach(function (m) {
+                if (!m) {
+                    return;
+                }
+                if (m.role === 'user') {
+                    lines.push('## 用户');
+                    lines.push('');
+                    lines.push(String(m.text || ''));
+                    lines.push('');
+                    return;
+                }
+                if (m.role === 'compact') {
+                    lines.push('## 上下文压缩');
+                    lines.push('');
+                    lines.push(String(m.text || ''));
+                    lines.push('');
+                    return;
+                }
+                var reasoning = stripDsmlText(m.reasoning || '');
+                if (reasoning) {
+                    lines.push('<details>');
+                    lines.push('<summary>思考过程</summary>');
+                    lines.push('');
+                    lines.push(reasoning);
+                    lines.push('');
+                    lines.push('</details>');
+                    lines.push('');
+                }
+                var reply = extractAiReply(m.text || '');
+                if (reply == null && m.text) {
+                    reply = String(m.text);
+                }
+                if (reply && reply.trim()) {
+                    lines.push('## AI');
+                    lines.push('');
+                    lines.push(reply.trim());
+                    lines.push('');
+                }
+                if (m.cmd) {
+                    lines.push('### 命令' + (m.note ? '：' + m.note : ''));
+                    lines.push('');
+                    lines.push('~~~sh');
+                    lines.push(String(m.cmd));
+                    lines.push('~~~');
+                    lines.push('');
+                    if (m.output) {
+                        lines.push('~~~text');
+                        lines.push(String(m.output));
+                        lines.push('~~~');
+                        lines.push('');
+                    }
+                    if (m.error) {
+                        lines.push('> 错误：' + m.error);
+                        lines.push('');
+                    }
+                }
+            });
+            var stamp = new Date();
+            var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+            var time = stamp.getFullYear() + pad(stamp.getMonth() + 1) + pad(stamp.getDate())
+                + '-' + pad(stamp.getHours()) + pad(stamp.getMinutes()) + pad(stamp.getSeconds());
+            var name = (c.title || 'ai-conversation')
+                .replace(/[\\/:*?"<>|\r\n]/g, '_')
+                .replace(/[. ]+$/, '')
+                .slice(0, 60) || 'ai-conversation';
+            var blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'deepshell-ai-' + name + '-' + time + '.md';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+            ELEMENT.Message.success('对话记录已导出');
+        },
         newConv: function () {
             this.$root.aiConvNew();
         },
         switchConv: function (c) {
+            this.closeConvMenu();
             this.$root.aiConvSwitch(c);
         },
         delConv: function (c) {

@@ -754,11 +754,17 @@
                                      :class="{ active: c.id === tab.chatConvId,
                                                running: c._run && c._run.busy }"
                                      :title="(c._run && c._run.busy ? (c._run.phase || '生成中') + ' · ' : '') + c.title"
-                                     @click="switchConv(c)">
+                                     @click="switchConv(c)"
+                                     @contextmenu.prevent="openConvMenu($event, c)">
                                     <i v-if="c._run && c._run.busy" class="el-icon-loading aichat-conv-busy"></i>
-                                    <span class="aichat-conv-title">
+                                    <span class="aichat-conv-title" v-if="renamingId !== c.id">
                                         <i v-if="c.pinned" class="el-icon-top aichat-conv-pin" title="已置顶"></i>{{ c.title }}
                                     </span>
+                                    <input v-else class="aichat-conv-rename" ref="renameInput" v-model="renameText"
+                                           @click.stop
+                                           @keydown.enter.prevent="saveRename(c)"
+                                           @keydown.esc.prevent="cancelRename"
+                                           @blur="saveRename(c)">
                                     <span class="aichat-conv-time">{{ fmtTime(c.updatedAt) }}</span>
                                     <i class="el-icon-close aichat-conv-del" title="删除对话"
                                        @click.stop="delConv(c)"></i>
@@ -1032,6 +1038,25 @@
                                         </span>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                        <!-- 对话列表右键菜单 -->
+                        <div v-if="convMenu.visible" class="aichat-conv-menu-mask"
+                             @click="closeConvMenu" @contextmenu.prevent="closeConvMenu"></div>
+                        <div v-if="convMenu.visible" class="aichat-conv-menu"
+                             :style="{ left: convMenu.x + 'px', top: convMenu.y + 'px' }" @click.stop>
+                            <div class="aichat-conv-menu-item" @click="menuRename">
+                                <i class="el-icon-edit"></i>重命名
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuExport">
+                                <i class="el-icon-download"></i>导出记录
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuPin">
+                                <i class="el-icon-top"></i>{{ convMenu.conv && convMenu.conv.pinned ? '取消置顶' : '置顶' }}
+                            </div>
+                            <div class="aichat-conv-menu-sep"></div>
+                            <div class="aichat-conv-menu-item danger" @click="menuDelete">
+                                <i class="el-icon-delete"></i>删除
                             </div>
                         </div>
                     </div>
