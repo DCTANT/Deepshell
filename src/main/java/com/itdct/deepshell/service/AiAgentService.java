@@ -78,6 +78,8 @@ public class AiAgentService {
         public Long durationMs;
         /** 本次模型调用的 token 用量；命令执行结果不包含 */
         public AiChatClient.Usage usage;
+        /** 模型输出里只有无法解析的 DSML/工具调用标记 */
+        public boolean dsmlUnrecognized;
     }
 
     /** 一轮对话：调用模型并解析；auto=false 时命令不自动执行，auto=true 时高危命令仍需确认 */
@@ -120,9 +122,50 @@ public class AiAgentService {
         }
         SshSessionManager.SshSession s = sessions.get(sessionId);
         List<Map<String, String>> messages = sanitize(history);
+        String system = systemPrompt(s, cwd);
+        AiChatClient.ChatResult result = readModel(system, messages, onTextDelta, onReasoning, token);
+        if (token.isCancelled()) {
+            throw new AiCancellationToken.CancelledException();
+        }
+        AgentResult r = buildResult(s, cwd, auto, result, token);
+        if (r.dsmlUnrecognized && !token.isCancelled()) {
+            // 模型输出了无法识别的 DSML：自动让它改写成 JSON 再试一次，而不是直接把错误丢给用户
+            List<Map<String, String>> repair = new ArrayList<>(messages);
+            Map<String, String> assistant = new LinkedHashMap<>();
+            assistant.put("role", "assistant");
+            String malformed = result.text == null ? "" : result.text;
+            if (malformed.length() > MAX_CONTENT_CHARS) {
+                malformed = malformed.substring(0, MAX_CONTENT_CHARS);
+            }
+            assistant.put("content", malformed);
+            repair.add(assistant);
+            Map<String, String> notice = new LinkedHashMap<>();
+            notice.put("role", "user");
+            notice.put("content", DSML_REPAIR_PROMPT);
+            repair.add(notice);
+            log.info("模型返回无法解析的 DSML，尝试让其改写为 JSON（长度 {}）",
+                    result.text == null ? 0 : result.text.length());
+            AiChatClient.ChatResult repaired = readModel(system, repair, onTextDelta, onReasoning, token);
+            if (token.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
+            AgentResult r2 = buildResult(s, cwd, auto, repaired, token);
+            if (!r2.dsmlUnrecognized) {
+                r = r2;
+            } else {
+                r.text = "模型连续两次返回了无法解析的工具调用格式（DSML/XML），本轮已停止。请重试或到 AI 设置中切换模型。";
+            }
+        }
+        return r;
+    }
+
+    /** 流式读取一次模型输出；每次调用使用独立的展示累积器，修复重试时不会混入上一次的文本 */
+    private AiChatClient.ChatResult readModel(String system, List<Map<String, String>> messages,
+                                              Consumer<String> onTextDelta, Consumer<String> onReasoning,
+                                              AiCancellationToken token) {
         final StringBuilder acc = new StringBuilder();
         final String[] shown = {""};
-        AiChatClient.ChatResult result = chatClient.streamDetailed(systemPrompt(s, cwd), messages, delta -> {
+        return chatClient.streamDetailed(system, messages, delta -> {
             if (token.isCancelled()) {
                 throw new AiCancellationToken.CancelledException();
             }
@@ -133,9 +176,11 @@ public class AiAgentService {
                 shown[0] = visible;
             }
         }, onReasoning, token);
-        if (token.isCancelled()) {
-            throw new AiCancellationToken.CancelledException();
-        }
+    }
+
+    /** 把一次模型输出解析成命令 / 回复，并处理只有 reasoning 的情况 */
+    private AgentResult buildResult(SshSessionManager.SshSession s, String cwd, boolean auto,
+                                    AiChatClient.ChatResult result, AiCancellationToken token) {
         AgentResult r = handleContent(s, cwd, auto, result.text, token);
         if (!"cmd".equals(r.kind) && !r.needConfirm) {
             String reasoning = result.reasoning == null ? "" : result.reasoning.trim();
@@ -161,6 +206,7 @@ public class AiAgentService {
         Parsed parsed = parse(content);
 
         AgentResult r = new AgentResult();
+        r.dsmlUnrecognized = parsed.dsmlUnrecognized;
         if (parsed.command != null && !parsed.command.isEmpty()) {
             r.kind = "cmd";
             r.command = parsed.command;
@@ -296,6 +342,7 @@ public class AiAgentService {
         String command;
         String note;
         String reply;
+        boolean dsmlUnrecognized;
     }
 
     /**
@@ -458,6 +505,7 @@ public class AiAgentService {
             return p;
         }
         if (containsDsml(t)) {
+            p.dsmlUnrecognized = true;
             p.reply = "模型返回了未识别的 DSML 工具调用格式，本轮已停止。请点击重试，或到 AI 设置中切换模型后再试。";
             return p;
         }
@@ -471,13 +519,20 @@ public class AiAgentService {
     private static final String DSML_MARK_BODY =
             "\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*";
 
+    /** 无法解析 DSML 时自动发给模型，让它改写成约定的 JSON */
+    private static final String DSML_REPAIR_PROMPT =
+            "你上一条输出包含无法解析的 DSML/XML 工具调用。请重新输出，且只输出以下两种 JSON 之一：\n"
+                    + "1. 需要执行命令：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n"
+                    + "2. 不需要执行命令：{\"reply\":\"给用户的回复\"}\n"
+                    + "不要输出任何 XML、DSML、<parameter> 标签或 markdown 代码块。";
+
     private static final Pattern DSML_PARAMETER = Pattern.compile(
             "<\\s*(?:" + DSML_MARK_BODY + ")?parameter\\b([^>]*)>(.*?)"
                     + "</\\s*(?:" + DSML_MARK_BODY + ")?parameter\\s*>",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private static final Pattern DSML_NAME_CMD = Pattern.compile(
-            "name\\s*=\\s*[\"']cmd[\"']", Pattern.CASE_INSENSITIVE);
+            "name\\s*=\\s*[\"'](?:cmd|command)[\"']", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern DSML_NAME_NOTE = Pattern.compile(
             "name\\s*=\\s*[\"']note[\"']", Pattern.CASE_INSENSITIVE);

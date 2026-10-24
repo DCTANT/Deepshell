@@ -52,6 +52,13 @@ public class AiAgentDsmlTest {
     }
 
     @Test
+    void acceptsCommandParameterAlias() {
+        String dsml = "<|DSML|parameter name=\"command\">ls -la</|DSML|parameter>";
+        assertTrue(AiAgentService.containsDsml(dsml));
+        assertEquals("ls -la", AiAgentService.dsmlParameter(dsml, "cmd"));
+    }
+
+    @Test
     void supportsBareParameterTagsWithoutMarker() {
         String command = "cat /tmp/dsh_cookies.txt; echo '---HEADERS---'; "
                 + "curl -s -D - -o /dev/null -m 10 'http://43.137.3.86:14005/?token=abc' | head -20";
