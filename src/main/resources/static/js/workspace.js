@@ -1169,6 +1169,71 @@ Vue.filter('cleanReasoning', function (text) {
     return stripDsmlText(text);
 });
 
+/* 模型偶尔把普通回复包成 JSON；兼容标准 JSON 和带真实换行的“漂亮 JSON” */
+function extractAiReply(src) {
+    var text = String(src == null ? '' : src).trim();
+    if (!text || text.charAt(0) !== '{' || text.indexOf('"reply"') < 0) {
+        return null;
+    }
+    try {
+        var obj = JSON.parse(text);
+        if (obj && typeof obj.reply === 'string' && obj.reply.trim()) {
+            return obj.reply;
+        }
+    } catch (e) {
+        // 继续宽松提取
+    }
+    var at = text.indexOf('"reply"');
+    var colon = text.indexOf(':', at + 7);
+    if (colon < 0) {
+        return null;
+    }
+    var start = colon + 1;
+    while (start < text.length && /\s/.test(text.charAt(start))) {
+        start++;
+    }
+    if (text.charAt(start) !== '"') {
+        return null;
+    }
+    var out = '';
+    for (var i = start + 1; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c === '\\' && i + 1 < text.length) {
+            var e = text.charAt(++i);
+            if (e === 'n') {
+                out += '\n';
+            } else if (e === 'r') {
+                out += '\r';
+            } else if (e === 't') {
+                out += '\t';
+            } else if (e === 'u' && i + 4 < text.length) {
+                try {
+                    out += String.fromCharCode(parseInt(text.substr(i + 1, 4), 16));
+                    i += 4;
+                } catch (err) {
+                    out += 'u';
+                }
+            } else {
+                out += e;
+            }
+            continue;
+        }
+        if (c === '"') {
+            var j = i + 1;
+            while (j < text.length && /\s/.test(text.charAt(j))) {
+                j++;
+            }
+            if (j >= text.length || text.charAt(j) === ',' || text.charAt(j) === '}') {
+                break;
+            }
+            out += c;
+            continue;
+        }
+        out += c;
+    }
+    return out.trim() ? out : null;
+}
+
 function aiInlineMarkdown(text) {
     var codes = [];
     var s = escapeAiHtml(text);
@@ -1189,6 +1254,10 @@ function aiInlineMarkdown(text) {
 /* 支持标题、列表、代码块、引用、分隔线与段落；未闭合的代码块也能正常展示（流式输出） */
 function renderAiMarkdown(src) {
     var text = String(src == null ? '' : src).replace(/\r\n/g, '\n');
+    var reply = extractAiReply(text);
+    if (reply != null) {
+        text = reply;
+    }
     if (!text) {
         return '';
     }

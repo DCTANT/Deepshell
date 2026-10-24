@@ -89,6 +89,18 @@ public class AiAgentDsmlTest {
     }
 
     @Test
+    void extractsReplyFromPrettyJsonWithLiteralNewlines() {
+        String json = "{\n"
+                + "  \"reply\": \"## 修复完成\n\n### 报错 1\n- 内容\",\n"
+                + "  \"note\": \"汇报\"\n"
+                + "}";
+
+        assertEquals("## 修复完成\n\n### 报错 1\n- 内容", AiAgentService.lenientJsonReply(json));
+        assertEquals("### 标题\n正文", AiAgentService.lenientJsonReply(
+                "{\"reply\":\"### 标题\\n正文\",\"note\":\"说明\"}"));
+    }
+
+    @Test
     void acceptsCommandParameterAlias() {
         String dsml = "<|DSML|parameter name=\"command\">ls -la</|DSML|parameter>";
         assertTrue(AiAgentService.containsDsml(dsml));

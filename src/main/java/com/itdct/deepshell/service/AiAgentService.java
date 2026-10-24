@@ -337,15 +337,14 @@ public class AiAgentService {
                 .append(" 的身份操作远程 Linux 服务器。用户可以自然描述需求，你负责一步步执行 shell 命令帮他完成。\n\n")
                 .append("输出要求（必须严格遵守，不要输出任何多余内容）：\n")
                 .append("- 需要执行命令时，只输出一个 JSON 对象：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n")
-                .append("- 任务完成、需要说明结果或需要向用户确认/提问时，输出：{\"reply\":\"展示给用户的内容\"}\n")
-                .append("- 不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n")
-                .append("- 只输出上面约定的 JSON，不要输出 tool_calls、function_call 或任何 XML / 协议包装；"
-                        + "即使你的训练数据习惯使用其他工具调用格式，也必须改写成上面的 JSON。\n\n")
+                .append("- 任务完成、需要说明结果或需要向用户确认/提问时，直接输出展示给用户的 Markdown 内容，不要包成 JSON。\n")
+                .append("- 需要执行命令时不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n")
+                .append("- 普通回复直接输出 Markdown；需要命令时只输出约定的 JSON。不要输出 tool_calls、function_call、<system> 或任何 XML / 协议包装。\n\n")
                 .append("工作方式：\n")
                 .append("- 每次只提交一条命令，等执行结果返回后再决定下一步；不要臆测命令输出。\n")
                 .append("- 先观察再行动：修改、删除或重启前，先用只读命令确认当前状态，优先使用保守写法。\n")
-                .append("- 达到目标后及时收尾，用 reply 简要总结做了什么、结果如何、还需要用户注意什么。\n")
-                .append("- 缺少关键信息时，用 reply 向用户提问并暂停执行，不要盲目尝试。\n\n")
+                .append("- 达到目标后及时收尾，直接输出一段简洁的 Markdown 总结：做了什么、结果如何、还需要用户注意什么。\n")
+                .append("- 缺少关键信息时，直接向用户提问并暂停执行，不要盲目尝试。\n\n")
                 .append("环境说明：\n")
                 .append("- 每次都是完整的 Linux 环境，命令以当前登录用户身份执行，非 root 时注意权限。\n")
                 .append("- 每条命令在独立 shell 中执行：cd 切换的目录会被系统自动保留，但 export 的环境变量与别名不会保留；"
@@ -353,7 +352,7 @@ public class AiAgentService {
                 .append("- 命令必须是非交互的，禁止执行需要人工输入的程序（如 vi、top、不带参数的 passwd）；"
                         + "sudo 通常没有免密，权限不足时如实向用户说明，不要反复重试。\n")
                 .append("- 输出过长会被截断，请用 head/tail/grep 等控制输出量；命令结果已展示给用户，不要在 reply 里重复大段输出。\n")
-                .append("- note 与 reply 用简洁中文，不要使用 emoji；reply 可以用简短 Markdown（列表、加粗、行内代码、代码块），"
+                .append("- note 与普通回复用简洁中文，不要使用 emoji；普通回复可以用简短 Markdown（列表、加粗、行内代码、代码块），"
                         + "让结论更易读。");
         if (cwd != null && !cwd.trim().isEmpty()) {
             sb.append("\n- 当前工作目录：").append(cwd.trim());
@@ -468,6 +467,88 @@ public class AiAgentService {
         return sb.toString();
     }
 
+    /**
+     * 宽松提取 JSON 里的 reply：模型偶尔输出带真实换行的“漂亮 JSON”，标准解析会失败。
+     * 字符串内允许真实换行；未转义引号只有在后面紧跟 , 或 } 时才视为字段结束。
+     */
+    static String lenientJsonReply(String content) {
+        if (content == null) {
+            return null;
+        }
+        int key = content.indexOf("\"reply\"");
+        if (key < 0) {
+            return null;
+        }
+        int colon = content.indexOf(':', key + 7);
+        if (colon < 0) {
+            return null;
+        }
+        int start = colon + 1;
+        while (start < content.length() && Character.isWhitespace(content.charAt(start))) {
+            start++;
+        }
+        if (start >= content.length() || content.charAt(start) != '"') {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = start + 1; i < content.length(); i++) {
+            char c = content.charAt(i);
+            if (c == '\\' && i + 1 < content.length()) {
+                char e = content.charAt(++i);
+                switch (e) {
+                    case 'n':
+                        sb.append('\n');
+                        break;
+                    case 'r':
+                        sb.append('\r');
+                        break;
+                    case 't':
+                        sb.append('\t');
+                        break;
+                    case 'b':
+                        sb.append('\b');
+                        break;
+                    case 'f':
+                        sb.append('\f');
+                        break;
+                    case '"':
+                    case '\\':
+                    case '/':
+                        sb.append(e);
+                        break;
+                    case 'u':
+                        if (i + 4 < content.length()) {
+                            try {
+                                sb.append((char) Integer.parseInt(content.substring(i + 1, i + 5), 16));
+                                i += 4;
+                            } catch (NumberFormatException ex) {
+                                sb.append('u');
+                            }
+                        } else {
+                            sb.append('u');
+                        }
+                        break;
+                    default:
+                        sb.append(e);
+                }
+                continue;
+            }
+            if (c == '"') {
+                int j = i + 1;
+                while (j < content.length() && Character.isWhitespace(content.charAt(j))) {
+                    j++;
+                }
+                if (j >= content.length() || content.charAt(j) == ',' || content.charAt(j) == '}') {
+                    return sb.toString();
+                }
+                sb.append('"');
+                continue;
+            }
+            sb.append(c);
+        }
+        return sb.length() > 0 ? sb.toString() : null;
+    }
+
     /** 去掉模型可能加在开头的 markdown 代码围栏 */
     static String stripLeadingFence(String content) {
         String t = content;
@@ -518,6 +599,14 @@ public class AiAgentService {
                 }
             } catch (Exception ignore) {
                 // 非 JSON，继续尝试 DSML
+            }
+        }
+        if (t.trim().startsWith("{")) {
+            // 模型偶尔输出带真实换行/未转义引号的“漂亮 JSON”，标准解析失败但内容仍是回复
+            String lenientReply = lenientJsonReply(t);
+            if (lenientReply != null && !lenientReply.trim().isEmpty()) {
+                p.reply = lenientReply.trim();
+                return p;
             }
         }
         String dsmlCmd = dsmlParameter(t, "cmd");
