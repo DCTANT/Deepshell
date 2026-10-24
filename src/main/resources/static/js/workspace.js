@@ -4691,6 +4691,7 @@ new Vue({
                 passwordless: false,
                 needsPassword: false
             },
+            rootEnabled: false,
             traffic: {
                 data: null,
                 error: '',
@@ -4701,8 +4702,16 @@ new Vue({
                 sortBy: 'rate',
                 sortDir: 'desc',
                 selectedPid: 0,
+                updatedAt: 0
+            },
+            ports: {
+                data: null,
+                error: '',
+                loading: false,
+                keyword: '',
+                exposedOnly: false,
                 updatedAt: 0,
-                rootEnabled: false
+                rawOpen: false
             }
         },
         /* 多机命令 */
@@ -5980,6 +5989,88 @@ new Vue({
             }
             return max;
         },
+        netPortsRows: function () {
+            var d = this.netTool.ports.data;
+            var rows = d && Array.isArray(d.ports) ? d.ports : [];
+            var q = String(this.netTool.ports.keyword || '').trim().toLowerCase();
+            var exposedOnly = !!this.netTool.ports.exposedOnly;
+            var out = [];
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i] || {};
+                if (exposedOnly && r.scope !== 'all') {
+                    continue;
+                }
+                if (q) {
+                    var text = ((r.protocol || '') + ' ' + (r.address || '') + ' ' + r.port + ' '
+                        + (r.process || '') + ' ' + (r.pid || '')).toLowerCase();
+                    if (text.indexOf(q) < 0) {
+                        continue;
+                    }
+                }
+                out.push(r);
+            }
+            return out;
+        },
+        netPortsStats: function () {
+            var d = this.netTool.ports.data;
+            var rows = d && Array.isArray(d.ports) ? d.ports : [];
+            var stats = { total: rows.length, exposed: 0, local: 0, bound: 0, tcp: 0, udp: 0, hidden: 0 };
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i] || {};
+                if (r.scope === 'all') {
+                    stats.exposed++;
+                } else if (r.scope === 'local') {
+                    stats.local++;
+                } else {
+                    stats.bound++;
+                }
+                if (r.protocol === 'tcp') {
+                    stats.tcp++;
+                } else if (r.protocol === 'udp') {
+                    stats.udp++;
+                }
+                if (!r.pid) {
+                    stats.hidden++;
+                }
+            }
+            return stats;
+        },
+        netFirewallView: function () {
+            var d = this.netTool.ports.data;
+            var fw = d && d.firewall ? d.firewall : {};
+            var active = fw.active;
+            return {
+                type: fw.type || 'none',
+                typeLabel: fw.typeLabel || '未检测到',
+                active: active,
+                stateText: fw.stateText || '状态未知',
+                stateClass: active === true ? 'on' : (active === false ? 'off' : 'unknown'),
+                rules: Array.isArray(fw.rules) ? fw.rules : [],
+                raw: fw.raw || '',
+                hint: fw.hint || '',
+                restricted: !!fw.restricted
+            };
+        },
+        netPortsRootText: function () {
+            var r = this.netTool.root;
+            if (r.loading) {
+                return '授权中…';
+            }
+            return this.netTool.rootEnabled ? 'root 读取中' : '以 root 读取';
+        },
+        netPortsRootTitle: function () {
+            var r = this.netTool.root;
+            if (r.isRoot) {
+                return '当前 SSH 登录用户是 ' + (r.user || 'root') + '，可读取全部端口和防火墙规则';
+            }
+            if (this.netTool.rootEnabled) {
+                return '正在通过 sudo 以 root 读取；点击恢复为当前用户';
+            }
+            if (r.passwordless) {
+                return '当前用户可免密 sudo，点击直接以 root 读取';
+            }
+            return '输入 sudo 密码后以 root 读取完整进程名和防火墙规则；密码仅保存在服务内存 30 分钟';
+        },
         netToolTrafficIntervalText: function () {
             var ms = Number(this.netTool.traffic.intervalMs) || 2000;
             return (ms / 1000) + ' 秒';
@@ -5989,14 +6080,14 @@ new Vue({
             if (r.loading) {
                 return '授权中…';
             }
-            return this.netTool.traffic.rootEnabled ? 'root 采样中' : '以 root 采样';
+            return this.netTool.rootEnabled ? 'root 采样中' : '以 root 采样';
         },
         netTrafficRootTitle: function () {
             var r = this.netTool.root;
             if (r.isRoot) {
                 return '当前 SSH 登录用户是 ' + (r.user || 'root') + '，可读取全部进程';
             }
-            if (this.netTool.traffic.rootEnabled) {
+            if (this.netTool.rootEnabled) {
                 return '正在通过 sudo 以 root 读取全部进程；点击恢复为当前用户';
             }
             if (r.passwordless) {
@@ -9272,11 +9363,18 @@ new Vue({
                 return host ? host + ' · 功能建设中' : '功能建设中';
             }
             if (w && w.type === 'nettool') {
-                var netText = this.netTool.tab === 'traffic'
-                    ? ('实时流量' + (this.netTool.traffic.data
+                var netText;
+                if (this.netTool.tab === 'traffic') {
+                    netText = '实时流量' + (this.netTool.traffic.data
                         ? ' · ' + (this.netTool.traffic.data.programCount || 0) + ' 个程序'
-                        : ''))
-                    : ('连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : ''));
+                        : '');
+                } else if (this.netTool.tab === 'ports') {
+                    var ports = this.netTool.ports.data && Array.isArray(this.netTool.ports.data.ports)
+                        ? this.netTool.ports.data.ports.length : 0;
+                    netText = '端口与防火墙' + (ports ? ' · ' + ports + ' 个端口' : '');
+                } else {
+                    netText = '连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : '');
+                }
                 return host ? host + ' · ' + netText : netText;
             }
             if (w && w.type === 'batchcmd') {
@@ -9949,6 +10047,9 @@ new Vue({
                 if (this.netTool.tab === 'traffic') {
                     this.startNetTraffic(false);
                     this.loadNetRootStatus();
+                } else if (this.netTool.tab === 'ports') {
+                    this.loadNetRootStatus();
+                    this.loadNetPorts(true);
                 }
                 return existing;
             }
@@ -9965,6 +10066,11 @@ new Vue({
             this.netTool.traffic.error = '';
             this.netTool.traffic.paused = false;
             this.netTool.traffic.updatedAt = 0;
+            this.netTool.ports.data = null;
+            this.netTool.ports.error = '';
+            this.netTool.ports.loading = false;
+            this.netTool.ports.updatedAt = 0;
+            this.netTool.ports.rawOpen = false;
             var w = this.addDesktopWindow('nettool');
             this.centerDesktopWindow(w, 1060, 640);
             this.startNetTraffic(true);
@@ -9981,7 +10087,7 @@ new Vue({
             r.ready = false;
             r.passwordless = false;
             r.needsPassword = false;
-            this.netTool.traffic.rootEnabled = false;
+            this.netTool.rootEnabled = false;
         },
         isCurrentNetSession: function (sessionId) {
             return !!this.desktopTab && this.desktopTab.sessionId === sessionId;
@@ -9997,7 +10103,7 @@ new Vue({
             r.passwordless = !!d.passwordless;
             r.needsPassword = !!d.needsPassword;
             if (r.isRoot || !r.ready) {
-                this.netTool.traffic.rootEnabled = false;
+                this.netTool.rootEnabled = false;
             }
         },
         loadNetRootStatus: function () {
@@ -10032,7 +10138,7 @@ new Vue({
                 ELEMENT.Message.info('当前 SSH 登录用户就是 root，无需切换');
                 return;
             }
-            if (this.netTool.traffic.rootEnabled) {
+            if (this.netTool.rootEnabled) {
                 this.disableNetTrafficRoot();
             } else {
                 this.enableNetTrafficRoot();
@@ -10058,9 +10164,9 @@ new Vue({
                 r.loading = false;
                 self.applyNetRootStatus(d);
                 if (d && d.ready) {
-                    self.netTool.traffic.rootEnabled = true;
-                    ELEMENT.Message.success('已切换到 root 采样');
-                    self.startNetTraffic(true);
+                    self.netTool.rootEnabled = true;
+                    ELEMENT.Message.success('已切换到 root 读取');
+                    self.refreshNetAfterRootChange();
                 } else {
                     self.promptNetRootPassword();
                 }
@@ -10106,9 +10212,9 @@ new Vue({
                 }
                 r.loading = false;
                 self.applyNetRootStatus(d);
-                self.netTool.traffic.rootEnabled = false;
-                ELEMENT.Message.info('已恢复为当前用户采样');
-                self.startNetTraffic(true);
+                self.netTool.rootEnabled = false;
+                ELEMENT.Message.info('已恢复为当前用户读取');
+                self.refreshNetAfterRootChange();
             }).catch(function (e) {
                 if (!self.isCurrentNetSession(sessionId)) {
                     return;
@@ -10117,6 +10223,13 @@ new Vue({
                 ELEMENT.Message.error((e && e.message) ? e.message : '关闭 root 采样失败');
             });
         },
+        refreshNetAfterRootChange: function () {
+            if (this.netTool.tab === 'traffic') {
+                this.startNetTraffic(true);
+            } else if (this.netTool.tab === 'ports') {
+                this.loadNetPorts(true);
+            }
+        },
         switchNetToolTab: function (tab) {
             if (!tab || this.netTool.tab === tab) {
                 return;
@@ -10124,10 +10237,75 @@ new Vue({
             this.netTool.tab = tab;
             if (tab === 'traffic') {
                 this.startNetTraffic(!this.netTool.traffic.data);
+            } else if (tab === 'ports') {
+                this.closeTaskmgrProcessDetail();
+                this.stopNetTraffic();
+                this.loadNetRootStatus();
+                this.loadNetPorts(true);
             } else {
                 this.closeTaskmgrProcessDetail();
                 this.stopNetTraffic();
             }
+        },
+        loadNetPorts: function (reset) {
+            var p = this.netTool.ports;
+            var tab = this.desktopTab;
+            if (!this.desktop.visible || this.netTool.tab !== 'ports' || !tab || !tab.sessionId) {
+                return;
+            }
+            if (this._netPortsBusy) {
+                return;
+            }
+            var sessionId = tab.sessionId;
+            if (this._netPortsSession !== sessionId) {
+                this._netPortsSession = sessionId;
+                reset = true;
+            }
+            if (reset) {
+                p.data = null;
+                p.error = '';
+                p.updatedAt = 0;
+                p.rawOpen = false;
+            }
+            p.loading = true;
+            this._netPortsBusy = true;
+            var self = this;
+            http.post('/api/nettools/ports', {
+                sessionId: sessionId,
+                root: !!this.netTool.rootEnabled
+            }, { silent: true }).then(function (d) {
+                if (self._netPortsSession !== sessionId) {
+                    return;
+                }
+                p.data = d || null;
+                p.error = '';
+                p.updatedAt = Date.now();
+            }).catch(function (e) {
+                if (self._netPortsSession !== sessionId) {
+                    return;
+                }
+                var message = (e && e.message) ? e.message : '读取端口与防火墙失败';
+                p.error = message;
+                if (self.netTool.rootEnabled && /root|sudo/i.test(message)) {
+                    self.netTool.rootEnabled = false;
+                    self.loadNetRootStatus();
+                }
+            }).then(function () {
+                p.loading = false;
+                self._netPortsBusy = false;
+            });
+        },
+        netPortScopeText: function (scope) {
+            if (scope === 'all') {
+                return '所有网卡';
+            }
+            if (scope === 'local') {
+                return '仅本机';
+            }
+            return '指定地址';
+        },
+        netPortAddressText: function (address) {
+            return address === '*' ? '0.0.0.0' : address;
         },
         startNetTraffic: function (reset) {
             this.stopNetTraffic();
@@ -10194,7 +10372,7 @@ new Vue({
             http.post('/api/nettools/process-traffic', {
                 sessionId: sessionId,
                 reset: !!reset,
-                root: !!t.rootEnabled
+                root: !!this.netTool.rootEnabled
             }, { silent: true }).then(function (d) {
                 if (self._netTrafficSession !== sessionId) {
                     return;
@@ -10208,8 +10386,8 @@ new Vue({
                 }
                 var message = (e && e.message) ? e.message : '读取进程流量失败';
                 t.error = message;
-                if (t.rootEnabled && /root|sudo/i.test(message)) {
-                    t.rootEnabled = false;
+                if (self.netTool.rootEnabled && /root|sudo/i.test(message)) {
+                    self.netTool.rootEnabled = false;
                     self.loadNetRootStatus();
                 }
             }).then(function () {
