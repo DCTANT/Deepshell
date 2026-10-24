@@ -2,6 +2,7 @@ package com.itdct.deepshell.entity;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.DynamicUpdate;
 
 import javax.persistence.*;
 
@@ -11,6 +12,7 @@ import javax.persistence.*;
 @Getter
 @Setter
 @Entity
+@DynamicUpdate
 @Table(name = "ai_conversation")
 public class AiConversation {
 
@@ -39,6 +41,9 @@ public class AiConversation {
 
     /** 分叉时复制到第几条消息（消息条数，便于展示与被追溯） */
     private Integer forkPoint;
+
+    /** 未读亮点：后台执行完成或手动标记，打开该对话后清除 */
+    private Boolean unread = false;
 
     /** 消息数组 JSON 文本 */
     @Column(columnDefinition = "TEXT")

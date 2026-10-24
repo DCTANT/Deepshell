@@ -749,7 +749,8 @@
                                        @click="newConv"></el-button>
                         </div>
                         <div class="aichat-body">
-                            <div class="aichat-convs">
+                            <div class="aichat-convs"
+                                 :style="{ width: convWidth + 'px', flexBasis: convWidth + 'px' }">
                                 <div v-for="c in convList" :key="c.id" class="aichat-conv"
                                      :class="{ active: c.id === tab.chatConvId,
                                                running: c._run && c._run.busy }"
@@ -758,6 +759,7 @@
                                      @contextmenu.prevent="openConvMenu($event, c)">
                                     <i v-if="c._run && c._run.busy" class="el-icon-loading aichat-conv-busy"></i>
                                     <span class="aichat-conv-title" v-if="renamingId !== c.id">
+                                        <span v-if="c.unread" class="aichat-conv-unread" title="有新内容"></span>
                                         <i v-if="c.pinned" class="el-icon-top aichat-conv-pin" title="已置顶"></i>{{ c.title }}
                                     </span>
                                     <input v-else class="aichat-conv-rename" ref="renameInput" v-model="renameText"
@@ -770,6 +772,8 @@
                                        @click.stop="delConv(c)"></i>
                                 </div>
                             </div>
+                            <div class="aichat-conv-resizer" title="拖动调整会话列表宽度"
+                                 @mousedown.prevent="startResize"></div>
                             <div class="aichat-main">
                                 <div class="aichat-list" ref="list" @scroll="onListScroll">
                                     <div v-if="tab.chatLoading" class="aichat-empty">
@@ -1040,19 +1044,23 @@
                                 </div>
                             </div>
                         </div>
-                        <!-- 对话列表右键菜单 -->
-                        <div v-if="convMenu.visible" class="aichat-conv-menu-mask"
-                             @click="closeConvMenu" @contextmenu.prevent="closeConvMenu"></div>
-                        <div v-if="convMenu.visible" class="aichat-conv-menu"
+                        <!-- 对话列表右键菜单（相对 .aichat 定位，避免桌面窗口缩放后跑偏） -->
+                        <div v-if="convMenu.visible" ref="convMenu" class="aichat-conv-menu"
                              :style="{ left: convMenu.x + 'px', top: convMenu.y + 'px' }" @click.stop>
                             <div class="aichat-conv-menu-item" @click="menuRename">
                                 <i class="el-icon-edit"></i>重命名
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuSummarizeTitle">
+                                <i class="el-icon-magic-stick"></i>再次总结标题
                             </div>
                             <div class="aichat-conv-menu-item" @click="menuExport">
                                 <i class="el-icon-download"></i>导出记录
                             </div>
                             <div class="aichat-conv-menu-item" @click="menuPin">
                                 <i class="el-icon-top"></i>{{ convMenu.conv && convMenu.conv.pinned ? '取消置顶' : '置顶' }}
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuUnread">
+                                <i class="el-icon-message"></i>{{ convMenu.conv && convMenu.conv.unread ? '标记为已读' : '标记为未读' }}
                             </div>
                             <div class="aichat-conv-menu-sep"></div>
                             <div class="aichat-conv-menu-item danger" @click="menuDelete">

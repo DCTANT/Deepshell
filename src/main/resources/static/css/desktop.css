@@ -530,11 +530,6 @@
     height: 100%;
 }
 
-.dsk-ai-body .aichat-convs {
-    flex-basis: 170px;
-    width: 170px;
-}
-
 .dsk-window .dsk-side {
     width: 196px;
 }

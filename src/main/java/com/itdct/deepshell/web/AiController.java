@@ -9,6 +9,7 @@ import com.itdct.deepshell.service.AiCompactionService;
 import com.itdct.deepshell.service.AiConfigService;
 import com.itdct.deepshell.service.AiConnectivityService;
 import com.itdct.deepshell.service.AiConversationService;
+import com.itdct.deepshell.service.AiConversationTitleService;
 import com.itdct.deepshell.service.AiModelCatalogService;
 import lombok.Data;
 import org.springframework.http.MediaType;
@@ -35,6 +36,7 @@ public class AiController {
     private final AiCommandService commandService;
     private final AiAgentService agentService;
     private final AiConversationService convService;
+    private final AiConversationTitleService titleService;
     private final AiModelCatalogService catalog;
     private final AiCompactionService compactionService;
     private final AiConnectivityService connectivityService;
@@ -50,12 +52,14 @@ public class AiController {
 
     public AiController(AiConfigService config, AiCommandService commandService,
                         AiAgentService agentService, AiConversationService convService,
+                        AiConversationTitleService titleService,
                         AiModelCatalogService catalog, AiCompactionService compactionService,
                         AiConnectivityService connectivityService) {
         this.config = config;
         this.commandService = commandService;
         this.agentService = agentService;
         this.convService = convService;
+        this.titleService = titleService;
         this.catalog = catalog;
         this.compactionService = compactionService;
         this.connectivityService = connectivityService;
@@ -293,6 +297,16 @@ public class AiController {
         return R.ok(convService.fork(id, form == null ? null : form.getMsgIndex()));
     }
 
+    /** 总结对话标题；force=false 时只替换占位标题，force=true 时覆盖用户当前标题 */
+    @PostMapping("/convs/{id}/title")
+    public R<AiConversationService.ConvDto> convTitle(@PathVariable Long id,
+                                                      @RequestBody(required = false) ConvTitleForm form) {
+        boolean force = form != null && Boolean.TRUE.equals(form.getForce());
+        return R.ok(titleService.generate(id, force,
+                form == null ? null : form.getHint(),
+                form == null ? null : form.getExpectedTitle()));
+    }
+
     @PutMapping("/convs/{id}")
     public R<AiConversationService.ConvDto> convSave(@PathVariable Long id, @RequestBody ConvSaveForm form) {
         AiConversationService.ConvForm f = new AiConversationService.ConvForm();
@@ -300,6 +314,7 @@ public class AiController {
         f.cwd = form.getCwd();
         f.active = form.getActive();
         f.pinned = form.getPinned();
+        f.unread = form.getUnread();
         f.msgs = form.getMsgs();
         return R.ok(convService.save(id, f));
     }
@@ -423,7 +438,15 @@ public class AiController {
         private String cwd;
         private Boolean active;
         private Boolean pinned;
+        private Boolean unread;
         private JsonNode msgs;
+    }
+
+    @Data
+    public static class ConvTitleForm {
+        private String hint;
+        private String expectedTitle;
+        private Boolean force;
     }
 
     @Data

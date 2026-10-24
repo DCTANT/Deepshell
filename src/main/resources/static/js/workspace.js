@@ -1574,11 +1574,22 @@ Vue.component('ai-chat-panel', {
     },
     template: '#ai-chat-panel-tpl',
     data: function () {
+        var ctx = this.context === 'window' ? 'window' : 'panel';
+        var width = ctx === 'window' ? 170 : 116;
+        try {
+            var saved = parseInt(localStorage.getItem('deepshell.aiConvWidth.' + ctx), 10);
+            if (saved >= 90) {
+                width = Math.min(saved, 360);
+            }
+        } catch (e) {
+            // 本地存储不可用时使用默认宽度
+        }
         return {
             stick: true,
             slashOpen: false,
             slashIndex: 0,
             convMenu: { visible: false, x: 0, y: 0, conv: null },
+            convWidth: width,
             renamingId: null,
             renameText: ''
         };
@@ -1732,12 +1743,38 @@ Vue.component('ai-chat-panel', {
             }
         };
         window.addEventListener('keydown', this._onConvMenuKey);
+        this._onDocPointer = function (e) {
+            if (!self.convMenu.visible) {
+                return;
+            }
+            var menu = self.$refs.convMenu;
+            if (menu && (menu === e.target || menu.contains(e.target))) {
+                return;
+            }
+            self.closeConvMenu();
+        };
+        document.addEventListener('mousedown', this._onDocPointer, true);
+        document.addEventListener('contextmenu', this._onDocPointer, true);
     },
     beforeDestroy: function () {
         if (this._onConvMenuKey) {
             window.removeEventListener('keydown', this._onConvMenuKey);
             this._onConvMenuKey = null;
         }
+        if (this._onDocPointer) {
+            document.removeEventListener('mousedown', this._onDocPointer, true);
+            document.removeEventListener('contextmenu', this._onDocPointer, true);
+            this._onDocPointer = null;
+        }
+        if (this._onResizeMove) {
+            document.removeEventListener('mousemove', this._onResizeMove);
+            this._onResizeMove = null;
+        }
+        if (this._onResizeEnd) {
+            document.removeEventListener('mouseup', this._onResizeEnd);
+            this._onResizeEnd = null;
+        }
+        document.body.classList.remove('aichat-resizing');
     },
     methods: {
         onListScroll: function (e) {
@@ -1836,19 +1873,76 @@ Vue.component('ai-chat-panel', {
             this.tab.chatInput = '';
             this.$root.aiRunSlash(item.id, this.tab);
         },
+        /* 桌面窗口可能被 transform 缩放，按元素实际缩放比换算成 .aichat 内的局部坐标 */
+        panelPoint: function (clientX, clientY) {
+            var el = this.$el;
+            var rect = el.getBoundingClientRect();
+            var scale = el.offsetWidth > 0 ? rect.width / el.offsetWidth : 1;
+            if (!scale || scale <= 0) {
+                scale = 1;
+            }
+            return {
+                x: (clientX - rect.left) / scale,
+                y: (clientY - rect.top) / scale,
+                width: el.clientWidth,
+                height: el.clientHeight,
+                scale: scale
+            };
+        },
         openConvMenu: function (e, c) {
             if (!c) {
                 return;
             }
-            var width = 168;
-            var height = 186;
+            var p = this.panelPoint(e.clientX, e.clientY);
+            var menuWidth = 170;
+            var menuHeight = 234;
+            var self = this;
             this.renamingId = null;
             this.convMenu = {
                 visible: true,
-                x: Math.max(8, Math.min(e.clientX, window.innerWidth - width - 8)),
-                y: Math.max(8, Math.min(e.clientY, window.innerHeight - height - 8)),
+                x: Math.max(4, Math.min(p.x, p.width - menuWidth - 4)),
+                y: Math.max(4, Math.min(p.y, p.height - menuHeight - 4)),
                 conv: c
             };
+            this.$nextTick(function () {
+                var el = self.$refs.convMenu;
+                if (!el) {
+                    return;
+                }
+                var maxX = Math.max(4, p.width - el.offsetWidth - 4);
+                var maxY = Math.max(4, p.height - el.offsetHeight - 4);
+                self.convMenu.x = Math.max(4, Math.min(p.x, maxX));
+                self.convMenu.y = Math.max(4, Math.min(p.y, maxY));
+            });
+        },
+        startResize: function (e) {
+            var self = this;
+            var p = this.panelPoint(e.clientX, e.clientY);
+            var startWidth = this.convWidth;
+            this._onResizeMove = function (ev) {
+                var w = Math.round(startWidth + (ev.clientX - e.clientX) / p.scale);
+                self.convWidth = Math.max(90, Math.min(self.maxConvWidth(), w));
+            };
+            this._onResizeEnd = function () {
+                document.removeEventListener('mousemove', self._onResizeMove);
+                document.removeEventListener('mouseup', self._onResizeEnd);
+                self._onResizeMove = null;
+                self._onResizeEnd = null;
+                document.body.classList.remove('aichat-resizing');
+                try {
+                    var key = 'deepshell.aiConvWidth.' + (self.context === 'window' ? 'window' : 'panel');
+                    localStorage.setItem(key, String(self.convWidth));
+                } catch (err) {
+                    // 本地存储不可用时只保留本次会话宽度
+                }
+            };
+            document.addEventListener('mousemove', this._onResizeMove);
+            document.addEventListener('mouseup', this._onResizeEnd);
+            document.body.classList.add('aichat-resizing');
+        },
+        maxConvWidth: function () {
+            var w = this.$el ? this.$el.clientWidth : 0;
+            return Math.max(90, Math.min(360, w - 180));
         },
         closeConvMenu: function () {
             if (this.convMenu.visible) {
@@ -1861,6 +1955,11 @@ Vue.component('ai-chat-panel', {
             this.closeConvMenu();
             this.startRename(c);
         },
+        menuSummarizeTitle: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.$root.aiConvSummarizeTitle(c, true);
+        },
         menuExport: function () {
             var c = this.convMenu.conv;
             this.closeConvMenu();
@@ -1870,6 +1969,18 @@ Vue.component('ai-chat-panel', {
             var c = this.convMenu.conv;
             this.closeConvMenu();
             this.togglePin(c);
+        },
+        menuUnread: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            if (!c) {
+                return;
+            }
+            if (c.unread) {
+                this.$root.aiConvRead(c);
+            } else {
+                this.$root.aiConvMarkUnread(c);
+            }
         },
         menuDelete: function () {
             var c = this.convMenu.conv;
@@ -7288,6 +7399,7 @@ new Vue({
                         conv.updatedAt = Date.now();
                         t.chatMsgs = conv.msgs;
                         self.saveConv(t, conv);
+                        self.saveConvTitle(conv);
                     })
                     .catch(function () { /* 取消 */ });
                 return;
@@ -7338,6 +7450,7 @@ new Vue({
             if (!conv) {
                 return;
             }
+            this.aiConvRead(conv);
             if (t.chatConvId !== conv.id) {
                 t.chatConvId = conv.id;
                 t.chatMsgs = conv.msgs || [];
@@ -7367,6 +7480,9 @@ new Vue({
             }
             if (conv.pinned == null) {
                 this.$set(conv, 'pinned', false);
+            }
+            if (conv.unread == null) {
+                this.$set(conv, 'unread', false);
             }
             if (conv._compacting == null) {
                 this.$set(conv, '_compacting', false);
@@ -7664,6 +7780,83 @@ new Vue({
                 ELEMENT.Message.success(next ? '对话已置顶' : '已取消置顶');
             }).catch(function () { /* 拦截器已提示 */ });
         },
+        aiConvMarkUnread: function (c) {
+            if (!c || c.id == null || c.unread) {
+                return;
+            }
+            this.$set(c, 'unread', true);
+            http.put('/api/ai/convs/' + c.id, { unread: true }).catch(function () { /* ignore */ });
+        },
+        aiConvRead: function (c) {
+            if (!c || c.id == null || !c.unread) {
+                return;
+            }
+            this.$set(c, 'unread', false);
+            http.put('/api/ai/convs/' + c.id, { unread: false }).catch(function () { /* ignore */ });
+        },
+        /* 总结标题：force=false 用于新对话自动生成，force=true 用于右键菜单覆盖当前标题 */
+        aiConvSummarizeTitle: function (c, force, hint) {
+            if (!c || c.id == null) {
+                return;
+            }
+            if (c._titleBusy) {
+                if (force) {
+                    ELEMENT.Message.info('正在总结标题，请稍候');
+                }
+                return;
+            }
+            if (force) {
+                if (!this.aiConvHasText(c)) {
+                    ELEMENT.Message.info('当前对话还没有内容，无法总结标题');
+                    return;
+                }
+                var self = this;
+                var current = c.title || '新对话';
+                this.$confirm('重新总结会覆盖当前标题「' + current + '」，是否继续？', '再次总结标题', {
+                    type: 'warning',
+                    confirmButtonText: '重新生成',
+                    cancelButtonText: '取消'
+                }).then(function () {
+                    self.aiConvRequestTitle(c, true);
+                }).catch(function () { /* 取消 */ });
+                return;
+            }
+            this.aiConvRequestTitle(c, false, hint);
+        },
+        aiConvHasText: function (c) {
+            return (c && c.msgs || []).some(function (m) {
+                return m && (m.role === 'user' || m.role === 'ai') && (m.text || '').trim();
+            });
+        },
+        aiConvRequestTitle: function (c, force, hint) {
+            if (!c || c.id == null || c._titleBusy) {
+                return;
+            }
+            var self = this;
+            this.$set(c, '_titleBusy', true);
+            var loading = force
+                ? ELEMENT.Message({ message: '正在重新总结标题…', type: 'info', duration: 0 })
+                : null;
+            http.post('/api/ai/convs/' + c.id + '/title', {
+                force: !!force,
+                hint: hint || '',
+                expectedTitle: c.title || ''
+            }, force ? {} : { silent: true }).then(function (d) {
+                if (d && d.title && c.title !== d.title) {
+                    self.$set(c, 'title', d.title);
+                }
+                if (force && d && d.title) {
+                    ELEMENT.Message.success('标题已更新为「' + d.title + '」');
+                }
+            }).catch(function () {
+                // 自动总结静默失败；手动失败由拦截器提示
+            }).then(function () {
+                self.$set(c, '_titleBusy', false);
+                if (loading) {
+                    loading.close();
+                }
+            });
+        },
         aiConvFork: function (conv, msgIndex) {
             if (!conv || conv.id == null) {
                 return;
@@ -7726,16 +7919,23 @@ new Vue({
                 this.$set(conv, 'input', t.chatInput || '');
             }
         },
-        /* 保存一条对话（服务端钳制消息数与长度）；失败时内存数据不丢，下次保存重试 */
+        /* 保存消息与工作目录（标题走独立接口，避免自动总结完成后被旧请求覆盖） */
         saveConv: function (t, conv) {
             if (!conv || conv.id == null) {
-                return;
+                return Promise.resolve();
             }
-            http.put('/api/ai/convs/' + conv.id, {
-                title: conv.title,
+            return http.put('/api/ai/convs/' + conv.id, {
                 cwd: conv.cwd,
-                msgs: conv.msgs
+                msgs: conv.msgs,
+                unread: !!conv.unread
             }).catch(function () { /* 拦截器已提示 */ });
+        },
+        saveConvTitle: function (conv, silent) {
+            if (!conv || conv.id == null) {
+                return Promise.resolve();
+            }
+            return http.put('/api/ai/convs/' + conv.id, { title: conv.title },
+                silent ? { silent: true } : {}).catch(function () { /* ignore */ });
         },
         /* 打开连接时加载该连接的对话列表（服务端没有则迁移浏览器旧数据或新建） */
         loadAiConvs: function (t) {
@@ -7834,7 +8034,11 @@ new Vue({
         },
         aiConvSwitch: function (c) {
             var t = this.activeTab;
-            if (!t || !c || c.id === t.chatConvId) {
+            if (!t || !c) {
+                return;
+            }
+            this.aiConvRead(c);
+            if (c.id === t.chatConvId) {
                 return;
             }
             this.aiSaveDraft(t);
@@ -7905,6 +8109,7 @@ new Vue({
                 return;
             }
             this.aiEnsureConvState(conv);
+            this.aiConvRead(conv);
             var run = conv._run;
             var text = (t.chatInput || '').trim();
             if (conv._compacting) {
@@ -7934,13 +8139,20 @@ new Vue({
                 return;
             }
             this.aiEnsureConvState(conv);
+            this.aiConvRead(conv);
+            var self = this;
+            var firstUser = !conv.msgs.some(function (m) {
+                return m && m.role === 'user';
+            });
+            var placeholderTitle = !conv.title || conv.title === '新对话';
+            var autoTitle = firstUser && placeholderTitle;
             var run = conv._run;
             var userMsg = { role: 'user', text: text };
             if (steer) {
                 userMsg.steer = true;
             }
             conv.msgs.push(userMsg);
-            if (!conv.title || conv.title === '新对话') {
+            if (placeholderTitle) {
                 conv.title = text.slice(0, 20);
             }
             this.aiPushHistory(conv, text);
@@ -7957,6 +8169,14 @@ new Vue({
             run.seq = (run.seq || 0) + 1;
             run.busy = true;
             this.saveConv(t, conv);
+            if (autoTitle) {
+                // 先写入首条消息的占位标题，再让模型总结；标题保存完成后才发起，避免旧标题覆盖新标题
+                this.saveConvTitle(conv, true).then(function () {
+                    self.aiConvSummarizeTitle(conv, false, text);
+                });
+            } else if (placeholderTitle) {
+                this.saveConvTitle(conv, true);
+            }
             this.scrollAiChat(true);
             this.aiChatLoop(t, conv, run, run.seq);
         },
@@ -8567,6 +8787,10 @@ new Vue({
                     conv.msgs.push(noteItem);
                 }
                 conv.updatedAt = Date.now();
+                // 对话不在当前可见的会话/标签页，或页面在后台时留一个未读亮点，点开后清除
+                if (!t || t !== this.activeTab || t.chatConvId !== conv.id || document.hidden) {
+                    this.$set(conv, 'unread', true);
+                }
             }
             this.saveConv(t, conv);
             if (t && conv && t.chatConvId === conv.id) {
