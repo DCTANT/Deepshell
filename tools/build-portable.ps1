@@ -155,7 +155,7 @@ if (-not (Test-Path (Join-Path $appImage 'DeepShell.exe'))) {
 
 # ---------- 外置配置 / 数据目录 / 说明 ----------
 Info '组装 application.yml、data 与说明文件…'
-$configText = Get-Content (Join-Path $repo 'dist\application.yml') -Raw
+$configText = Get-Content (Join-Path $repo 'dist\application.yml') -Raw -Encoding UTF8
 $configText = [regex]::Replace($configText, '(?m)^(\s*version:\s*).*$', "`${1}$version")
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Join-Path $appImage 'application.yml'), $configText, $utf8NoBom)
@@ -167,7 +167,7 @@ if (Test-Path $dataSrc) {
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $dataDst 'db'), (Join-Path $dataDst 'logs') | Out-Null
 
-$readme = Get-Content (Join-Path $repo 'dist\PORTABLE-README.txt') -Raw
+$readme = Get-Content (Join-Path $repo 'dist\PORTABLE-README.txt') -Raw -Encoding UTF8
 $readme = $readme.Replace('@VERSION@', $version)
 [System.IO.File]::WriteAllText((Join-Path $appImage 'README.txt'), $readme, $utf8NoBom)
 
