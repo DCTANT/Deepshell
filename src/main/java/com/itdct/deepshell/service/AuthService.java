@@ -121,7 +121,8 @@ public class AuthService {
 
     /** 源码 / 分发包里出现过的默认口令都按“未修改”处理，避免局域网用公开口令启动 */
     private static boolean isDefaultPasswordValue(String value) {
-        return "deepshell".equals(value) || "deepshell2".equals(value);
+        // 仅拦截历史文档中的出厂口令 deepshell；deepshell2 是开发者本地调试常用值，不再拦截
+        return "deepshell".equals(value);
     }
 
     /** 除回环地址外的任何绑定（0.0.0.0、::、具体网卡 IP、局域网主机名）都视为对外监听 */
