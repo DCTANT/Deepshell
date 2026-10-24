@@ -4450,6 +4450,7 @@ new Vue({
         hotkeyVisible: false,
         bgVisible: false,
         helpVisible: false,
+        sponsorVisible: false,
         aboutVisible: false,
         protocolVisible: false,
         protocolLoading: false,
@@ -6677,6 +6678,8 @@ new Vue({
                     ? '已开启危险命令确认' : '已关闭危险命令确认');
             } else if (cmd === 'help') {
                 this.helpVisible = true;
+            } else if (cmd === 'sponsor') {
+                this.sponsorVisible = true;
             } else if (cmd === 'about') {
                 this.loadAppInfo();
                 this.aboutVisible = true;
@@ -13396,6 +13399,7 @@ new Vue({
         },
         hasDesktopDialogOpen: function () {
             return this.fontVisible || this.hotkeyVisible || this.bgVisible || this.helpVisible
+                || this.sponsorVisible
                 || this.aboutVisible || this.lanVisible || this.authSetVisible || this.aiSetVisible
                 || this.sysInfoVisible || this.procDetailVisible || this.connectDialogVisible
                 || this.connImportVisible
@@ -16866,6 +16870,7 @@ new Vue({
                     var subDialog = this.fontVisible || this.bgVisible || this.aiSetVisible
                         || this.lanVisible || this.authSetVisible || this.aboutVisible
                         || this.sysInfoVisible || this.connectDialogVisible || this.helpVisible
+                        || this.sponsorVisible
                         || this.hotkeyVisible;
                     if (!subDialog) {
                         this.closeDesktopSettings();

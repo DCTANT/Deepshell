@@ -601,6 +601,78 @@ a {
     color: #24292f;
 }
 
+/* 赞助弹窗 / 帮助手册赞助区 */
+.sponsor-box {
+    text-align: center;
+    padding: 2px 4px 6px;
+}
+
+.sponsor-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #24292f;
+    margin: 2px 0 6px;
+}
+
+.sponsor-sub {
+    font-size: 13px;
+    color: #8b98ad;
+}
+
+.sponsor-qrs {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 28px;
+    flex-wrap: wrap;
+    margin: 18px 0 10px;
+}
+
+.sponsor-qrs figure {
+    margin: 0;
+    text-align: center;
+}
+
+.sponsor-qrs img {
+    width: 220px;
+    max-width: 40vw;
+    height: auto;
+    border: 1px solid #e5e9f2;
+    border-radius: 10px;
+    background: #fff;
+    padding: 8px;
+    box-shadow: 0 4px 14px rgba(15, 30, 55, .08);
+    cursor: zoom-in;
+}
+
+.sponsor-qrs figcaption {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #54657e;
+}
+
+.help-sponsor {
+    margin: 10px 0 6px;
+}
+
+.help-sponsor img {
+    width: 170px;
+    max-width: 32vw;
+}
+
+.help-section p {
+    font-size: 12.5px;
+    color: #606266;
+    line-height: 1.9;
+    margin: 0 0 8px;
+}
+
+.sponsor-tip {
+    font-size: 12px;
+    color: #9aa7bd;
+    margin: 4px 0 0;
+}
+
 /* 外部调用（跳板机客户端）弹窗 */
 .protocol-dlg {
     max-width: 94vw;

@@ -25,7 +25,8 @@ public class AuthWebConfig implements WebMvcConfigurer {
         // 先做跨站校验（与是否开启登录无关），再校验登录态
         registry.addInterceptor(originGuardInterceptor)
                 .addPathPatterns("/**")
-                .excludePathPatterns("/ws/**", "/plugin-assets/**", "/css/**", "/js/**", "/vendor/**");
+                .excludePathPatterns("/ws/**", "/plugin-assets/**", "/css/**", "/js/**",
+                        "/vendor/**", "/img/**");
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
@@ -42,6 +43,7 @@ public class AuthWebConfig implements WebMvcConfigurer {
                         "/css/**",
                         "/js/**",
                         "/vendor/**",
+                        "/img/**",
                         "/plugin-assets/**",
                         "/favicon.ico",
                         "/error");

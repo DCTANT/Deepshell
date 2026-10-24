@@ -1164,10 +1164,43 @@
                     <li>本工具设计为本机使用，请勿直接暴露到公网</li>
                 </ul>
             </div>
+            <div class="help-section">
+                <div class="help-title"><i class="el-icon-food"></i>赞助 DeepShell</div>
+                <p>DeepShell 是个人利用业余时间开发和维护的。如果它帮你省了时间，欢迎请作者吃顿饭；金额随意，赞助完全自愿，不影响使用与更新。</p>
+                <div class="sponsor-qrs help-sponsor">
+                    <figure>
+                        <a th:href="@{/img/sponsor-wechat.jpg}" target="_blank" rel="noopener"><img th:src="@{/img/sponsor-wechat.jpg}" alt="微信支付"></a>
+                        <figcaption>微信支付</figcaption>
+                    </figure>
+                    <figure>
+                        <a th:href="@{/img/sponsor-alipay.jpg}" target="_blank" rel="noopener"><img th:src="@{/img/sponsor-alipay.jpg}" alt="支付宝"></a>
+                        <figcaption>支付宝</figcaption>
+                    </figure>
+                </div>
+                <p class="sponsor-tip">扫码后可以备注一下你的 ID 或用途，感谢支持。</p>
+            </div>
         </div>
     </el-dialog>
 
-    <!-- 关于 -->
+    <!-- 赞助 -->
+    <el-dialog title="赞助 DeepShell" :visible.sync="sponsorVisible" width="620px" append-to-body
+               custom-class="sponsor-dialog">
+        <div class="sponsor-box">
+            <div class="sponsor-title">如果 DeepShell 帮你省了时间，欢迎请作者吃顿饭</div>
+            <div class="sponsor-sub">金额随意，赞助完全自愿，不影响使用与更新。</div>
+            <div class="sponsor-qrs">
+                <figure>
+                    <a th:href="@{/img/sponsor-wechat.jpg}" target="_blank" rel="noopener"><img th:src="@{/img/sponsor-wechat.jpg}" alt="微信支付"></a>
+                    <figcaption>微信支付</figcaption>
+                </figure>
+                <figure>
+                    <a th:href="@{/img/sponsor-alipay.jpg}" target="_blank" rel="noopener"><img th:src="@{/img/sponsor-alipay.jpg}" alt="支付宝"></a>
+                    <figcaption>支付宝</figcaption>
+                </figure>
+            </div>
+            <div class="sponsor-tip">扫码后可以备注一下你的 ID 或用途，感谢支持。</div>
+        </div>
+    </el-dialog>
     <el-dialog title="关于" :visible.sync="aboutVisible" width="620px" append-to-body
                custom-class="about-dialog">
         <div class="about-box">

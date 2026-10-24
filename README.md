@@ -514,6 +514,18 @@ deepshell.tls.key-password: ""
 
 > 登录账号密码在配置文件中为明文，请务必修改默认密码；开启登录后建议不要将服务直接暴露到公网。Token 有效期还可在右上角菜单「登录与安全」中在线调整（1 - 720 小时），设置保存在数据目录的 `auth.properties` 中。验证码按 TCP 连接的对端 IP 计数，不信任 `X-Forwarded-For`，避免伪造请求头绕过阈值。
 
+## 赞助支持
+
+DeepShell 由个人利用业余时间开发和维护。如果它帮你省了时间，欢迎请作者吃顿饭，金额随意；赞助完全自愿，不影响使用与更新。
+
+<p align="center">
+  <img src="src/main/resources/static/img/sponsor-wechat.jpg" width="260" alt="微信支付">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="src/main/resources/static/img/sponsor-alipay.jpg" width="260" alt="支付宝">
+</p>
+
+> 扫码后可以备注一下你的 ID 或用途，感谢每一份支持。
+
 ## 开源协议
 
 本项目采用 **AGPL-3.0-only** 协议开源，完整条款见 [LICENSE](LICENSE)。
