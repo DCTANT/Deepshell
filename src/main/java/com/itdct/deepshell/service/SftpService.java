@@ -157,19 +157,7 @@ public class SftpService {
     /** 把本地上传临时文件写入远端，relativePath 可包含多级目录，自动创建父目录 */
     public void putLocalFile(String sessionId, String dirPath, String relativePath,
                              java.nio.file.Path localFile) throws Exception {
-        String rel = relativePath == null ? "" : relativePath.replace('\\', '/');
-        while (rel.startsWith("/")) {
-            rel = rel.substring(1);
-        }
-        if (rel.isEmpty()) {
-            throw new IllegalArgumentException("目标文件名不能为空");
-        }
-        for (String part : rel.split("/")) {
-            if (part.isEmpty() || ".".equals(part) || "..".equals(part)
-                    || part.indexOf('\0') >= 0 || part.indexOf('\\') >= 0) {
-                throw new IllegalArgumentException("目标路径不合法");
-            }
-        }
+        String rel = safeRelativePath(relativePath, null);
         final String target = join(dirPath, rel);
         withSftp(sessionId, c -> {
             ensureDir(c, parentOf(target));
@@ -178,6 +166,40 @@ public class SftpService {
             }
             return null;
         });
+    }
+
+    /** 校验前端传来的相对路径，拒绝绝对路径与 .. 穿越 */
+    static String safeRelativePath(String relativePath, String fallbackName) {
+        String rel = relativePath == null ? "" : relativePath.replace('\\', '/');
+        while (rel.startsWith("/")) {
+            rel = rel.substring(1);
+        }
+        if (rel.isEmpty()) {
+            String name = fallbackName == null ? "" : fallbackName.replace('\\', '/');
+            int idx = name.lastIndexOf('/');
+            if (idx >= 0) {
+                name = name.substring(idx + 1);
+            }
+            rel = name;
+        }
+        if (rel.isEmpty()) {
+            throw new IllegalArgumentException("目标文件名不能为空");
+        }
+        if (rel.endsWith("/") || rel.length() > 4096) {
+            throw new IllegalArgumentException("目标路径不合法");
+        }
+        String[] parts = rel.split("/");
+        if (parts.length > 64) {
+            throw new IllegalArgumentException("目录层级过深");
+        }
+        for (String part : parts) {
+            if (part.isEmpty() || ".".equals(part) || "..".equals(part)
+                    || part.indexOf('\0') >= 0 || part.indexOf('\n') >= 0
+                    || part.indexOf('\r') >= 0 || part.length() > 255) {
+                throw new IllegalArgumentException("目标路径不合法");
+            }
+        }
+        return rel;
     }
 
     private void ensureDir(ChannelSftp c, String dir) throws Exception {
@@ -466,19 +488,21 @@ public class SftpService {
     }
 
     public void upload(String sessionId, String dirPath, MultipartFile file) throws Exception {
-        String original = file.getOriginalFilename() == null ? "upload.bin" : file.getOriginalFilename();
-        String name = original.replace('\\', '/');
-        int idx = name.lastIndexOf('/');
-        if (idx >= 0) {
-            name = name.substring(idx + 1);
+        upload(sessionId, dirPath, null, file);
+    }
+
+    /** relativePath 可包含多级目录（文件夹上传），自动创建父目录 */
+    public void upload(String sessionId, String dirPath, String relativePath,
+                       MultipartFile file) throws Exception {
+        if (file == null) {
+            throw new IllegalArgumentException("上传文件不存在");
         }
-        if (name.isEmpty()) {
-            name = "upload.bin";
-        }
-        final String fname = name;
+        final String rel = safeRelativePath(relativePath, file.getOriginalFilename());
+        final String target = join(dirPath, rel);
         withSftp(sessionId, c -> {
+            ensureDir(c, parentOf(target));
             try (InputStream in = file.getInputStream()) {
-                c.put(in, join(dirPath, fname), ChannelSftp.OVERWRITE);
+                c.put(in, target, ChannelSftp.OVERWRITE);
             }
             return null;
         });

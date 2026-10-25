@@ -1165,6 +1165,12 @@
                 </ul>
             </div>
             <div class="help-section">
+                <div class="help-title"><i class="el-icon-chat-line-round"></i>联系与反馈</div>
+                <div class="help-contact">
+                    <div th:replace="~{fragments/dialogs :: contactInfo}"></div>
+                </div>
+            </div>
+            <div class="help-section">
                 <div class="help-title"><i class="el-icon-food"></i>赞助 DeepShell</div>
                 <p>DeepShell 是个人利用业余时间开发和维护的。如果它帮你省了时间，欢迎请作者吃顿饭；金额随意，赞助完全自愿，不影响使用与更新。</p>
                 <div class="sponsor-qrs help-sponsor">
@@ -1178,6 +1184,25 @@
                     </figure>
                 </div>
                 <p class="sponsor-tip">扫码后可以备注一下你的 ID 或用途，感谢支持。</p>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 联系与反馈 -->
+    <el-dialog title="联系与反馈" :visible.sync="contactVisible" width="620px" append-to-body
+               custom-class="contact-dialog">
+        <div class="contact-box" th:fragment="contactInfo">
+            <figure class="contact-qr">
+                <a th:href="@{/img/qq-group.png}" target="_blank" rel="noopener">
+                    <img th:src="@{/img/qq-group.png}" alt="DeepShell 反馈交流群二维码">
+                </a>
+                <figcaption>QQ 群：1126930423</figcaption>
+            </figure>
+            <div class="contact-info">
+                <p>遇到问题、想提建议或交流使用经验，欢迎加入 QQ 群或通过以下方式联系作者。</p>
+                <div class="contact-line"><span>邮箱</span><a href="mailto:2427746718@qq.com">2427746718@qq.com</a></div>
+                <div class="contact-line"><span>Gitee</span><a href="https://gitee.com/decentant" target="_blank" rel="noopener">gitee.com/decentant</a></div>
+                <div class="contact-line"><span>CSDN</span><a href="https://blog.csdn.net/DCTANT" target="_blank" rel="noopener">blog.csdn.net/DCTANT</a></div>
             </div>
         </div>
     </el-dialog>

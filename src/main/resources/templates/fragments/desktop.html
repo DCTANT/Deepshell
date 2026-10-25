@@ -1639,6 +1639,8 @@
                        @click="desktopNewFile(w)"></el-button>
             <el-button size="mini" icon="el-icon-upload2" title="上传文件到当前目录"
                        @click="pickDesktopUpload"></el-button>
+            <el-button size="mini" icon="el-icon-folder-opened" title="上传文件夹到当前目录（保留目录结构）"
+                       @click="pickDesktopFolderUpload"></el-button>
             <el-button size="mini" icon="el-icon-search" title="在当前目录中搜索文件内容"
                        @click="openDesktopContentSearch(w)"></el-button>
             <el-button v-if="!desktopIsLocal" size="mini" icon="el-icon-sort"
@@ -1701,7 +1703,7 @@
                      @contextmenu.prevent="desktopBlankContextMenu($event)"
                      @dragover="onDesktopSurfaceDragOver($event, w)" @drop="onDesktopSurfaceDrop($event, w)"
                      @dragleave="onDesktopSurfaceDragLeave($event, w)">
-                    <div class="dsk-marquee" v-if="w.marquee.visible"
+                    <div class="dsk-marquee in-files" v-if="w.marquee.visible"
                          :style="{ left: w.marquee.left + 'px', top: w.marquee.top + 'px',
                                    width: w.marquee.width + 'px', height: w.marquee.height + 'px' }"></div>
                     <div class="dsk-error" v-if="w.error">
@@ -1838,6 +1840,8 @@
 
         <input ref="desktopUpload" type="file" multiple class="dsk-upload-input"
                @change="onDesktopUploadPick">
+        <input ref="desktopFolderUpload" type="file" webkitdirectory multiple
+               class="dsk-upload-input" @change="onDesktopFolderUploadPick">
 
         <!-- Windows 风格任务栏 -->
         <div class="dsk-taskbar" @mousedown.capture="closeDesktopTaskMenu"
@@ -3390,6 +3394,9 @@
                 <div class="dsk-menu-item" @click="desktopMenuAction('upload')">
                     <i class="el-icon-upload2"></i>上传文件
                 </div>
+                <div class="dsk-menu-item" @click="desktopMenuAction('uploadFolder')">
+                    <i class="el-icon-folder-opened"></i>上传文件夹
+                </div>
                 <div class="dsk-menu-item" @click="desktopMenuAction('contentSearch')">
                     <i class="el-icon-search"></i>搜索文件内容…
                 </div>
@@ -3493,6 +3500,9 @@
             </div>
             <div class="dsk-menu-item" @click="desktopWallMenuAction('upload')">
                 <i class="el-icon-upload2"></i>上传文件
+            </div>
+            <div class="dsk-menu-item" @click="desktopWallMenuAction('uploadFolder')">
+                <i class="el-icon-folder-opened"></i>上传文件夹
             </div>
             <div class="dsk-menu-item" v-if="!desktopIsLocal" @click="desktopWallMenuAction('openTerminal')">
                 <i class="el-icon-monitor"></i>在此打开终端
