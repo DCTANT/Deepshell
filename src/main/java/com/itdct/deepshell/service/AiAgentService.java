@@ -62,10 +62,8 @@ public class AiAgentService {
         public String text;
         public String command;
         public String note;
-        /** true 表示未执行、等前端让用户确认（高危命令或手动模式） */
+        /** true 表示未执行、等前端让用户确认（手动「每步确认」模式） */
         public boolean needConfirm;
-        /** 高危原因，如「递归删除（rm -r / -rf）」 */
-        public String danger;
         public boolean executed;
         public String output;
         public Integer exitCode;
@@ -78,6 +76,12 @@ public class AiAgentService {
         public Long durationMs;
         /** 本次模型调用的 token 用量；命令执行结果不包含 */
         public AiChatClient.Usage usage;
+        /** 模型输出里只有无法解析的 DSML/工具调用标记 */
+        public boolean dsmlUnrecognized;
+        /** 模型只返回了思考过程或空正文，没有给出可执行命令 */
+        public boolean reasoningOnly;
+        /** 模型输出看起来是命令 JSON，但格式损坏到无法提取 cmd（会自动重试） */
+        public boolean malformedCommand;
     }
 
     /** 一轮对话：调用模型并解析；auto=false 时命令不自动执行，auto=true 时高危命令仍需确认 */
@@ -120,9 +124,77 @@ public class AiAgentService {
         }
         SshSessionManager.SshSession s = sessions.get(sessionId);
         List<Map<String, String>> messages = sanitize(history);
+        String system = systemPrompt(s, cwd);
+        AiChatClient.ChatResult result = readModel(system, messages, onTextDelta, onReasoning, token);
+        if (token.isCancelled()) {
+            throw new AiCancellationToken.CancelledException();
+        }
+        AgentResult r = buildResult(s, cwd, auto, result, token);
+        List<Map<String, String>> repairHistory = new ArrayList<>(messages);
+        for (int attempt = 0; attempt < 2
+                && (r.dsmlUnrecognized || r.reasoningOnly || r.malformedCommand)
+                && !token.isCancelled(); attempt++) {
+            // 模型没有给出可执行 JSON：把上一轮输出（含 reasoning）带回并要求改写，最多重试两次
+            repairHistory.add(repairAssistant(result));
+            Map<String, String> notice = new LinkedHashMap<>();
+            notice.put("role", "user");
+            notice.put("content", MODEL_REPAIR_PROMPT);
+            repairHistory.add(notice);
+            log.info("模型未给出可执行命令（dsml={}, reasoningOnly={}, malformedJson={}），自动要求改写 JSON（第 {} 次）",
+                    r.dsmlUnrecognized, r.reasoningOnly, r.malformedCommand, attempt + 1);
+            result = readModel(system, repairHistory, onTextDelta, onReasoning, token);
+            if (token.isCancelled()) {
+                throw new AiCancellationToken.CancelledException();
+            }
+            r = buildResult(s, cwd, auto, result, token);
+        }
+        if (r.dsmlUnrecognized || r.reasoningOnly || r.malformedCommand) {
+            r.kind = "reply";
+            r.text = r.malformedCommand
+                    ? "模型返回的命令 JSON 格式不完整，已自动重试但仍无法解析。请重试或到 AI 设置中切换模型。"
+                    : "模型连续多次只返回思考过程或无法解析的工具调用，未能给出可执行命令。"
+                    + "请重试或到 AI 设置中切换模型。";
+        }
+        return r;
+    }
+
+    /** 把上一轮模型输出整理成 assistant 消息，供修复重试使用；只有 reasoning 时也带回去 */
+    private static Map<String, String> repairAssistant(AiChatClient.ChatResult result) {
+        String content = result.text == null ? "" : result.text;
+        if (content.trim().isEmpty() && result.reasoning != null) {
+            content = result.reasoning;
+        }
+        content = SYSTEM_BLOCK.matcher(content).replaceAll(" ").trim();
+        content = SYSTEM_TAG.matcher(content).replaceAll(" ").trim();
+        if (content.isEmpty()) {
+            content = "（上一轮没有正文）";
+        }
+        if (content.length() > MAX_CONTENT_CHARS) {
+            content = content.substring(0, MAX_CONTENT_CHARS);
+        }
+        Map<String, String> message = new LinkedHashMap<>();
+        message.put("role", "assistant");
+        message.put("content", content);
+        return message;
+    }
+
+    /** 只有 <system> 标签或空白，没有实际内容 */
+    private static boolean isMetaOnly(String text) {
+        if (text == null) {
+            return true;
+        }
+        String cleaned = SYSTEM_BLOCK.matcher(text).replaceAll(" ").trim();
+        cleaned = SYSTEM_TAG.matcher(cleaned).replaceAll(" ").trim();
+        return cleaned.isEmpty();
+    }
+
+    /** 流式读取一次模型输出；每次调用使用独立的展示累积器，修复重试时不会混入上一次的文本 */
+    private AiChatClient.ChatResult readModel(String system, List<Map<String, String>> messages,
+                                              Consumer<String> onTextDelta, Consumer<String> onReasoning,
+                                              AiCancellationToken token) {
         final StringBuilder acc = new StringBuilder();
         final String[] shown = {""};
-        AiChatClient.ChatResult result = chatClient.streamDetailed(systemPrompt(s, cwd), messages, delta -> {
+        return chatClient.streamDetailed(system, messages, delta -> {
             if (token.isCancelled()) {
                 throw new AiCancellationToken.CancelledException();
             }
@@ -133,10 +205,32 @@ public class AiAgentService {
                 shown[0] = visible;
             }
         }, onReasoning, token);
-        if (token.isCancelled()) {
-            throw new AiCancellationToken.CancelledException();
-        }
+    }
+
+    /** 把一次模型输出解析成命令 / 回复，并处理只有 reasoning 的情况 */
+    private AgentResult buildResult(SshSessionManager.SshSession s, String cwd, boolean auto,
+                                    AiChatClient.ChatResult result, AiCancellationToken token) {
         AgentResult r = handleContent(s, cwd, auto, result.text, token);
+        if ("reply".equals(r.kind) && isMetaOnly(r.text)) {
+            // 模型把 <system>...</system> 当成回复：视为空正文，进入自动续写
+            r.text = "";
+        }
+        if (!"cmd".equals(r.kind) && !r.needConfirm) {
+            String reasoning = result.reasoning == null ? "" : result.reasoning.trim();
+            // 部分模型会把 DSML 工具调用只写在 reasoning_content 里：正文没有命令时从思考过程补解析
+            if (!reasoning.isEmpty() && dsmlParameter(reasoning, "cmd") != null) {
+                AgentResult fromReasoning = handleContent(s, cwd, auto, reasoning, token);
+                if ("cmd".equals(fromReasoning.kind) || fromReasoning.needConfirm) {
+                    r = fromReasoning;
+                }
+            }
+            if ("reply".equals(r.kind) && (r.text == null || r.text.trim().isEmpty())) {
+                r.reasoningOnly = true;
+                if (!reasoning.isEmpty()) {
+                    r.text = "模型只返回了思考过程，没有可执行命令。请点击重试。";
+                }
+            }
+        }
         r.usage = result.usage;
         return r;
     }
@@ -147,6 +241,8 @@ public class AiAgentService {
         Parsed parsed = parse(content);
 
         AgentResult r = new AgentResult();
+        r.dsmlUnrecognized = parsed.dsmlUnrecognized;
+        r.malformedCommand = parsed.malformedCommand;
         if (parsed.command != null && !parsed.command.isEmpty()) {
             r.kind = "cmd";
             r.command = parsed.command;
@@ -154,13 +250,6 @@ public class AiAgentService {
             if (token.isCancelled()) {
                 r.kind = "reply";
                 r.text = "已停止";
-                return r;
-            }
-            String danger = dangerReason(parsed.command);
-            if (danger != null) {
-                r.needConfirm = true;
-                r.danger = danger;
-                audit.record("AI_COMMAND", parsed.command, "CONFIRM", "待确认：" + danger);
                 return r;
             }
             if (!auto) {
@@ -172,7 +261,9 @@ public class AiAgentService {
             return r;
         }
         r.kind = "reply";
-        r.text = parsed.reply == null || parsed.reply.isEmpty() ? content : parsed.reply;
+        r.text = parsed.malformedCommand
+                ? "模型返回的命令格式不完整，正在自动重试…"
+                : (parsed.reply == null || parsed.reply.isEmpty() ? content : parsed.reply);
         return r;
     }
 
@@ -254,15 +345,14 @@ public class AiAgentService {
                 .append(" 的身份操作远程 Linux 服务器。用户可以自然描述需求，你负责一步步执行 shell 命令帮他完成。\n\n")
                 .append("输出要求（必须严格遵守，不要输出任何多余内容）：\n")
                 .append("- 需要执行命令时，只输出一个 JSON 对象：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n")
-                .append("- 任务完成、需要说明结果或需要向用户确认/提问时，输出：{\"reply\":\"展示给用户的内容\"}\n")
-                .append("- 不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n")
-                .append("- 严禁输出 DSML、<|| DSLM ||>、tool_calls、function_call 等任何工具调用协议或 XML 包装；"
-                        + "即使你的训练数据习惯使用这些格式，也必须改写成上面的 JSON。\n\n")
+                .append("- 任务完成、需要说明结果或需要向用户确认/提问时，直接输出展示给用户的 Markdown 内容，不要包成 JSON。\n")
+                .append("- 需要执行命令时不要用 markdown 代码块包裹 JSON，直接输出 JSON 本身。\n")
+                .append("- 普通回复直接输出 Markdown；需要命令时只输出约定的 JSON。不要输出 tool_calls、function_call、<system> 或任何 XML / 协议包装。\n\n")
                 .append("工作方式：\n")
                 .append("- 每次只提交一条命令，等执行结果返回后再决定下一步；不要臆测命令输出。\n")
                 .append("- 先观察再行动：修改、删除或重启前，先用只读命令确认当前状态，优先使用保守写法。\n")
-                .append("- 达到目标后及时收尾，用 reply 简要总结做了什么、结果如何、还需要用户注意什么。\n")
-                .append("- 缺少关键信息时，用 reply 向用户提问并暂停执行，不要盲目尝试。\n\n")
+                .append("- 达到目标后及时收尾，直接输出一段简洁的 Markdown 总结：做了什么、结果如何、还需要用户注意什么。\n")
+                .append("- 缺少关键信息时，直接向用户提问并暂停执行，不要盲目尝试。\n\n")
                 .append("环境说明：\n")
                 .append("- 每次都是完整的 Linux 环境，命令以当前登录用户身份执行，非 root 时注意权限。\n")
                 .append("- 每条命令在独立 shell 中执行：cd 切换的目录会被系统自动保留，但 export 的环境变量与别名不会保留；"
@@ -270,7 +360,7 @@ public class AiAgentService {
                 .append("- 命令必须是非交互的，禁止执行需要人工输入的程序（如 vi、top、不带参数的 passwd）；"
                         + "sudo 通常没有免密，权限不足时如实向用户说明，不要反复重试。\n")
                 .append("- 输出过长会被截断，请用 head/tail/grep 等控制输出量；命令结果已展示给用户，不要在 reply 里重复大段输出。\n")
-                .append("- note 与 reply 用简洁中文，不要使用 emoji；reply 可以用简短 Markdown（列表、加粗、行内代码、代码块），"
+                .append("- note 与普通回复用简洁中文，不要使用 emoji；普通回复可以用简短 Markdown（列表、加粗、行内代码、代码块），"
                         + "让结论更易读。");
         if (cwd != null && !cwd.trim().isEmpty()) {
             sb.append("\n- 当前工作目录：").append(cwd.trim());
@@ -282,6 +372,8 @@ public class AiAgentService {
         String command;
         String note;
         String reply;
+        boolean dsmlUnrecognized;
+        boolean malformedCommand;
     }
 
     /**
@@ -384,6 +476,123 @@ public class AiAgentService {
         return sb.toString();
     }
 
+    /**
+     * 宽松提取 JSON 里的 reply：模型偶尔输出带真实换行的“漂亮 JSON”，标准解析会失败。
+     * 字符串内允许真实换行；未转义引号只有在后面紧跟 , 或 } 时才视为字段结束。
+     */
+    static String lenientJsonReply(String content) {
+        return lenientJsonField(content, "reply");
+    }
+
+    /** 宽松提取命令：只有 cmd 字符串正常闭合才返回，避免把被截断的半条命令直接执行 */
+    static String lenientJsonCommand(String content) {
+        return lenientJsonField(content, "cmd", true);
+    }
+
+    /**
+     * 宽松提取 JSON 字符串字段：允许字符串里有真实换行、未转义引号，
+     * 也兼容模型漏掉字符串末尾引号（例如 {"cmd":"ls","note":"查看目录}）。
+     */
+    static String lenientJsonField(String content, String key) {
+        return lenientJsonField(content, key, false);
+    }
+
+    private static String lenientJsonField(String content, String key, boolean requireClosed) {
+        if (content == null || key == null || key.isEmpty()) {
+            return null;
+        }
+        int keyAt = content.indexOf("\"" + key + "\"");
+        if (keyAt < 0) {
+            return null;
+        }
+        int colon = content.indexOf(':', keyAt + key.length() + 2);
+        if (colon < 0) {
+            return null;
+        }
+        int start = colon + 1;
+        while (start < content.length() && Character.isWhitespace(content.charAt(start))) {
+            start++;
+        }
+        if (start >= content.length() || content.charAt(start) != '"') {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        boolean unescapedQuote = false;
+        for (int i = start + 1; i < content.length(); i++) {
+            char c = content.charAt(i);
+            if (c == '\\' && i + 1 < content.length()) {
+                char e = content.charAt(++i);
+                switch (e) {
+                    case 'n':
+                        sb.append('\n');
+                        break;
+                    case 'r':
+                        sb.append('\r');
+                        break;
+                    case 't':
+                        sb.append('\t');
+                        break;
+                    case 'b':
+                        sb.append('\b');
+                        break;
+                    case 'f':
+                        sb.append('\f');
+                        break;
+                    case '"':
+                    case '\\':
+                    case '/':
+                        sb.append(e);
+                        break;
+                    case 'u':
+                        if (i + 4 < content.length()) {
+                            try {
+                                sb.append((char) Integer.parseInt(content.substring(i + 1, i + 5), 16));
+                                i += 4;
+                            } catch (NumberFormatException ex) {
+                                sb.append('u');
+                            }
+                        } else {
+                            sb.append('u');
+                        }
+                        break;
+                    default:
+                        sb.append(e);
+                }
+                continue;
+            }
+            if (c == '"') {
+                int j = i + 1;
+                while (j < content.length() && Character.isWhitespace(content.charAt(j))) {
+                    j++;
+                }
+                if (j >= content.length() || content.charAt(j) == ',' || content.charAt(j) == '}') {
+                    // 命令里出现未转义引号说明 JSON 本身已损坏，不能按截断后的命令执行
+                    return requireClosed && unescapedQuote ? null : sb.toString();
+                }
+                sb.append('"');
+                unescapedQuote = true;
+                continue;
+            }
+            sb.append(c);
+        }
+        if (requireClosed) {
+            return null;
+        }
+        // 缺少收尾引号：把被吞进字符串值的对象右括号去掉
+        int end = sb.length();
+        while (end > 0 && Character.isWhitespace(sb.charAt(end - 1))) {
+            end--;
+        }
+        if (end > 0 && sb.charAt(end - 1) == '}') {
+            end--;
+        }
+        while (end > 0 && Character.isWhitespace(sb.charAt(end - 1))) {
+            end--;
+        }
+        sb.setLength(end);
+        return sb.length() > 0 ? sb.toString() : null;
+    }
+
     /** 去掉模型可能加在开头的 markdown 代码围栏 */
     static String stripLeadingFence(String content) {
         String t = content;
@@ -436,6 +645,31 @@ public class AiAgentService {
                 // 非 JSON，继续尝试 DSML
             }
         }
+        if (t.trim().startsWith("{")) {
+            // 模型偶尔输出带真实换行/未转义引号或漏掉收尾引号的“漂亮 JSON”，宽松提取命令字段
+            int cmdAt = t.indexOf("\"cmd\"");
+            int replyAt = t.indexOf("\"reply\"");
+            boolean commandFirst = cmdAt >= 0 && (replyAt < 0 || cmdAt < replyAt);
+            if (commandFirst) {
+                String lenientCmd = lenientJsonCommand(t);
+                if (lenientCmd != null && !lenientCmd.trim().isEmpty()) {
+                    p.command = lenientCmd.trim();
+                    String lenientNote = lenientJsonField(t, "note");
+                    p.note = lenientNote == null ? "" : lenientNote.trim();
+                    return p;
+                }
+            }
+            // 普通回复的 JSON 包裹同样宽松解析
+            String lenientReply = lenientJsonReply(t);
+            if (lenientReply != null && !lenientReply.trim().isEmpty()) {
+                p.reply = lenientReply.trim();
+                return p;
+            }
+            if (commandFirst) {
+                p.malformedCommand = true;
+                return p;
+            }
+        }
         String dsmlCmd = dsmlParameter(t, "cmd");
         if (dsmlCmd != null && !dsmlCmd.trim().isEmpty()) {
             p.command = dsmlCmd.trim();
@@ -444,6 +678,7 @@ public class AiAgentService {
             return p;
         }
         if (containsDsml(t)) {
+            p.dsmlUnrecognized = true;
             p.reply = "模型返回了未识别的 DSML 工具调用格式，本轮已停止。请点击重试，或到 AI 设置中切换模型后再试。";
             return p;
         }
@@ -453,31 +688,73 @@ public class AiAgentService {
 
     /* ---------- DSML 工具调用格式兼容 ---------- */
 
+    /** DSML / DSLM 标记：兼容两种拼写、单双竖线，以及模型 token 之间的空格 */
+    private static final String DSML_MARK_BODY =
+            "\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*";
+
+    /** 模型有时会把 <system>...</system> 之类的系统消息当正文/思考输出 */
+    private static final Pattern SYSTEM_BLOCK = Pattern.compile(
+            "<\\s*\\|?\\s*system\\s*\\|?\\s*>[\\s\\S]*?<\\s*/\\s*\\|?\\s*system\\s*\\|?\\s*>",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern SYSTEM_TAG = Pattern.compile(
+            "<\\s*/?\\s*\\|?\\s*system\\s*\\|?\\s*>", Pattern.CASE_INSENSITIVE);
+
+    /** 无法解析 DSML 或只有思考过程时自动发给模型，让它继续输出约定的 JSON */
+    private static final String MODEL_REPAIR_PROMPT =
+            "你上一条没有给出可执行的 JSON（可能只输出了思考过程，或工具调用格式无法解析）。"
+                    + "请基于当前任务继续，只输出以下两种 JSON 之一：\n"
+                    + "1. 需要执行命令：{\"cmd\":\"要执行的命令\",\"note\":\"一句话说明\"}\n"
+                    + "2. 任务完成 / 不需要命令：{\"reply\":\"给用户的回复\"}\n"
+                    + "不要输出任何 XML、DSML、<parameter>、<system> 标签，不要扮演系统消息，也不要只输出思考过程。";
+
     private static final Pattern DSML_PARAMETER = Pattern.compile(
-            "<\\|{1,}\\s*DSLM\\s*\\|{1,}\\s*parameter\\b([^>]*)>(.*?)"
-                    + "</\\|{1,}\\s*DSLM\\s*\\|{1,}\\s*parameter>",
+            "<\\s*(?:" + DSML_MARK_BODY + ")?parameter\\b([^>]*)>(.*?)"
+                    + "</\\s*(?:" + DSML_MARK_BODY + ")?parameter\\s*>",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private static final Pattern DSML_NAME_CMD = Pattern.compile(
-            "name\\s*=\\s*[\"']cmd[\"']", Pattern.CASE_INSENSITIVE);
+            "name\\s*=\\s*[\"'](?:cmd|command)[\"']", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern DSML_NAME_NOTE = Pattern.compile(
             "name\\s*=\\s*[\"']note[\"']", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern DSML_MARKER = Pattern.compile(
-            "<\\s*\\|{1,2}\\s*DSLM\\s*\\|{1,2}", Pattern.CASE_INSENSITIVE);
+            "<\\s*" + DSML_MARK_BODY, Pattern.CASE_INSENSITIVE);
+
+    /** 部分模型会把 DSML 退化成裸 <parameter> / <invoke>，没有外层 marker */
+    private static final Pattern BARE_DSML_TAG = Pattern.compile(
+            "<\\s*/?\\s*(?:parameter|invoke)\\b", Pattern.CASE_INSENSITIVE);
 
     static boolean containsDsml(String content) {
-        return content != null && !content.isEmpty() && DSML_MARKER.matcher(content).find();
+        String normalized = normalizeDsml(content);
+        if (normalized == null || normalized.isEmpty()) {
+            return false;
+        }
+        return DSML_MARKER.matcher(normalized).find() || BARE_DSML_TAG.matcher(normalized).find();
+    }
+
+    /** 部分中文模型会把 | < > 等写成全角字符，解析前统一成 ASCII */
+    private static String normalizeDsml(String content) {
+        if (content == null) {
+            return null;
+        }
+        return content
+                .replace('\uFF5C', '|')  // ｜
+                .replace('\uFF1C', '<')  // ＜
+                .replace('\uFF1E', '>')  // ＞
+                .replace('\u3000', ' ')  // 全角空格
+                .replace('\uFF02', '"')  // ＂
+                .replace('\uFF07', '\''); // ＇
     }
 
     /** 从 DSML 参数块中提取 cmd / note；未闭合或不是 DSML 时返回 null */
     static String dsmlParameter(String content, String name) {
-        if (content == null || content.isEmpty()) {
+        String normalized = normalizeDsml(content);
+        if (normalized == null || normalized.isEmpty()) {
             return null;
         }
         Pattern namePattern = "cmd".equals(name) ? DSML_NAME_CMD : DSML_NAME_NOTE;
-        Matcher matcher = DSML_PARAMETER.matcher(content);
+        Matcher matcher = DSML_PARAMETER.matcher(normalized);
         while (matcher.find()) {
             if (!namePattern.matcher(matcher.group(1)).find()) {
                 continue;
@@ -495,60 +772,6 @@ public class AiAgentService {
                 .replace("&apos;", "'")
                 .replace("&#39;", "'")
                 .replace("&amp;", "&");
-    }
-
-    /* ---------- 高危命令识别（自动模式下的二次确认） ---------- */
-
-    private static final Pattern[] DANGER_PATTERNS = {
-            Pattern.compile("\\brm(\\s+-[a-z]+)*\\s+-[a-z]*r[a-z]*", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\brm\\b[^\\n|;&]*\\s--recursive\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bfind\\b[^\\n|;&]*\\s-delete\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bshred\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bmkfs(\\.[a-z0-9]+)?\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\bdd\\b[^\\n|;&]*\\bof=/dev/", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("\\b(fdisk|parted|wipefs|mkswap)\\b", Pattern.CASE_INSENSITIVE),
-            Pattern.compile(">\\s*/dev/(sd|vd|nvme|hd)"),
-            Pattern.compile("\\b(shutdown|reboot|halt|poweroff)\\b"),
-            Pattern.compile("\\binit\\s+[06]\\b"),
-            Pattern.compile("\\bsystemctl\\s+(reboot|poweroff|halt)\\b"),
-            Pattern.compile("\\bsystemctl\\s+(stop|disable|mask)\\s+(sshd|network|networking|firewalld|systemd-networkd)\\b"),
-            Pattern.compile(":\\s*\\(\\s*\\)\\s*\\{"),
-            Pattern.compile("\\bchmod\\s+-[a-z]*R[a-z]*\\s+777\\s+/(\\s|$)"),
-            Pattern.compile("\\b(userdel|groupdel)\\b"),
-            Pattern.compile("\\bufw\\s+disable\\b|\\biptables\\s+-F\\b|\\bnft\\s+flush\\s+ruleset\\b"),
-            Pattern.compile("\\bkill\\s+-9\\s+1\\b|\\bkillall5\\b"),
-    };
-
-    private static final String[] DANGER_REASONS = {
-            "递归删除文件（rm -r / -rf）",
-            "递归删除文件（rm --recursive）",
-            "find -delete 批量删除",
-            "不可恢复地擦除文件（shred）",
-            "格式化文件系统（mkfs）",
-            "向块设备写入数据（dd）",
-            "修改磁盘分区 / 交换分区",
-            "向磁盘设备重定向写入",
-            "关机 / 重启服务器",
-            "切换运行级别（关机 / 重启）",
-            "关机 / 重启服务器",
-            "停用关键系统服务（SSH / 网络 / 防火墙）",
-            "疑似 fork 炸弹",
-            "递归放开根目录权限",
-            "删除系统用户 / 用户组",
-            "关闭防火墙规则",
-            "强杀 init 进程",
-    };
-
-    static String dangerReason(String command) {
-        if (command == null || command.isEmpty()) {
-            return null;
-        }
-        for (int i = 0; i < DANGER_PATTERNS.length; i++) {
-            if (DANGER_PATTERNS[i].matcher(command).find()) {
-                return DANGER_REASONS[i];
-            }
-        }
-        return null;
     }
 
     /* ---------- 杂项 ---------- */

@@ -279,6 +279,17 @@ a {
     min-width: 168px;
 }
 
+/* 终端选区右键菜单 */
+.term-menu {
+    min-width: 184px;
+    user-select: none;
+}
+
+.term-menu .tab-menu-item.disabled {
+    opacity: .36;
+    pointer-events: none;
+}
+
 /* 设置弹窗行 */
 .set-row {
     display: flex;
@@ -599,6 +610,78 @@ a {
 
 .help-box b {
     color: #24292f;
+}
+
+/* 赞助弹窗 / 帮助手册赞助区 */
+.sponsor-box {
+    text-align: center;
+    padding: 2px 4px 6px;
+}
+
+.sponsor-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #24292f;
+    margin: 2px 0 6px;
+}
+
+.sponsor-sub {
+    font-size: 13px;
+    color: #8b98ad;
+}
+
+.sponsor-qrs {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 28px;
+    flex-wrap: wrap;
+    margin: 18px 0 10px;
+}
+
+.sponsor-qrs figure {
+    margin: 0;
+    text-align: center;
+}
+
+.sponsor-qrs img {
+    width: 220px;
+    max-width: 40vw;
+    height: auto;
+    border: 1px solid #e5e9f2;
+    border-radius: 10px;
+    background: #fff;
+    padding: 8px;
+    box-shadow: 0 4px 14px rgba(15, 30, 55, .08);
+    cursor: zoom-in;
+}
+
+.sponsor-qrs figcaption {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #54657e;
+}
+
+.help-sponsor {
+    margin: 10px 0 6px;
+}
+
+.help-sponsor img {
+    width: 170px;
+    max-width: 32vw;
+}
+
+.help-section p {
+    font-size: 12.5px;
+    color: #606266;
+    line-height: 1.9;
+    margin: 0 0 8px;
+}
+
+.sponsor-tip {
+    font-size: 12px;
+    color: #9aa7bd;
+    margin: 4px 0 0;
 }
 
 /* 外部调用（跳板机客户端）弹窗 */
@@ -3670,6 +3753,7 @@ body.resizing .term-host {
 
 /* ---------- AI 终端（对话式 AI 操作服务器） ---------- */
 .aichat {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -3760,7 +3844,6 @@ body.resizing .term-host {
     flex: 1;
     display: flex;
     min-height: 0;
-    gap: 8px;
 }
 
 /* 左侧对话列表 */
@@ -3808,6 +3891,46 @@ body.resizing .term-host {
     margin-top: 2px;
 }
 
+.aichat-conv-unread {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: #4c8dff;
+    box-shadow: 0 0 6px rgba(76, 141, 255, .9);
+    vertical-align: middle;
+}
+
+.aichat-conv-resizer {
+    position: relative;
+    flex: 0 0 7px;
+    align-self: stretch;
+    cursor: col-resize;
+    touch-action: none;
+}
+
+.aichat-conv-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 1px;
+    background: transparent;
+    transition: background .15s;
+}
+
+.aichat-conv-resizer:hover::after,
+body.aichat-resizing .aichat-conv-resizer::after {
+    background: #4c8dff;
+}
+
+body.aichat-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
 .aichat-conv-busy {
     position: absolute;
     right: 5px;
@@ -3835,6 +3958,76 @@ body.resizing .term-host {
 
 .aichat-conv-del:hover {
     color: #e8898f;
+}
+
+.aichat-conv-rename {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    height: 22px;
+    padding: 0 4px;
+    border: 1px solid #4c8dff;
+    border-radius: 4px;
+    background: #0f1722;
+    color: #e8effc;
+    font-size: 12px;
+    outline: none;
+}
+
+.aichat-conv-menu {
+    position: absolute;
+    z-index: 4001;
+    min-width: 150px;
+    padding: 4px;
+    border: 1px solid #2a3446;
+    border-radius: 8px;
+    background: #1b2230;
+    color: #c7d6ee;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .45), 0 2px 8px rgba(0, 0, 0, .25);
+    font-size: 12.5px;
+}
+
+.aichat-conv-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.aichat-conv-menu-item:hover {
+    background: #2a3648;
+    color: #e8effc;
+}
+
+.aichat-conv-menu-item i {
+    font-size: 13px;
+    color: #8b98ad;
+}
+
+.aichat-conv-menu-item:hover i {
+    color: #4c8dff;
+}
+
+.aichat-conv-menu-item.danger {
+    color: #e8898f;
+}
+
+.aichat-conv-menu-item.danger i {
+    color: #e8898f;
+}
+
+.aichat-conv-menu-item.danger:hover {
+    background: #3a2630;
+    color: #ffb3b8;
+}
+
+.aichat-conv-menu-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: #2a3446;
 }
 
 .aichat-main {

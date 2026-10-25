@@ -1,6 +1,7 @@
 package com.itdct.deepshell.web;
 
 import com.itdct.deepshell.common.R;
+import com.itdct.deepshell.service.FirewallPortService;
 import com.itdct.deepshell.service.NetworkToolService;
 import com.itdct.deepshell.service.NetworkTrafficService;
 import com.itdct.deepshell.service.SudoAccessService;
@@ -21,12 +22,14 @@ public class NetworkToolController {
 
     private final NetworkToolService service;
     private final NetworkTrafficService traffic;
+    private final FirewallPortService firewallPorts;
     private final SudoAccessService sudoAccess;
 
     public NetworkToolController(NetworkToolService service, NetworkTrafficService traffic,
-                                 SudoAccessService sudoAccess) {
+                                 FirewallPortService firewallPorts, SudoAccessService sudoAccess) {
         this.service = service;
         this.traffic = traffic;
+        this.firewallPorts = firewallPorts;
         this.sudoAccess = sudoAccess;
     }
 
@@ -46,6 +49,16 @@ public class NetworkToolController {
         }
         return R.ok(traffic.sample(req.getSessionId().trim(),
                 Boolean.TRUE.equals(req.getReset()), Boolean.TRUE.equals(req.getRoot())));
+    }
+
+    /** 监听端口与防火墙状态：只读快照，root=true 时通过已授权的 sudo 读取完整信息。 */
+    @PostMapping("/ports")
+    public R<Map<String, Object>> ports(@RequestBody PortsReq req) throws Exception {
+        if (req == null || req.getSessionId() == null || req.getSessionId().trim().isEmpty()) {
+            throw new IllegalArgumentException("缺少会话 ID");
+        }
+        return R.ok(firewallPorts.snapshot(req.getSessionId().trim(),
+                Boolean.TRUE.equals(req.getRoot())));
     }
 
     @GetMapping("/root")
@@ -131,6 +144,27 @@ public class NetworkToolController {
 
         public void setReset(Boolean reset) {
             this.reset = reset;
+        }
+
+        public Boolean getRoot() {
+            return root;
+        }
+
+        public void setRoot(Boolean root) {
+            this.root = root;
+        }
+    }
+
+    public static class PortsReq {
+        private String sessionId;
+        private Boolean root;
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public void setSessionId(String sessionId) {
+            this.sessionId = sessionId;
         }
 
         public Boolean getRoot() {

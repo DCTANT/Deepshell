@@ -79,6 +79,7 @@ public class TransferService {
         Path temp = uploadDir.resolve(id + ".part");
         Files.deleteIfExists(temp);
         Files.createFile(temp);
+        restrictToOwner(temp);
         UploadTask created = new UploadTask(id, sessionId, dirPath, safeName, relative, size, temp);
         tasks.put(id, created);
         return result(created, 0L);
@@ -233,6 +234,16 @@ public class TransferService {
             return dir + rel;
         }
         return dir + "/" + rel;
+    }
+
+    /** 分片临时文件可能包含私钥等敏感内容：POSIX 平台收紧为仅属主可读写 */
+    private static void restrictToOwner(Path file) {
+        try {
+            Files.setPosixFilePermissions(file,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+        } catch (Exception ignore) {
+            // Windows 等不支持 POSIX 权限的文件系统
+        }
     }
 
     private static final class UploadTask {

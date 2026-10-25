@@ -455,13 +455,31 @@ public class BackupService {
                     base = "key";
                 }
                 String entryName = "data/ssh-keys/" + row.get("id") + "/" + base;
-                out.add(new KeyFile(entryName, Files.readAllBytes(source)));
+                byte[] content = Files.readAllBytes(source);
+                if (!looksLikePrivateKey(content)) {
+                    warnings.add("连接「" + row.get("name") + "」的私钥路径不是可识别的私钥文件，未包含在备份中");
+                    continue;
+                }
+                out.add(new KeyFile(entryName, content));
                 row.put("key_path", KEY_FILE_MARKER + row.get("id") + "/" + base);
             } catch (Exception e) {
                 warnings.add("连接「" + row.get("name") + "」的私钥文件读取失败，未包含在备份中");
             }
         }
         return out;
+    }
+
+    /**
+     * 连接的 key_path 由用户任意填写：备份只导出可识别为私钥的文件，
+     * 避免把 /etc/shadow 等任意本机文件当作“私钥”打进备份包。
+     */
+    private static boolean looksLikePrivateKey(byte[] content) {
+        if (content == null || content.length == 0) {
+            return false;
+        }
+        int len = Math.min(content.length, 8192);
+        String head = new String(content, 0, len, StandardCharsets.ISO_8859_1);
+        return head.contains("PRIVATE KEY-----") || head.contains("PuTTY-User-Key-File-");
     }
 
     private Set<String> resolveSections(JsonNode manifest, ZipFile zip) {

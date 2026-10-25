@@ -92,9 +92,9 @@ public class AuthService {
                         + "或删除 " + DataDir.root().resolve("network.properties") + " 后重启，"
                         + "此时 application.yml 中的 server.address 才会生效。");
             }
-            if ("deepshell".equals(password)) {
+            if (isDefaultPasswordValue(password)) {
                 throw new IllegalStateException("当前以局域网模式启动（监听 " + bindAddress + "），"
-                        + "但仍在使用默认密码 deepshell。" + lanHint
+                        + "但仍在使用随源码公开的默认密码。" + lanHint
                         + "请修改 deepshell.auth.password 后重启。");
             }
         }
@@ -106,8 +106,8 @@ public class AuthService {
         expireHours = loadExpireHours();
         defaultExpireHours = clampExpireHours(defaultExpireHours);
         credentialVersion = credentialVersion();
-        if (enabled && "deepshell".equals(password)) {
-            log.warn("登录功能已启用，但仍在使用默认密码 deepshell，请尽快修改 application.yml 中的 deepshell.auth.password");
+        if (enabled && isDefaultPasswordValue(password)) {
+            log.warn("登录功能已启用，但仍在使用默认密码，请尽快修改 application.yml 中的 deepshell.auth.password");
         }
     }
 
@@ -116,11 +116,33 @@ public class AuthService {
     }
 
     public boolean isDefaultPassword() {
-        return "deepshell".equals(password);
+        return isDefaultPasswordValue(password);
     }
 
+    /** 源码 / 分发包里出现过的默认口令都按“未修改”处理，避免局域网用公开口令启动 */
+    private static boolean isDefaultPasswordValue(String value) {
+        // 仅拦截历史文档中的出厂口令 deepshell；deepshell2 是开发者本地调试常用值，不再拦截
+        return "deepshell".equals(value);
+    }
+
+    /** 除回环地址外的任何绑定（0.0.0.0、::、具体网卡 IP、局域网主机名）都视为对外监听 */
     private static boolean isLanBinding(String address) {
-        return "0.0.0.0".equals(address) || "::".equals(address) || "[::]".equals(address);
+        if (address == null || address.trim().isEmpty()) {
+            return false;
+        }
+        String value = address.trim();
+        if (value.startsWith("[") && value.endsWith("]")) {
+            value = value.substring(1, value.length() - 1);
+        }
+        if ("localhost".equalsIgnoreCase(value)) {
+            return false;
+        }
+        try {
+            return !java.net.InetAddress.getByName(value).isLoopbackAddress();
+        } catch (Exception e) {
+            // 解析不了的主机名也按对外监听处理，宁可要求先配置登录
+            return true;
+        }
     }
 
     /** 解释监听地址为何是局域网：界面开关保存的 network.properties 优先于 application.yml */

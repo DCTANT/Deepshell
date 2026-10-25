@@ -37,13 +37,32 @@ public class CryptoService {
         byte[] keyBytes;
         if (Files.exists(keyFile)) {
             keyBytes = Base64.getDecoder().decode(new String(Files.readAllBytes(keyFile), StandardCharsets.UTF_8).trim());
+            restrictToOwner(keyFile);
         } else {
             keyBytes = new byte[32];
             new SecureRandom().nextBytes(keyBytes);
+            try {
+                Files.createFile(keyFile, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException e) {
+                Files.createFile(keyFile);
+            } catch (java.nio.file.FileAlreadyExistsException ignore) {
+                // 并发创建，直接使用已存在的文件
+            }
             Files.write(keyFile, Base64.getEncoder().encodeToString(keyBytes).getBytes(StandardCharsets.UTF_8));
+            restrictToOwner(keyFile);
             log.info("已生成本地加密密钥: {}", keyFile);
         }
         this.key = new SecretKeySpec(keyBytes, "AES");
+    }
+
+    private static void restrictToOwner(Path file) {
+        try {
+            Files.setPosixFilePermissions(file,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+        } catch (Exception ignore) {
+            // Windows 等不支持 POSIX 权限的文件系统
+        }
     }
 
     public String encrypt(String plain) {

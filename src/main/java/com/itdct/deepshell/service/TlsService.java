@@ -248,6 +248,15 @@ public class TlsService {
     }
 
     private static void writePrivate(Path file, String content) throws Exception {
+        Files.createDirectories(file.getParent());
+        try {
+            if (!Files.exists(file)) {
+                Files.createFile(file, PosixFilePermissions.asFileAttribute(
+                        PosixFilePermissions.fromString("rw-------")));
+            }
+        } catch (UnsupportedOperationException | java.nio.file.FileAlreadyExistsException ignore) {
+            // Windows 等文件系统不支持 POSIX 权限 / 并发创建
+        }
         Files.write(file, content.getBytes(StandardCharsets.UTF_8));
         try {
             Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
@@ -266,7 +275,21 @@ public class TlsService {
     }
 
     private static boolean isLanBinding(String address) {
-        return "0.0.0.0".equals(address) || "::".equals(address) || "[::]".equals(address);
+        if (address == null || address.trim().isEmpty()) {
+            return false;
+        }
+        String value = address.trim();
+        if (value.startsWith("[") && value.endsWith("]")) {
+            value = value.substring(1, value.length() - 1);
+        }
+        if ("localhost".equalsIgnoreCase(value)) {
+            return false;
+        }
+        try {
+            return !InetAddress.getByName(value).isLoopbackAddress();
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     public boolean isEnabled() {

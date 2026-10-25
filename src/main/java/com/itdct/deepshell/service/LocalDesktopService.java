@@ -49,6 +49,10 @@ public class LocalDesktopService {
     private static final int MAX_CONTENT_MATCH_TEXT = 600;
     private static final Set<String> SKIP_SEARCH_DIRS = new HashSet<>(Arrays.asList(
             ".git", ".svn", ".hg", "node_modules", "target", "dist", ".idea", "__pycache__"));
+    private static final Set<String> WINDOWS_RESERVED_NAMES = new HashSet<>(Arrays.asList(
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"));
 
     private final Path root;
 
@@ -514,6 +518,24 @@ public class LocalDesktopService {
         if (name.isEmpty() || ".".equals(name) || "..".equals(name)
                 || name.indexOf('\0') >= 0) {
             throw new IllegalArgumentException("文件名不合法");
+        }
+        // Windows 下 : 会写入 NTFS 备用数据流，结尾的点 / 空格会被系统规范化后覆盖同名文件
+        if (name.indexOf(':') >= 0) {
+            throw new IllegalArgumentException("文件名不能包含冒号");
+        }
+        while (name.endsWith(".") || name.endsWith(" ")) {
+            name = name.substring(0, name.length() - 1);
+        }
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("文件名不合法");
+        }
+        String base = name;
+        int dot = base.indexOf('.');
+        if (dot >= 0) {
+            base = base.substring(0, dot);
+        }
+        if (WINDOWS_RESERVED_NAMES.contains(base.trim().toUpperCase(Locale.ROOT))) {
+            name = "_" + name;
         }
         return name;
     }

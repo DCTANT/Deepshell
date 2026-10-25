@@ -530,11 +530,6 @@
     height: 100%;
 }
 
-.dsk-ai-body .aichat-convs {
-    flex-basis: 170px;
-    width: 170px;
-}
-
 .dsk-window .dsk-side {
     width: 196px;
 }
@@ -4113,6 +4108,340 @@
     font-size: 13px;
 }
 
+/* 网络工具箱：端口与防火墙 */
+.dsk-ports-tm {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+.dsk-ports-tm .tm-page {
+    flex: 1;
+    width: 100%;
+}
+
+.net-port-search {
+    width: 210px;
+}
+
+.net-port-only {
+    margin-left: 2px;
+}
+
+.net-port-only .el-checkbox__label {
+    padding-left: 5px;
+    color: #5f6872;
+    font-size: 11.5px;
+}
+
+.net-port-summary {
+    gap: 4px 16px;
+}
+
+.net-port-kpi {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #4b5563;
+}
+
+.net-port-kpi i {
+    color: #7a8696;
+}
+
+.net-port-kpi b {
+    color: #1f2328;
+    font-weight: 600;
+}
+
+.net-port-kpi.warn,
+.net-port-kpi.warn i {
+    color: #b45309;
+}
+
+.net-fw-card {
+    flex: 0 0 auto;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border: 1px solid #e4e8ed;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.net-fw-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 24px;
+}
+
+.net-fw-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #24282d;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.net-fw-title i {
+    color: #0f6cbd;
+}
+
+.net-fw-type {
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: #eef4fb;
+    color: #2563a8;
+    font-size: 10.5px;
+    font-weight: 600;
+}
+
+.net-fw-state {
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 600;
+}
+
+.net-fw-state.on {
+    background: #e8f7ee;
+    color: #14804a;
+}
+
+.net-fw-state.off {
+    background: #fdf1e7;
+    color: #b45309;
+}
+
+.net-fw-state.unknown {
+    background: #f1f3f5;
+    color: #6b727b;
+}
+
+.net-fw-rules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 76px;
+    overflow: auto;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px dashed #eef1f5;
+}
+
+.net-fw-rule {
+    flex: 0 1 auto;
+    max-width: 100%;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #f6f8fb;
+    color: #4b5563;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 10.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.net-fw-more {
+    padding: 2px 4px;
+    color: #8a929b;
+    font-size: 10.5px;
+}
+
+.net-fw-raw {
+    max-height: 130px;
+    margin: 7px 0 0;
+    padding: 8px 10px;
+    overflow: auto;
+    border-radius: 5px;
+    background: #101318;
+    color: #d7dde8;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.net-fw-hint {
+    margin-top: 6px;
+    color: #8a929b;
+    font-size: 10.5px;
+    line-height: 1.45;
+}
+
+.net-port-box {
+    flex: 1;
+    min-height: 0;
+}
+
+.net-port-grid {
+    display: grid;
+    grid-template-columns: 52px minmax(130px, 1.3fr) 62px minmax(110px, 1fr) 64px 86px;
+    align-items: center;
+    column-gap: 8px;
+    min-width: 680px;
+}
+
+.net-port-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.net-proto {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 38px;
+    height: 19px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .2px;
+}
+
+.net-proto.proto-tcp {
+    background: #e8f1ff;
+    color: #2563a8;
+}
+
+.net-proto.proto-udp {
+    background: #f0eafe;
+    color: #7048b6;
+}
+
+.net-scope {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 9px;
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.net-scope.scope-all {
+    background: #fdecea;
+    color: #b42318;
+}
+
+.net-scope.scope-local {
+    background: #e9f7ef;
+    color: #14804a;
+}
+
+.net-scope.scope-bound {
+    background: #eef4fb;
+    color: #2563a8;
+}
+
+.net-mono {
+    overflow: hidden;
+    color: #3d4652;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 11.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.net-port-no {
+    color: #1f2328;
+    font-family: Consolas, "Courier New", monospace;
+    font-weight: 600;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-card {
+    background: var(--dsk-card-bg);
+    border-color: var(--dsk-win-line);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-title {
+    color: var(--dsk-win-fg);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-title i {
+    color: var(--dsk-accent);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-type {
+    background: var(--dsk-accent-soft);
+    color: #9cc0ff;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-state.on {
+    background: rgba(24, 160, 88, .16);
+    color: #63d995;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-state.off {
+    background: rgba(245, 158, 11, .14);
+    color: #ffd28a;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-state.unknown {
+    background: var(--dsk-win-subtle);
+    color: var(--dsk-win-fg-dim);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-rules {
+    border-top-color: var(--dsk-win-line);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-rule {
+    background: var(--dsk-win-subtle);
+    color: var(--dsk-win-fg-dim);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-fw-hint,
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-only .el-checkbox__label {
+    color: var(--dsk-win-fg-dim);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-kpi,
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-kpi i {
+    color: var(--dsk-win-fg-dim);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-kpi b,
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-mono,
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-no {
+    color: var(--dsk-win-fg);
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-kpi.warn,
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-port-kpi.warn i {
+    color: #ffd28a;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-proto.proto-tcp {
+    background: rgba(61, 126, 255, .16);
+    color: #9cc0ff;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-proto.proto-udp {
+    background: rgba(147, 100, 255, .16);
+    color: #c3a6ff;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-scope.scope-all {
+    background: rgba(239, 68, 68, .14);
+    color: #ff9b9b;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-scope.scope-local {
+    background: rgba(24, 160, 88, .14);
+    color: #63d995;
+}
+
+.ai-desktop.dsk-scheme-dark .dsk-tm .net-scope.scope-bound {
+    background: rgba(61, 126, 255, .14);
+    color: #9cc0ff;
+}
+
 /* 网络工具箱：实时程序流量 */
 .dsk-traf {
     flex: 1;
@@ -5309,6 +5638,15 @@
 }
 
 .ai-desktop.dsk-scheme-dark .dsk-window .el-table--enable-row-hover .el-table__body tr:hover > td {
+    background: var(--dsk-win-hover);
+}
+
+/* Element UI 的斑马纹默认是 #fafafa，深色窗口里会变成刺眼的白条；跟随窗口明暗使用 subtle 色 */
+.ai-desktop .dsk-window .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+    background: var(--dsk-win-subtle);
+}
+
+.ai-desktop .dsk-window .el-table--striped .el-table__body tr.el-table__row--striped:hover > td.el-table__cell {
     background: var(--dsk-win-hover);
 }
 

@@ -134,8 +134,19 @@ public class AiConfigService {
             try (OutputStream out = Files.newOutputStream(file)) {
                 p.store(out, "DeepShell AI settings");
             }
+            restrictToOwner();
         } catch (Exception e) {
             throw new IllegalStateException("保存 AI 设置失败: " + e.getMessage());
+        }
+    }
+
+    /** 文件包含 AI API Key：POSIX 平台只允许属主读写 */
+    private void restrictToOwner() {
+        try {
+            Files.setPosixFilePermissions(file,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+        } catch (Exception ignore) {
+            // Windows 等不支持 POSIX 权限的文件系统
         }
     }
 }

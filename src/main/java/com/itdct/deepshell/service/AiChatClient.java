@@ -48,11 +48,17 @@ public class AiChatClient {
     /** 模型回复文本与本次调用的 token 用量 */
     public static class ChatResult {
         public String text;
+        public String reasoning;
         public Usage usage;
 
         public ChatResult(String text, Usage usage) {
             this.text = text == null ? "" : text;
             this.usage = usage;
+        }
+
+        ChatResult(String text, Usage usage, String reasoning) {
+            this(text, usage);
+            this.reasoning = reasoning == null ? "" : reasoning;
         }
     }
 
@@ -96,7 +102,8 @@ public class AiChatClient {
                 throw new IllegalStateException("AI 返回内容为空");
             }
             String text = choices.get(0).path("message").path("content").asText("");
-            return new ChatResult(text, usageOrEstimateFromResponse(root, systemPrompt, history, text));
+            String reasoning = reasoningText(choices.get(0).path("message"));
+            return new ChatResult(text, usageOrEstimateFromResponse(root, systemPrompt, history, text), reasoning);
         } catch (IllegalArgumentException | IllegalStateException e) {
             throw e;
         } catch (HttpStatusCodeException e) {
@@ -203,12 +210,18 @@ public class AiChatClient {
                         reasonSink.accept(reasoning);
                     }
                     onDelta.accept(text);
-                    return new ChatResult(text, usageOrEstimateFromResponse(root, systemPrompt, history, text));
+                    return new ChatResult(text, usageOrEstimateFromResponse(root, systemPrompt, history, text), reasoning);
+                }
+                if (!reasoning.isEmpty()) {
+                    // 少数模型把工具调用（DSML）只放在 reasoning_content 里，交给上层解析
+                    reasonSink.accept(reasoning);
+                    return new ChatResult("", usageOrEstimateFromResponse(root, systemPrompt, history, ""), reasoning);
                 }
                 throw new IllegalStateException("AI 返回内容为空");
             }
 
             StringBuilder all = new StringBuilder();
+            StringBuilder reasoningAll = new StringBuilder();
             JsonNode usageNode = null;
             try (BufferedReader br = new BufferedReader(
                     new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
@@ -253,6 +266,7 @@ public class AiChatClient {
                         if (cancel.isCancelled()) {
                             throw new AiCancellationToken.CancelledException();
                         }
+                        reasoningAll.append(reasoning);
                         reasonSink.accept(reasoning);
                     }
                     String delta = deltaNode.path("content").asText("");
@@ -269,9 +283,17 @@ public class AiChatClient {
                 throw new AiCancellationToken.CancelledException();
             }
             if (all.length() == 0) {
+                if (reasoningAll.length() > 0) {
+                    // 少数模型把工具调用（DSML）只放在 reasoning_content 里
+                    return new ChatResult("",
+                            usageOrEstimateFromUsage(usageNode, systemPrompt, history, ""),
+                            reasoningAll.toString());
+                }
                 throw new IllegalStateException("AI 返回内容为空");
             }
-            return new ChatResult(all.toString(), usageOrEstimateFromUsage(usageNode, systemPrompt, history, all.toString()));
+            return new ChatResult(all.toString(),
+                    usageOrEstimateFromUsage(usageNode, systemPrompt, history, all.toString()),
+                    reasoningAll.toString());
         } catch (AiCancellationToken.CancelledException e) {
             throw e;
         } catch (IllegalArgumentException | IllegalStateException e) {

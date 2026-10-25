@@ -231,12 +231,21 @@ public class VscodeEditService {
 
     private void launchVscode(Path file) throws IOException {
         boolean win = System.getProperty("os.name").toLowerCase().contains("win");
-        List<String> cmd = win
-                ? Arrays.asList("cmd", "/c", vscodeCommand, file.toString())
-                : Arrays.asList(vscodeCommand, file.toString());
+        List<String> cmd;
+        ProcessBuilder builder;
+        if (win) {
+            // 远端文件名不可信：只把净化后的相对文件名交给 cmd，工作目录单独设置，
+            // 避免 & % ^ 等字符在 cmd 命令行里被当作命令分隔符。
+            cmd = Arrays.asList("cmd", "/c", vscodeCommand, file.getFileName().toString());
+            builder = new ProcessBuilder(cmd)
+                    .directory(file.toAbsolutePath().getParent().toFile());
+        } else {
+            cmd = Arrays.asList(vscodeCommand, file.toString());
+            builder = new ProcessBuilder(cmd);
+        }
         Process p;
         try {
-            p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+            p = builder.redirectErrorStream(true).start();
         } catch (IOException e) {
             throw new IOException("未找到 VSCode 命令（" + vscodeCommand
                     + "），请先安装 VSCode 并执行 'Shell Command: Install code command'，或在配置中指定 deepshell.vscode-command 完整路径");
@@ -268,8 +277,22 @@ public class VscodeEditService {
 
     private static String safeFileName(String remotePath) {
         String name = remotePath.substring(remotePath.lastIndexOf('/') + 1);
-        String safe = name.replaceAll("[\\\\/:*?\"<>|]", "_");
-        return safe.isEmpty() ? "file" : safe;
+        // 只保留字母 / 数字 / . _ -，其余（含 & | < > ^ % ! 空格等）统一下划线，
+        // 防止远端恶意文件名在 Windows cmd / 批处理参数中注入命令
+        String safe = name.replaceAll("[^\\p{L}\\p{N}._-]", "_");
+        while (safe.endsWith(".") || safe.endsWith(" ")) {
+            safe = safe.substring(0, safe.length() - 1);
+        }
+        if (safe.isEmpty() || ".".equals(safe) || "..".equals(safe)) {
+            safe = "file";
+        }
+        if (safe.startsWith("-")) {
+            safe = "_" + safe;
+        }
+        if (safe.length() > 120) {
+            safe = safe.substring(0, 120);
+        }
+        return safe;
     }
 
     private static String sha1(String s) throws Exception {

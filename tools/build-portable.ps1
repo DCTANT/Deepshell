@@ -55,6 +55,8 @@ if (-not (Test-Path $jlink) -or -not (Test-Path $jpackage)) {
     Fail "JDK 目录缺少 jlink / jpackage：$JdkHome"
 }
 Info "JDK: $JdkHome"
+# 双击运行时进程环境里不一定有 JAVA_HOME，显式设置后 Maven 才会用同一个 JDK
+$env:JAVA_HOME = $JdkHome
 
 # ---------- Maven 构建 ----------
 if (-not $SkipMaven) {
@@ -62,6 +64,19 @@ if (-not $SkipMaven) {
         $mvn = Get-Command mvn -ErrorAction SilentlyContinue
         if ($mvn) {
             $MavenCmd = $mvn.Source
+        }
+    }
+    if (-not $MavenCmd) {
+        # 未安装独立 Maven 时，使用 IntelliJ IDEA 自带的 Maven
+        $mvnPatterns = @(
+            'C:\Program Files\JetBrains\IntelliJ IDEA *\plugins\maven\lib\maven3\bin\mvn.cmd',
+            "$env:LOCALAPPDATA\JetBrains\Toolbox\apps\IDEA-*\*\plugins\maven\lib\maven3\bin\mvn.cmd",
+            'C:\Software\JetBrains\IntelliJ IDEA *\plugins\maven\lib\maven3\bin\mvn.cmd'
+        )
+        $ideaMvn = Get-ChildItem -Path $mvnPatterns -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($ideaMvn) {
+            $MavenCmd = $ideaMvn.FullName
         }
     }
     if (-not $MavenCmd) {
@@ -140,7 +155,7 @@ if (-not (Test-Path (Join-Path $appImage 'DeepShell.exe'))) {
 
 # ---------- 外置配置 / 数据目录 / 说明 ----------
 Info '组装 application.yml、data 与说明文件…'
-$configText = Get-Content (Join-Path $repo 'dist\application.yml') -Raw
+$configText = Get-Content (Join-Path $repo 'dist\application.yml') -Raw -Encoding UTF8
 $configText = [regex]::Replace($configText, '(?m)^(\s*version:\s*).*$', "`${1}$version")
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText((Join-Path $appImage 'application.yml'), $configText, $utf8NoBom)
@@ -152,7 +167,7 @@ if (Test-Path $dataSrc) {
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $dataDst 'db'), (Join-Path $dataDst 'logs') | Out-Null
 
-$readme = Get-Content (Join-Path $repo 'dist\PORTABLE-README.txt') -Raw
+$readme = Get-Content (Join-Path $repo 'dist\PORTABLE-README.txt') -Raw -Encoding UTF8
 $readme = $readme.Replace('@VERSION@', $version)
 [System.IO.File]::WriteAllText((Join-Path $appImage 'README.txt'), $readme, $utf8NoBom)
 

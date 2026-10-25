@@ -37,17 +37,15 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // 终端会使用库中保存的凭据建连：必须校验 Origin，避免任意网页借浏览器直连本机 SSH
         registry.addHandler(handler, "/ws/ssh")
-                .addInterceptors(authHandshakeInterceptor)
-                .setAllowedOrigins("*");
+                .addInterceptors(authHandshakeInterceptor, sameOriginHandshakeInterceptor);
         // 本机终端只接受回环连接；开启登录时仍需携带有效 Cookie
         registry.addHandler(localShellHandler, "/ws/local-shell")
-                .addInterceptors(authHandshakeInterceptor, loopbackHandshakeInterceptor)
-                .setAllowedOrigins("*");
+                .addInterceptors(authHandshakeInterceptor, loopbackHandshakeInterceptor);
         // 工作台事件：外部 HTTP 接口打开连接时通知在线页面
         registry.addHandler(eventHandler, "/ws/events")
-                .addInterceptors(authHandshakeInterceptor, sameOriginHandshakeInterceptor)
-                .setAllowedOrigins("*");
+                .addInterceptors(authHandshakeInterceptor, sameOriginHandshakeInterceptor);
     }
 
     @Bean

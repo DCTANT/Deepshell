@@ -111,8 +111,33 @@ public class SftpService {
         });
     }
 
+    /** Termux 的默认家目录；部分 sshd 会把 home 解析成 /，需要单独兜底 */
+    static final String TERMUX_HOME = "/data/data/com.termux/files/home";
+
     public String home(String sessionId) throws Exception {
-        return withSftp(sessionId, ChannelSftp::getHome);
+        return withSftp(sessionId, c -> {
+            String home = c.getHome();
+            String value = home == null ? "" : home.trim();
+            if (isTermuxHome(value)) {
+                return value;
+            }
+            // Termux 上 / 通常是只读的，不能作为资源管理器默认目录
+            if (value.isEmpty() || "/".equals(value)) {
+                try {
+                    SftpATTRS attrs = c.stat(TERMUX_HOME);
+                    if (attrs != null && attrs.isDir()) {
+                        return TERMUX_HOME;
+                    }
+                } catch (Exception ignore) {
+                    // 非 Termux 或没有权限，保持 sshd 返回的 home
+                }
+            }
+            return home;
+        });
+    }
+
+    static boolean isTermuxHome(String path) {
+        return path != null && path.replace('\\', '/').contains("/com.termux/files/home");
     }
 
     /** 修改文件/目录权限（八进制模式，如 0644、0755） */
@@ -138,6 +163,12 @@ public class SftpService {
         }
         if (rel.isEmpty()) {
             throw new IllegalArgumentException("目标文件名不能为空");
+        }
+        for (String part : rel.split("/")) {
+            if (part.isEmpty() || ".".equals(part) || "..".equals(part)
+                    || part.indexOf('\0') >= 0 || part.indexOf('\\') >= 0) {
+                throw new IllegalArgumentException("目标路径不合法");
+            }
         }
         final String target = join(dirPath, rel);
         withSftp(sessionId, c -> {
@@ -213,11 +244,21 @@ public class SftpService {
     }
 
     public void rename(String sessionId, String path, String newName) throws Exception {
-        if (newName == null || newName.trim().isEmpty() || newName.contains("/")) {
+        if (newName == null || newName.trim().isEmpty() || newName.contains("/")
+                || newName.contains("\\") || newName.indexOf('\0') >= 0) {
             throw new IllegalArgumentException("新名称不合法");
         }
+        String name = newName.trim();
+        if (".".equals(name) || "..".equals(name)) {
+            throw new IllegalArgumentException("新名称不合法");
+        }
+        for (int i = 0; i < name.length(); i++) {
+            if (name.charAt(i) < 0x20 || name.charAt(i) == 0x7f) {
+                throw new IllegalArgumentException("新名称不能包含控制字符");
+            }
+        }
         withSftp(sessionId, c -> {
-            c.rename(path, join(parentOf(path), newName.trim()));
+            c.rename(path, join(parentOf(path), name));
             return null;
         });
     }

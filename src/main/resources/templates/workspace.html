@@ -613,6 +613,9 @@
                 <div class="tab-menu-item" @click="onMenuCommand('about')">
                     <i class="el-icon-info"></i>关于 DeepShell
                 </div>
+                <div class="tab-menu-item" @click="onMenuCommand('sponsor')">
+                    <i class="el-icon-food"></i>赞助作者
+                </div>
             </div>
         </div>
 
@@ -692,6 +695,32 @@
         </div>
     </div>
 
+    <!-- 终端选区右键菜单：工作台终端与 AI 桌面终端窗口共用 -->
+    <div ref="termMenu" class="tab-menu term-menu" v-if="termMenu.visible"
+         :style="{ left: termMenu.x + 'px', top: termMenu.y + 'px' }"
+         @mousedown.stop @contextmenu.prevent>
+        <div class="tab-menu-item" :class="{ disabled: !termMenu.hasSelection }" @click="termMenuCopy">
+            <i class="el-icon-document-copy"></i>复制
+        </div>
+        <div class="tab-menu-item" :class="{ disabled: !termMenu.hasSelection }" @click="termMenuPasteSelection">
+            <i class="el-icon-bottom"></i>粘贴到输入框
+        </div>
+        <div class="tab-menu-item" v-if="termMenu.canAi"
+             :class="{ disabled: !termMenu.hasSelection }" @click="termMenuExplain">
+            <i class="el-icon-magic-stick"></i>AI 解释
+        </div>
+        <div class="tab-menu-item" :class="{ disabled: !termMenu.hasSelection }" @click="termMenuSearch">
+            <i class="el-icon-search"></i>查找
+        </div>
+        <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" @click="termMenuSelectAll">
+            <i class="el-icon-full-screen"></i>全选
+        </div>
+        <div class="tab-menu-item" @click="termMenuClear">
+            <i class="el-icon-delete"></i>清空终端
+        </div>
+    </div>
+
     <!-- DeepShell 后端关闭 / 重启遮罩 -->
     <div class="app-service-mask" v-if="appLifecycle.visible">
         <div class="app-service-box" :class="['mode-' + appLifecycle.mode, 'status-' + appLifecycle.status]">
@@ -746,21 +775,31 @@
                                        @click="newConv"></el-button>
                         </div>
                         <div class="aichat-body">
-                            <div class="aichat-convs">
+                            <div class="aichat-convs"
+                                 :style="{ width: convWidth + 'px', flexBasis: convWidth + 'px' }">
                                 <div v-for="c in convList" :key="c.id" class="aichat-conv"
                                      :class="{ active: c.id === tab.chatConvId,
                                                running: c._run && c._run.busy }"
                                      :title="(c._run && c._run.busy ? (c._run.phase || '生成中') + ' · ' : '') + c.title"
-                                     @click="switchConv(c)">
+                                     @click="switchConv(c)"
+                                     @contextmenu.prevent="openConvMenu($event, c)">
                                     <i v-if="c._run && c._run.busy" class="el-icon-loading aichat-conv-busy"></i>
-                                    <span class="aichat-conv-title">
+                                    <span class="aichat-conv-title" v-if="renamingId !== c.id">
+                                        <span v-if="c.unread" class="aichat-conv-unread" title="有新内容"></span>
                                         <i v-if="c.pinned" class="el-icon-top aichat-conv-pin" title="已置顶"></i>{{ c.title }}
                                     </span>
+                                    <input v-else class="aichat-conv-rename" ref="renameInput" v-model="renameText"
+                                           @click.stop
+                                           @keydown.enter.prevent="saveRename(c)"
+                                           @keydown.esc.prevent="cancelRename"
+                                           @blur="saveRename(c)">
                                     <span class="aichat-conv-time">{{ fmtTime(c.updatedAt) }}</span>
                                     <i class="el-icon-close aichat-conv-del" title="删除对话"
                                        @click.stop="delConv(c)"></i>
                                 </div>
                             </div>
+                            <div class="aichat-conv-resizer" title="拖动调整会话列表宽度"
+                                 @mousedown.prevent="startResize"></div>
                             <div class="aichat-main">
                                 <div class="aichat-list" ref="list" @scroll="onListScroll">
                                     <div v-if="tab.chatLoading" class="aichat-empty">
@@ -776,8 +815,7 @@
                                             <span v-for="eg in examples" :key="eg" class="aichat-eg"
                                                   @click="useExample(eg)">{{ eg }}</span>
                                         </div>
-                                        <p class="aichat-hint">自动执行模式下，删除 / 格式化 / 重启等高风险命令会先暂停，
-                                            等你点击确认后才执行；输入 <b>/</b> 可打开快捷命令</p>
+                                        <p class="aichat-hint">自动执行模式下 AI 会连续执行命令；切到「每步确认」后，每条命令都需要你确认。输入 <b>/</b> 可打开快捷命令</p>
                                     </div>
                                     <div v-for="(m, i) in tab.chatMsgs" :key="i" class="aichat-msg"
                                          :class="m.role">
@@ -807,7 +845,7 @@
                                                 <span>思考过程</span>
                                                 <span class="aichat-think-hint">{{ m.reasonOpen ? '收起' : '展开' }}</span>
                                             </div>
-                                            <pre v-if="m.reasonOpen" class="aichat-think-body">{{ m.reasoning }}</pre>
+                                            <pre v-if="m.reasonOpen" class="aichat-think-body">{{ m.reasoning | cleanReasoning }}</pre>
                                         </div>
                                         <div v-if="m.text && m.role === 'ai'" class="aichat-bubble aichat-md"
                                              v-html="renderMd(m.text)"></div>
@@ -854,7 +892,7 @@
                                             <div v-if="m.note" class="aicard-note">{{ m.note }}</div>
                                             <div v-if="m.state === 'confirm'" class="aicard-confirm">
                                                 <i class="el-icon-warning-outline"></i>
-                                                <span>高风险操作{{ m.danger ? '（' + m.danger + '）' : '' }}，是否执行？</span>
+                                                <span>AI 请求执行这条命令，是否执行？</span>
                                                 <el-button size="mini" type="danger"
                                                            @click="confirm(m, true)">执行</el-button>
                                                 <el-button size="mini"
@@ -896,7 +934,7 @@
                                                 <span>思考过程</span>
                                                 <span class="aichat-think-hint">实时</span>
                                             </div>
-                                            <pre class="aichat-think-body">{{ activeRun.reasonText }}</pre>
+                                            <pre class="aichat-think-body">{{ activeRun.reasonText | cleanReasoning }}</pre>
                                         </div>
                                         <div v-if="activeRun.streamText" class="aichat-bubble aichat-md"
                                              v-html="renderMd(activeRun.streamText)"></div>
@@ -1030,6 +1068,29 @@
                                         </span>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                        <!-- 对话列表右键菜单（相对 .aichat 定位，避免桌面窗口缩放后跑偏） -->
+                        <div v-if="convMenu.visible" ref="convMenu" class="aichat-conv-menu"
+                             :style="{ left: convMenu.x + 'px', top: convMenu.y + 'px' }" @click.stop>
+                            <div class="aichat-conv-menu-item" @click="menuRename">
+                                <i class="el-icon-edit"></i>重命名
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuSummarizeTitle">
+                                <i class="el-icon-magic-stick"></i>再次总结标题
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuExport">
+                                <i class="el-icon-download"></i>导出记录
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuPin">
+                                <i class="el-icon-top"></i>{{ convMenu.conv && convMenu.conv.pinned ? '取消置顶' : '置顶' }}
+                            </div>
+                            <div class="aichat-conv-menu-item" @click="menuUnread">
+                                <i class="el-icon-message"></i>{{ convMenu.conv && convMenu.conv.unread ? '标记为已读' : '标记为未读' }}
+                            </div>
+                            <div class="aichat-conv-menu-sep"></div>
+                            <div class="aichat-conv-menu-item danger" @click="menuDelete">
+                                <i class="el-icon-delete"></i>删除
                             </div>
                         </div>
                     </div>

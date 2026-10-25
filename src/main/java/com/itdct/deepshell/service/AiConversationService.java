@@ -47,6 +47,7 @@ public class AiConversationService {
         public String cwd;
         public boolean active;
         public boolean pinned;
+        public boolean unread;
         public Long parentId;
         public Integer forkPoint;
         public Long createdAt;
@@ -59,7 +60,12 @@ public class AiConversationService {
         public String cwd;
         public Boolean active;
         public Boolean pinned;
+        public Boolean unread;
         public JsonNode msgs;
+    }
+
+    public ConvDto get(Long id) {
+        return toDto(getEntity(id));
     }
 
     public List<ConvDto> list(Long connId) {
@@ -94,7 +100,7 @@ public class AiConversationService {
     /** 从指定对话分叉：默认复制全部消息，也可只复制到某条消息（msgIndex 从 0 起） */
     @Transactional
     public ConvDto fork(Long id, Integer msgIndex) {
-        AiConversation src = get(id);
+        AiConversation src = getEntity(id);
         ArrayNode all = readMsgs(src);
         if (all.size() == 0) {
             throw new IllegalArgumentException("当前对话为空，无法分叉");
@@ -126,7 +132,7 @@ public class AiConversationService {
     /** 只更新传入的字段；active=true 时把同连接其他对话置为非选中；纯切换不刷新 updatedAt */
     @Transactional
     public ConvDto save(Long id, ConvForm form) {
-        AiConversation c = get(id);
+        AiConversation c = getEntity(id);
         boolean touch = false;
         if (form.title != null) {
             c.setTitle(clip(form.title, MAX_TITLE));
@@ -143,6 +149,9 @@ public class AiConversationService {
         if (form.pinned != null) {
             c.setPinned(form.pinned);
         }
+        if (form.unread != null) {
+            c.setUnread(form.unread);
+        }
         if (Boolean.TRUE.equals(form.active)) {
             deactivateAll(c.getConnectionId());
             c.setActive(true);
@@ -152,6 +161,30 @@ public class AiConversationService {
         if (touch) {
             c.setUpdatedAt(System.currentTimeMillis());
         }
+        return toDto(repo.save(c));
+    }
+
+    /** 自动总结的标题：仅当标题仍是占位值或请求发起时的预期标题才替换，避免覆盖用户刚改的名字 */
+    @Transactional
+    public ConvDto applyAutoTitle(Long id, String title, String expectedTitle) {
+        AiConversation c = getEntity(id);
+        String current = c.getTitle();
+        boolean placeholder = current == null || current.trim().isEmpty() || "新对话".equals(current.trim());
+        boolean expected = expectedTitle != null && !expectedTitle.trim().isEmpty()
+                && current != null && expectedTitle.trim().equals(current.trim());
+        if (!placeholder && !expected) {
+            return toDto(c);
+        }
+        c.setTitle(clip(title, MAX_TITLE));
+        return toDto(repo.save(c));
+    }
+
+    /** 用户确认后的重新总结：无条件覆盖当前标题 */
+    @Transactional
+    public ConvDto forceTitle(Long id, String title) {
+        AiConversation c = getEntity(id);
+        c.setTitle(clip(title, MAX_TITLE));
+        c.setUpdatedAt(System.currentTimeMillis());
         return toDto(repo.save(c));
     }
 
@@ -185,7 +218,7 @@ public class AiConversationService {
         }
     }
 
-    private AiConversation get(Long id) {
+    private AiConversation getEntity(Long id) {
         return repo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("对话不存在: " + id));
     }
@@ -228,6 +261,7 @@ public class AiConversationService {
         d.cwd = c.getCwd();
         d.active = Boolean.TRUE.equals(c.getActive());
         d.pinned = Boolean.TRUE.equals(c.getPinned());
+        d.unread = Boolean.TRUE.equals(c.getUnread());
         d.parentId = c.getParentId();
         d.forkPoint = c.getForkPoint();
         d.createdAt = c.getCreatedAt();

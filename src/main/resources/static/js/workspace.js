@@ -1141,6 +1141,99 @@ function terminalLogHighlightChunk(pending, chunk) {
 }
 
 
+/* 去掉思考过程 / 正文里残留的 DSML、DSLM 工具调用标记（部分模型会把工具调用写在 reasoning_content） */
+function stripDsmlText(src) {
+    var text = String(src == null ? '' : src)
+        .replace(/｜/g, '|')
+        .replace(/＜/g, '<')
+        .replace(/＞/g, '>')
+        .replace(/\u3000/g, ' ')
+        .replace(/＂/g, '"')
+        .replace(/＇/g, "'");
+    // 模型偶尔把 <system>...</system> 当成正文/思考输出，直接清掉
+    text = text.replace(/<\s*system\b[^>]*>[\s\S]*?<\s*\/\s*system\s*>/gi, ' ');
+    text = text.replace(/<\s*\|?\s*system\s*\|?\s*>[\s\S]*?<\s*\/\s*\|?\s*system\s*\|?\s*>/gi, ' ');
+    text = text.replace(/<\s*\/?\s*\|?\s*system\s*\|?\s*>/gi, ' ');
+    var mark = '\\|\\s*\\|?\\s*DS(?:LM|ML)\\s*\\|\\s*\\|?\\s*';
+    text = text.replace(new RegExp('<\\s*' + mark + 'calls\\s*>[\\s\\S]*?'
+            + '<\\s*\\/\\s*' + mark + 'calls\\s*>', 'gi'), ' ');
+    text = text.replace(new RegExp('<\\s*' + mark + 'parameter\\b[^>]*>[\\s\\S]*?'
+            + '<\\s*\\/\\s*' + mark + 'parameter\\s*>', 'gi'), ' ');
+    text = text.replace(/<\s*parameter\b[^>]*>[\s\S]*?<\s*\/\s*parameter\s*>/gi, ' ');
+    text = text.replace(new RegExp('<\\s*\\/?\\s*' + mark + '(?:invoke|parameter)\\b[^>]*>', 'gi'), ' ');
+    text = text.replace(/<\s*\/?\s*parameter\b[^>]*>/gi, ' ');
+    return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+Vue.filter('cleanReasoning', function (text) {
+    return stripDsmlText(text);
+});
+
+/* 模型偶尔把普通回复包成 JSON；兼容标准 JSON 和带真实换行的“漂亮 JSON” */
+function extractAiReply(src) {
+    var text = String(src == null ? '' : src).trim();
+    if (!text || text.charAt(0) !== '{' || text.indexOf('"reply"') < 0) {
+        return null;
+    }
+    try {
+        var obj = JSON.parse(text);
+        if (obj && typeof obj.reply === 'string' && obj.reply.trim()) {
+            return obj.reply;
+        }
+    } catch (e) {
+        // 继续宽松提取
+    }
+    var at = text.indexOf('"reply"');
+    var colon = text.indexOf(':', at + 7);
+    if (colon < 0) {
+        return null;
+    }
+    var start = colon + 1;
+    while (start < text.length && /\s/.test(text.charAt(start))) {
+        start++;
+    }
+    if (text.charAt(start) !== '"') {
+        return null;
+    }
+    var out = '';
+    for (var i = start + 1; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c === '\\' && i + 1 < text.length) {
+            var e = text.charAt(++i);
+            if (e === 'n') {
+                out += '\n';
+            } else if (e === 'r') {
+                out += '\r';
+            } else if (e === 't') {
+                out += '\t';
+            } else if (e === 'u' && i + 4 < text.length) {
+                try {
+                    out += String.fromCharCode(parseInt(text.substr(i + 1, 4), 16));
+                    i += 4;
+                } catch (err) {
+                    out += 'u';
+                }
+            } else {
+                out += e;
+            }
+            continue;
+        }
+        if (c === '"') {
+            var j = i + 1;
+            while (j < text.length && /\s/.test(text.charAt(j))) {
+                j++;
+            }
+            if (j >= text.length || text.charAt(j) === ',' || text.charAt(j) === '}') {
+                break;
+            }
+            out += c;
+            continue;
+        }
+        out += c;
+    }
+    return out.trim() ? out : null;
+}
+
 function aiInlineMarkdown(text) {
     var codes = [];
     var s = escapeAiHtml(text);
@@ -1161,6 +1254,10 @@ function aiInlineMarkdown(text) {
 /* 支持标题、列表、代码块、引用、分隔线与段落；未闭合的代码块也能正常展示（流式输出） */
 function renderAiMarkdown(src) {
     var text = String(src == null ? '' : src).replace(/\r\n/g, '\n');
+    var reply = extractAiReply(text);
+    if (reply != null) {
+        text = reply;
+    }
     if (!text) {
         return '';
     }
@@ -1477,10 +1574,24 @@ Vue.component('ai-chat-panel', {
     },
     template: '#ai-chat-panel-tpl',
     data: function () {
+        var ctx = this.context === 'window' ? 'window' : 'panel';
+        var width = ctx === 'window' ? 170 : 116;
+        try {
+            var saved = parseInt(localStorage.getItem('deepshell.aiConvWidth.' + ctx), 10);
+            if (saved >= 90) {
+                width = Math.min(saved, 360);
+            }
+        } catch (e) {
+            // 本地存储不可用时使用默认宽度
+        }
         return {
             stick: true,
             slashOpen: false,
-            slashIndex: 0
+            slashIndex: 0,
+            convMenu: { visible: false, x: 0, y: 0, conv: null },
+            convWidth: width,
+            renamingId: null,
+            renameText: ''
         };
     },
     computed: {
@@ -1624,6 +1735,46 @@ Vue.component('ai-chat-panel', {
     },
     mounted: function () {
         this.scrollToBottom(true);
+        var self = this;
+        this._onConvMenuKey = function (e) {
+            if (e.key === 'Escape') {
+                self.closeConvMenu();
+                self.cancelRename();
+            }
+        };
+        window.addEventListener('keydown', this._onConvMenuKey);
+        this._onDocPointer = function (e) {
+            if (!self.convMenu.visible) {
+                return;
+            }
+            var menu = self.$refs.convMenu;
+            if (menu && (menu === e.target || menu.contains(e.target))) {
+                return;
+            }
+            self.closeConvMenu();
+        };
+        document.addEventListener('mousedown', this._onDocPointer, true);
+        document.addEventListener('contextmenu', this._onDocPointer, true);
+    },
+    beforeDestroy: function () {
+        if (this._onConvMenuKey) {
+            window.removeEventListener('keydown', this._onConvMenuKey);
+            this._onConvMenuKey = null;
+        }
+        if (this._onDocPointer) {
+            document.removeEventListener('mousedown', this._onDocPointer, true);
+            document.removeEventListener('contextmenu', this._onDocPointer, true);
+            this._onDocPointer = null;
+        }
+        if (this._onResizeMove) {
+            document.removeEventListener('mousemove', this._onResizeMove);
+            this._onResizeMove = null;
+        }
+        if (this._onResizeEnd) {
+            document.removeEventListener('mouseup', this._onResizeEnd);
+            this._onResizeEnd = null;
+        }
+        document.body.classList.remove('aichat-resizing');
     },
     methods: {
         onListScroll: function (e) {
@@ -1722,10 +1873,263 @@ Vue.component('ai-chat-panel', {
             this.tab.chatInput = '';
             this.$root.aiRunSlash(item.id, this.tab);
         },
+        /* 桌面窗口可能被 transform 缩放，按元素实际缩放比换算成 .aichat 内的局部坐标 */
+        panelPoint: function (clientX, clientY) {
+            var el = this.$el;
+            var rect = el.getBoundingClientRect();
+            var scale = el.offsetWidth > 0 ? rect.width / el.offsetWidth : 1;
+            if (!scale || scale <= 0) {
+                scale = 1;
+            }
+            return {
+                x: (clientX - rect.left) / scale,
+                y: (clientY - rect.top) / scale,
+                width: el.clientWidth,
+                height: el.clientHeight,
+                scale: scale
+            };
+        },
+        openConvMenu: function (e, c) {
+            if (!c) {
+                return;
+            }
+            var p = this.panelPoint(e.clientX, e.clientY);
+            var menuWidth = 170;
+            var menuHeight = 234;
+            var self = this;
+            this.renamingId = null;
+            this.convMenu = {
+                visible: true,
+                x: Math.max(4, Math.min(p.x, p.width - menuWidth - 4)),
+                y: Math.max(4, Math.min(p.y, p.height - menuHeight - 4)),
+                conv: c
+            };
+            this.$nextTick(function () {
+                var el = self.$refs.convMenu;
+                if (!el) {
+                    return;
+                }
+                var maxX = Math.max(4, p.width - el.offsetWidth - 4);
+                var maxY = Math.max(4, p.height - el.offsetHeight - 4);
+                self.convMenu.x = Math.max(4, Math.min(p.x, maxX));
+                self.convMenu.y = Math.max(4, Math.min(p.y, maxY));
+            });
+        },
+        startResize: function (e) {
+            var self = this;
+            var p = this.panelPoint(e.clientX, e.clientY);
+            var startWidth = this.convWidth;
+            this._onResizeMove = function (ev) {
+                var w = Math.round(startWidth + (ev.clientX - e.clientX) / p.scale);
+                self.convWidth = Math.max(90, Math.min(self.maxConvWidth(), w));
+            };
+            this._onResizeEnd = function () {
+                document.removeEventListener('mousemove', self._onResizeMove);
+                document.removeEventListener('mouseup', self._onResizeEnd);
+                self._onResizeMove = null;
+                self._onResizeEnd = null;
+                document.body.classList.remove('aichat-resizing');
+                try {
+                    var key = 'deepshell.aiConvWidth.' + (self.context === 'window' ? 'window' : 'panel');
+                    localStorage.setItem(key, String(self.convWidth));
+                } catch (err) {
+                    // 本地存储不可用时只保留本次会话宽度
+                }
+            };
+            document.addEventListener('mousemove', this._onResizeMove);
+            document.addEventListener('mouseup', this._onResizeEnd);
+            document.body.classList.add('aichat-resizing');
+        },
+        maxConvWidth: function () {
+            var w = this.$el ? this.$el.clientWidth : 0;
+            return Math.max(90, Math.min(360, w - 180));
+        },
+        closeConvMenu: function () {
+            if (this.convMenu.visible) {
+                this.convMenu.visible = false;
+                this.convMenu.conv = null;
+            }
+        },
+        menuRename: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.startRename(c);
+        },
+        menuSummarizeTitle: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.$root.aiConvSummarizeTitle(c, true);
+        },
+        menuExport: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.exportConv(c);
+        },
+        menuPin: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.togglePin(c);
+        },
+        menuUnread: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            if (!c) {
+                return;
+            }
+            if (c.unread) {
+                this.$root.aiConvRead(c);
+            } else {
+                this.$root.aiConvMarkUnread(c);
+            }
+        },
+        menuDelete: function () {
+            var c = this.convMenu.conv;
+            this.closeConvMenu();
+            this.delConv(c);
+        },
+        startRename: function (c) {
+            if (!c || c.id == null) {
+                return;
+            }
+            var self = this;
+            this.renamingId = c.id;
+            this.renameText = c.title || '';
+            this.$nextTick(function () {
+                var ref = self.$refs.renameInput;
+                var el = Array.isArray(ref) ? ref[0] : ref;
+                if (el) {
+                    el.focus();
+                    if (el.select) {
+                        el.select();
+                    }
+                }
+            });
+        },
+        cancelRename: function () {
+            this.renamingId = null;
+            this.renameText = '';
+        },
+        saveRename: function (c) {
+            if (!c || this.renamingId !== c.id) {
+                return;
+            }
+            var title = (this.renameText || '').trim();
+            if (!title || title === c.title) {
+                this.cancelRename();
+                return;
+            }
+            if (title.length > 60) {
+                var self = this;
+                ELEMENT.Message.warning('对话名称不能超过 60 个字符');
+                this.$nextTick(function () {
+                    var ref = self.$refs.renameInput;
+                    var el = Array.isArray(ref) ? ref[0] : ref;
+                    if (el) {
+                        el.focus();
+                    }
+                });
+                return;
+            }
+            this.renamingId = null;
+            this.renameText = '';
+            var self = this;
+            http.put('/api/ai/convs/' + c.id, { title: title }).then(function (d) {
+                self.$set(c, 'title', d && d.title ? d.title : title);
+                ELEMENT.Message.success('已重命名');
+            }).catch(function () { /* 拦截器已提示 */ });
+        },
+        exportConv: function (c) {
+            if (!c) {
+                return;
+            }
+            var tab = this.tab || {};
+            var lines = [];
+            lines.push('# ' + (c.title || 'AI 对话'));
+            lines.push('');
+            lines.push('- 主机：' + (tab.host || '') + (tab.username ? ' (' + tab.username + ')' : ''));
+            lines.push('- 导出时间：' + new Date().toLocaleString());
+            lines.push('');
+            (c.msgs || []).forEach(function (m) {
+                if (!m) {
+                    return;
+                }
+                if (m.role === 'user') {
+                    lines.push('## 用户');
+                    lines.push('');
+                    lines.push(String(m.text || ''));
+                    lines.push('');
+                    return;
+                }
+                if (m.role === 'compact') {
+                    lines.push('## 上下文压缩');
+                    lines.push('');
+                    lines.push(String(m.text || ''));
+                    lines.push('');
+                    return;
+                }
+                var reasoning = stripDsmlText(m.reasoning || '');
+                if (reasoning) {
+                    lines.push('<details>');
+                    lines.push('<summary>思考过程</summary>');
+                    lines.push('');
+                    lines.push(reasoning);
+                    lines.push('');
+                    lines.push('</details>');
+                    lines.push('');
+                }
+                var reply = extractAiReply(m.text || '');
+                if (reply == null && m.text) {
+                    reply = String(m.text);
+                }
+                if (reply && reply.trim()) {
+                    lines.push('## AI');
+                    lines.push('');
+                    lines.push(reply.trim());
+                    lines.push('');
+                }
+                if (m.cmd) {
+                    lines.push('### 命令' + (m.note ? '：' + m.note : ''));
+                    lines.push('');
+                    lines.push('~~~sh');
+                    lines.push(String(m.cmd));
+                    lines.push('~~~');
+                    lines.push('');
+                    if (m.output) {
+                        lines.push('~~~text');
+                        lines.push(String(m.output));
+                        lines.push('~~~');
+                        lines.push('');
+                    }
+                    if (m.error) {
+                        lines.push('> 错误：' + m.error);
+                        lines.push('');
+                    }
+                }
+            });
+            var stamp = new Date();
+            var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+            var time = stamp.getFullYear() + pad(stamp.getMonth() + 1) + pad(stamp.getDate())
+                + '-' + pad(stamp.getHours()) + pad(stamp.getMinutes()) + pad(stamp.getSeconds());
+            var name = (c.title || 'ai-conversation')
+                .replace(/[\\/:*?"<>|\r\n]/g, '_')
+                .replace(/[. ]+$/, '')
+                .slice(0, 60) || 'ai-conversation';
+            var blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'deepshell-ai-' + name + '-' + time + '.md';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+            ELEMENT.Message.success('对话记录已导出');
+        },
         newConv: function () {
             this.$root.aiConvNew();
         },
         switchConv: function (c) {
+            this.closeConvMenu();
             this.$root.aiConvSwitch(c);
         },
         delConv: function (c) {
@@ -2209,6 +2613,16 @@ Vue.component('term-cmd-bar', {
                 if (self.$refs.searchInput) {
                     self.$refs.searchInput.focus();
                 }
+            });
+        },
+        openSearchWith: function (text) {
+            var self = this;
+            this.searchVisible = true;
+            this.searchText = text || '';
+            this.searchInvalid = false;
+            this.$nextTick(function () {
+                self.focusSearchInput();
+                self.runTerminalSearch('next', false);
             });
         },
         clearSearchHighlights: function () {
@@ -4059,9 +4473,6 @@ new Vue({
             { key: 'app:settings', type: 'app', action: 'settings', label: '设置',
               icon: 'el-icon-setting', color: '#54657e',
               category: '系统工具', desc: '调整桌面外观、时钟、网络与系统设置' },
-            { key: 'app:appcenter', type: 'app', action: 'appcenter', label: '应用中心',
-              icon: 'el-icon-shopping-bag-1', color: '#8b5cf6',
-              category: '系统工具', desc: '浏览、安装和管理桌面应用（功能建设中）' },
             { key: 'app:ai', type: 'app', action: 'ai', label: 'AI 终端',
               icon: 'el-icon-chat-dot-round', color: '#3d7eff',
               category: 'AI 助手', desc: '使用 AI 助手执行命令、排查服务器问题' }
@@ -4280,6 +4691,7 @@ new Vue({
                 passwordless: false,
                 needsPassword: false
             },
+            rootEnabled: false,
             traffic: {
                 data: null,
                 error: '',
@@ -4290,8 +4702,16 @@ new Vue({
                 sortBy: 'rate',
                 sortDir: 'desc',
                 selectedPid: 0,
+                updatedAt: 0
+            },
+            ports: {
+                data: null,
+                error: '',
+                loading: false,
+                keyword: '',
+                exposedOnly: false,
                 updatedAt: 0,
-                rootEnabled: false
+                rawOpen: false
             }
         },
         /* 多机命令 */
@@ -4392,6 +4812,7 @@ new Vue({
         snippetTarget: loadSnippetTarget(),
         snippetTargets: [],
         tabMenu: { visible: false, x: 0, y: 0, tab: null },
+        termMenu: { visible: false, x: 0, y: 0, text: '', context: '', tabKey: '', windowId: '', hasSelection: false, canAi: false },
         hostKeyVisible: false,
         hostKeyTrusting: false,
         hostKeyChecked: false,
@@ -4433,6 +4854,7 @@ new Vue({
         hotkeyVisible: false,
         bgVisible: false,
         helpVisible: false,
+        sponsorVisible: false,
         aboutVisible: false,
         protocolVisible: false,
         protocolLoading: false,
@@ -4544,7 +4966,7 @@ new Vue({
             authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
             tlsSelfSigned: false, tlsNextEnabled: false
         },
-        appInfo: { version: '1.5.0', java: '', os: '', dataDir: '', buildTime: '',
+        appInfo: { version: '1.6.1', java: '', os: '', dataDir: '', buildTime: '',
             protocolState: '', protocolScheme: 'deepshell', protocolDetail: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
@@ -5567,6 +5989,88 @@ new Vue({
             }
             return max;
         },
+        netPortsRows: function () {
+            var d = this.netTool.ports.data;
+            var rows = d && Array.isArray(d.ports) ? d.ports : [];
+            var q = String(this.netTool.ports.keyword || '').trim().toLowerCase();
+            var exposedOnly = !!this.netTool.ports.exposedOnly;
+            var out = [];
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i] || {};
+                if (exposedOnly && r.scope !== 'all') {
+                    continue;
+                }
+                if (q) {
+                    var text = ((r.protocol || '') + ' ' + (r.address || '') + ' ' + r.port + ' '
+                        + (r.process || '') + ' ' + (r.pid || '')).toLowerCase();
+                    if (text.indexOf(q) < 0) {
+                        continue;
+                    }
+                }
+                out.push(r);
+            }
+            return out;
+        },
+        netPortsStats: function () {
+            var d = this.netTool.ports.data;
+            var rows = d && Array.isArray(d.ports) ? d.ports : [];
+            var stats = { total: rows.length, exposed: 0, local: 0, bound: 0, tcp: 0, udp: 0, hidden: 0 };
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i] || {};
+                if (r.scope === 'all') {
+                    stats.exposed++;
+                } else if (r.scope === 'local') {
+                    stats.local++;
+                } else {
+                    stats.bound++;
+                }
+                if (r.protocol === 'tcp') {
+                    stats.tcp++;
+                } else if (r.protocol === 'udp') {
+                    stats.udp++;
+                }
+                if (!r.pid) {
+                    stats.hidden++;
+                }
+            }
+            return stats;
+        },
+        netFirewallView: function () {
+            var d = this.netTool.ports.data;
+            var fw = d && d.firewall ? d.firewall : {};
+            var active = fw.active;
+            return {
+                type: fw.type || 'none',
+                typeLabel: fw.typeLabel || '未检测到',
+                active: active,
+                stateText: fw.stateText || '状态未知',
+                stateClass: active === true ? 'on' : (active === false ? 'off' : 'unknown'),
+                rules: Array.isArray(fw.rules) ? fw.rules : [],
+                raw: fw.raw || '',
+                hint: fw.hint || '',
+                restricted: !!fw.restricted
+            };
+        },
+        netPortsRootText: function () {
+            var r = this.netTool.root;
+            if (r.loading) {
+                return '授权中…';
+            }
+            return this.netTool.rootEnabled ? 'root 读取中' : '以 root 读取';
+        },
+        netPortsRootTitle: function () {
+            var r = this.netTool.root;
+            if (r.isRoot) {
+                return '当前 SSH 登录用户是 ' + (r.user || 'root') + '，可读取全部端口和防火墙规则';
+            }
+            if (this.netTool.rootEnabled) {
+                return '正在通过 sudo 以 root 读取；点击恢复为当前用户';
+            }
+            if (r.passwordless) {
+                return '当前用户可免密 sudo，点击直接以 root 读取';
+            }
+            return '输入 sudo 密码后以 root 读取完整进程名和防火墙规则；密码仅保存在服务内存 30 分钟';
+        },
         netToolTrafficIntervalText: function () {
             var ms = Number(this.netTool.traffic.intervalMs) || 2000;
             return (ms / 1000) + ' 秒';
@@ -5576,14 +6080,14 @@ new Vue({
             if (r.loading) {
                 return '授权中…';
             }
-            return this.netTool.traffic.rootEnabled ? 'root 采样中' : '以 root 采样';
+            return this.netTool.rootEnabled ? 'root 采样中' : '以 root 采样';
         },
         netTrafficRootTitle: function () {
             var r = this.netTool.root;
             if (r.isRoot) {
                 return '当前 SSH 登录用户是 ' + (r.user || 'root') + '，可读取全部进程';
             }
-            if (this.netTool.traffic.rootEnabled) {
+            if (this.netTool.rootEnabled) {
                 return '正在通过 sudo 以 root 读取全部进程；点击恢复为当前用户';
             }
             if (r.passwordless) {
@@ -5798,7 +6302,7 @@ new Vue({
             return (this.appInfo && this.appInfo.buildTime) || DESKTOP_APP_RELEASE_FALLBACK;
         },
         desktopAppVersion: function () {
-            return (this.appInfo && this.appInfo.version) || '1.5.0';
+            return (this.appInfo && this.appInfo.version) || '1.6.1';
         },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
@@ -6660,6 +7164,8 @@ new Vue({
                     ? '已开启危险命令确认' : '已关闭危险命令确认');
             } else if (cmd === 'help') {
                 this.helpVisible = true;
+            } else if (cmd === 'sponsor') {
+                this.sponsorVisible = true;
             } else if (cmd === 'about') {
                 this.loadAppInfo();
                 this.aboutVisible = true;
@@ -6995,6 +7501,7 @@ new Vue({
                         conv.updatedAt = Date.now();
                         t.chatMsgs = conv.msgs;
                         self.saveConv(t, conv);
+                        self.saveConvTitle(conv);
                     })
                     .catch(function () { /* 取消 */ });
                 return;
@@ -7045,6 +7552,7 @@ new Vue({
             if (!conv) {
                 return;
             }
+            this.aiConvRead(conv);
             if (t.chatConvId !== conv.id) {
                 t.chatConvId = conv.id;
                 t.chatMsgs = conv.msgs || [];
@@ -7074,6 +7582,9 @@ new Vue({
             }
             if (conv.pinned == null) {
                 this.$set(conv, 'pinned', false);
+            }
+            if (conv.unread == null) {
+                this.$set(conv, 'unread', false);
             }
             if (conv._compacting == null) {
                 this.$set(conv, '_compacting', false);
@@ -7371,6 +7882,83 @@ new Vue({
                 ELEMENT.Message.success(next ? '对话已置顶' : '已取消置顶');
             }).catch(function () { /* 拦截器已提示 */ });
         },
+        aiConvMarkUnread: function (c) {
+            if (!c || c.id == null || c.unread) {
+                return;
+            }
+            this.$set(c, 'unread', true);
+            http.put('/api/ai/convs/' + c.id, { unread: true }).catch(function () { /* ignore */ });
+        },
+        aiConvRead: function (c) {
+            if (!c || c.id == null || !c.unread) {
+                return;
+            }
+            this.$set(c, 'unread', false);
+            http.put('/api/ai/convs/' + c.id, { unread: false }).catch(function () { /* ignore */ });
+        },
+        /* 总结标题：force=false 用于新对话自动生成，force=true 用于右键菜单覆盖当前标题 */
+        aiConvSummarizeTitle: function (c, force, hint) {
+            if (!c || c.id == null) {
+                return;
+            }
+            if (c._titleBusy) {
+                if (force) {
+                    ELEMENT.Message.info('正在总结标题，请稍候');
+                }
+                return;
+            }
+            if (force) {
+                if (!this.aiConvHasText(c)) {
+                    ELEMENT.Message.info('当前对话还没有内容，无法总结标题');
+                    return;
+                }
+                var self = this;
+                var current = c.title || '新对话';
+                this.$confirm('重新总结会覆盖当前标题「' + current + '」，是否继续？', '再次总结标题', {
+                    type: 'warning',
+                    confirmButtonText: '重新生成',
+                    cancelButtonText: '取消'
+                }).then(function () {
+                    self.aiConvRequestTitle(c, true);
+                }).catch(function () { /* 取消 */ });
+                return;
+            }
+            this.aiConvRequestTitle(c, false, hint);
+        },
+        aiConvHasText: function (c) {
+            return (c && c.msgs || []).some(function (m) {
+                return m && (m.role === 'user' || m.role === 'ai') && (m.text || '').trim();
+            });
+        },
+        aiConvRequestTitle: function (c, force, hint) {
+            if (!c || c.id == null || c._titleBusy) {
+                return;
+            }
+            var self = this;
+            this.$set(c, '_titleBusy', true);
+            var loading = force
+                ? ELEMENT.Message({ message: '正在重新总结标题…', type: 'info', duration: 0 })
+                : null;
+            http.post('/api/ai/convs/' + c.id + '/title', {
+                force: !!force,
+                hint: hint || '',
+                expectedTitle: c.title || ''
+            }, force ? {} : { silent: true }).then(function (d) {
+                if (d && d.title && c.title !== d.title) {
+                    self.$set(c, 'title', d.title);
+                }
+                if (force && d && d.title) {
+                    ELEMENT.Message.success('标题已更新为「' + d.title + '」');
+                }
+            }).catch(function () {
+                // 自动总结静默失败；手动失败由拦截器提示
+            }).then(function () {
+                self.$set(c, '_titleBusy', false);
+                if (loading) {
+                    loading.close();
+                }
+            });
+        },
         aiConvFork: function (conv, msgIndex) {
             if (!conv || conv.id == null) {
                 return;
@@ -7433,16 +8021,23 @@ new Vue({
                 this.$set(conv, 'input', t.chatInput || '');
             }
         },
-        /* 保存一条对话（服务端钳制消息数与长度）；失败时内存数据不丢，下次保存重试 */
+        /* 保存消息与工作目录（标题走独立接口，避免自动总结完成后被旧请求覆盖） */
         saveConv: function (t, conv) {
             if (!conv || conv.id == null) {
-                return;
+                return Promise.resolve();
             }
-            http.put('/api/ai/convs/' + conv.id, {
-                title: conv.title,
+            return http.put('/api/ai/convs/' + conv.id, {
                 cwd: conv.cwd,
-                msgs: conv.msgs
+                msgs: conv.msgs,
+                unread: !!conv.unread
             }).catch(function () { /* 拦截器已提示 */ });
+        },
+        saveConvTitle: function (conv, silent) {
+            if (!conv || conv.id == null) {
+                return Promise.resolve();
+            }
+            return http.put('/api/ai/convs/' + conv.id, { title: conv.title },
+                silent ? { silent: true } : {}).catch(function () { /* ignore */ });
         },
         /* 打开连接时加载该连接的对话列表（服务端没有则迁移浏览器旧数据或新建） */
         loadAiConvs: function (t) {
@@ -7541,7 +8136,11 @@ new Vue({
         },
         aiConvSwitch: function (c) {
             var t = this.activeTab;
-            if (!t || !c || c.id === t.chatConvId) {
+            if (!t || !c) {
+                return;
+            }
+            this.aiConvRead(c);
+            if (c.id === t.chatConvId) {
                 return;
             }
             this.aiSaveDraft(t);
@@ -7612,6 +8211,7 @@ new Vue({
                 return;
             }
             this.aiEnsureConvState(conv);
+            this.aiConvRead(conv);
             var run = conv._run;
             var text = (t.chatInput || '').trim();
             if (conv._compacting) {
@@ -7641,13 +8241,20 @@ new Vue({
                 return;
             }
             this.aiEnsureConvState(conv);
+            this.aiConvRead(conv);
+            var self = this;
+            var firstUser = !conv.msgs.some(function (m) {
+                return m && m.role === 'user';
+            });
+            var placeholderTitle = !conv.title || conv.title === '新对话';
+            var autoTitle = firstUser && placeholderTitle;
             var run = conv._run;
             var userMsg = { role: 'user', text: text };
             if (steer) {
                 userMsg.steer = true;
             }
             conv.msgs.push(userMsg);
-            if (!conv.title || conv.title === '新对话') {
+            if (placeholderTitle) {
                 conv.title = text.slice(0, 20);
             }
             this.aiPushHistory(conv, text);
@@ -7664,6 +8271,14 @@ new Vue({
             run.seq = (run.seq || 0) + 1;
             run.busy = true;
             this.saveConv(t, conv);
+            if (autoTitle) {
+                // 先写入首条消息的占位标题，再让模型总结；标题保存完成后才发起，避免旧标题覆盖新标题
+                this.saveConvTitle(conv, true).then(function () {
+                    self.aiConvSummarizeTitle(conv, false, text);
+                });
+            } else if (placeholderTitle) {
+                this.saveConvTitle(conv, true);
+            }
             this.scrollAiChat(true);
             this.aiChatLoop(t, conv, run, run.seq);
         },
@@ -7899,7 +8514,7 @@ new Vue({
                 if (seq !== run.seq) {
                     return;
                 }
-                var reasoning = (run.reasonText || '').trim();
+                var reasoning = stripDsmlText(run.reasonText || '').trim();
                 run.reasonText = '';
                 if (!r || !r.kind) {
                     self.aiChatFinish(t, conv, 'AI 未返回有效内容', 'retry');
@@ -7914,7 +8529,7 @@ new Vue({
                 }
                 // 字段需一次性建全：Vue 2 对后加的属性不做响应式
                 var m = {
-                    role: 'ai', cmd: r.command, note: r.note || '', danger: r.danger || '',
+                    role: 'ai', cmd: r.command, note: r.note || '',
                     state: 'done', output: '', rc: null, truncated: false, timedOut: false, error: '',
                     reasoning: reasoning, reasonOpen: false, durationMs: 0, outOpen: false, outputLines: 0,
                     usage: r.usage || null, usageAt: r.usage ? Date.now() : null
@@ -8274,6 +8889,10 @@ new Vue({
                     conv.msgs.push(noteItem);
                 }
                 conv.updatedAt = Date.now();
+                // 对话不在当前可见的会话/标签页，或页面在后台时留一个未读亮点，点开后清除
+                if (!t || t !== this.activeTab || t.chatConvId !== conv.id || document.hidden) {
+                    this.$set(conv, 'unread', true);
+                }
             }
             this.saveConv(t, conv);
             if (t && conv && t.chatConvId === conv.id) {
@@ -8744,11 +9363,18 @@ new Vue({
                 return host ? host + ' · 功能建设中' : '功能建设中';
             }
             if (w && w.type === 'nettool') {
-                var netText = this.netTool.tab === 'traffic'
-                    ? ('实时流量' + (this.netTool.traffic.data
+                var netText;
+                if (this.netTool.tab === 'traffic') {
+                    netText = '实时流量' + (this.netTool.traffic.data
                         ? ' · ' + (this.netTool.traffic.data.programCount || 0) + ' 个程序'
-                        : ''))
-                    : ('连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : ''));
+                        : '');
+                } else if (this.netTool.tab === 'ports') {
+                    var ports = this.netTool.ports.data && Array.isArray(this.netTool.ports.data.ports)
+                        ? this.netTool.ports.data.ports.length : 0;
+                    netText = '端口与防火墙' + (ports ? ' · ' + ports + ' 个端口' : '');
+                } else {
+                    netText = '连通性测试' + (this.netTool.target ? ' · ' + this.netTool.target : '');
+                }
                 return host ? host + ' · ' + netText : netText;
             }
             if (w && w.type === 'batchcmd') {
@@ -9421,6 +10047,9 @@ new Vue({
                 if (this.netTool.tab === 'traffic') {
                     this.startNetTraffic(false);
                     this.loadNetRootStatus();
+                } else if (this.netTool.tab === 'ports') {
+                    this.loadNetRootStatus();
+                    this.loadNetPorts(true);
                 }
                 return existing;
             }
@@ -9437,6 +10066,11 @@ new Vue({
             this.netTool.traffic.error = '';
             this.netTool.traffic.paused = false;
             this.netTool.traffic.updatedAt = 0;
+            this.netTool.ports.data = null;
+            this.netTool.ports.error = '';
+            this.netTool.ports.loading = false;
+            this.netTool.ports.updatedAt = 0;
+            this.netTool.ports.rawOpen = false;
             var w = this.addDesktopWindow('nettool');
             this.centerDesktopWindow(w, 1060, 640);
             this.startNetTraffic(true);
@@ -9453,7 +10087,7 @@ new Vue({
             r.ready = false;
             r.passwordless = false;
             r.needsPassword = false;
-            this.netTool.traffic.rootEnabled = false;
+            this.netTool.rootEnabled = false;
         },
         isCurrentNetSession: function (sessionId) {
             return !!this.desktopTab && this.desktopTab.sessionId === sessionId;
@@ -9469,7 +10103,7 @@ new Vue({
             r.passwordless = !!d.passwordless;
             r.needsPassword = !!d.needsPassword;
             if (r.isRoot || !r.ready) {
-                this.netTool.traffic.rootEnabled = false;
+                this.netTool.rootEnabled = false;
             }
         },
         loadNetRootStatus: function () {
@@ -9504,7 +10138,7 @@ new Vue({
                 ELEMENT.Message.info('当前 SSH 登录用户就是 root，无需切换');
                 return;
             }
-            if (this.netTool.traffic.rootEnabled) {
+            if (this.netTool.rootEnabled) {
                 this.disableNetTrafficRoot();
             } else {
                 this.enableNetTrafficRoot();
@@ -9530,9 +10164,9 @@ new Vue({
                 r.loading = false;
                 self.applyNetRootStatus(d);
                 if (d && d.ready) {
-                    self.netTool.traffic.rootEnabled = true;
-                    ELEMENT.Message.success('已切换到 root 采样');
-                    self.startNetTraffic(true);
+                    self.netTool.rootEnabled = true;
+                    ELEMENT.Message.success('已切换到 root 读取');
+                    self.refreshNetAfterRootChange();
                 } else {
                     self.promptNetRootPassword();
                 }
@@ -9578,9 +10212,9 @@ new Vue({
                 }
                 r.loading = false;
                 self.applyNetRootStatus(d);
-                self.netTool.traffic.rootEnabled = false;
-                ELEMENT.Message.info('已恢复为当前用户采样');
-                self.startNetTraffic(true);
+                self.netTool.rootEnabled = false;
+                ELEMENT.Message.info('已恢复为当前用户读取');
+                self.refreshNetAfterRootChange();
             }).catch(function (e) {
                 if (!self.isCurrentNetSession(sessionId)) {
                     return;
@@ -9589,6 +10223,13 @@ new Vue({
                 ELEMENT.Message.error((e && e.message) ? e.message : '关闭 root 采样失败');
             });
         },
+        refreshNetAfterRootChange: function () {
+            if (this.netTool.tab === 'traffic') {
+                this.startNetTraffic(true);
+            } else if (this.netTool.tab === 'ports') {
+                this.loadNetPorts(true);
+            }
+        },
         switchNetToolTab: function (tab) {
             if (!tab || this.netTool.tab === tab) {
                 return;
@@ -9596,10 +10237,75 @@ new Vue({
             this.netTool.tab = tab;
             if (tab === 'traffic') {
                 this.startNetTraffic(!this.netTool.traffic.data);
+            } else if (tab === 'ports') {
+                this.closeTaskmgrProcessDetail();
+                this.stopNetTraffic();
+                this.loadNetRootStatus();
+                this.loadNetPorts(true);
             } else {
                 this.closeTaskmgrProcessDetail();
                 this.stopNetTraffic();
             }
+        },
+        loadNetPorts: function (reset) {
+            var p = this.netTool.ports;
+            var tab = this.desktopTab;
+            if (!this.desktop.visible || this.netTool.tab !== 'ports' || !tab || !tab.sessionId) {
+                return;
+            }
+            if (this._netPortsBusy) {
+                return;
+            }
+            var sessionId = tab.sessionId;
+            if (this._netPortsSession !== sessionId) {
+                this._netPortsSession = sessionId;
+                reset = true;
+            }
+            if (reset) {
+                p.data = null;
+                p.error = '';
+                p.updatedAt = 0;
+                p.rawOpen = false;
+            }
+            p.loading = true;
+            this._netPortsBusy = true;
+            var self = this;
+            http.post('/api/nettools/ports', {
+                sessionId: sessionId,
+                root: !!this.netTool.rootEnabled
+            }, { silent: true }).then(function (d) {
+                if (self._netPortsSession !== sessionId) {
+                    return;
+                }
+                p.data = d || null;
+                p.error = '';
+                p.updatedAt = Date.now();
+            }).catch(function (e) {
+                if (self._netPortsSession !== sessionId) {
+                    return;
+                }
+                var message = (e && e.message) ? e.message : '读取端口与防火墙失败';
+                p.error = message;
+                if (self.netTool.rootEnabled && /root|sudo/i.test(message)) {
+                    self.netTool.rootEnabled = false;
+                    self.loadNetRootStatus();
+                }
+            }).then(function () {
+                p.loading = false;
+                self._netPortsBusy = false;
+            });
+        },
+        netPortScopeText: function (scope) {
+            if (scope === 'all') {
+                return '所有网卡';
+            }
+            if (scope === 'local') {
+                return '仅本机';
+            }
+            return '指定地址';
+        },
+        netPortAddressText: function (address) {
+            return address === '*' ? '0.0.0.0' : address;
         },
         startNetTraffic: function (reset) {
             this.stopNetTraffic();
@@ -9666,7 +10372,7 @@ new Vue({
             http.post('/api/nettools/process-traffic', {
                 sessionId: sessionId,
                 reset: !!reset,
-                root: !!t.rootEnabled
+                root: !!this.netTool.rootEnabled
             }, { silent: true }).then(function (d) {
                 if (self._netTrafficSession !== sessionId) {
                     return;
@@ -9680,8 +10386,8 @@ new Vue({
                 }
                 var message = (e && e.message) ? e.message : '读取进程流量失败';
                 t.error = message;
-                if (t.rootEnabled && /root|sudo/i.test(message)) {
-                    t.rootEnabled = false;
+                if (self.netTool.rootEnabled && /root|sudo/i.test(message)) {
+                    self.netTool.rootEnabled = false;
                     self.loadNetRootStatus();
                 }
             }).then(function () {
@@ -9998,6 +10704,25 @@ new Vue({
                 return null;
             }
             return this.openDesktopWindow(path || this.desk.path || this.desktopHomeDir || '/');
+        },
+        /** 资源管理器图标默认目录：Termux 的 / 不可写，打开可访问的 Termux 家目录；普通服务器保持 / */
+        desktopExplorerStartPath: function () {
+            var home = this.desktopHomeDir;
+            return home && home.indexOf('/com.termux/files/home') >= 0 ? home : '/';
+        },
+        openDesktopExplorerFromIcon: function () {
+            var self = this;
+            var t = this.desktopTab;
+            if (t && !t.local && !t.sftpHome && t.sessionId) {
+                // 图标可能先于 /api/sftp/home 返回被点击，先补齐家目录
+                this.loadHome(t).then(function () {
+                    self.openDesktopExplorerWindow(self.desktopExplorerStartPath());
+                }).catch(function () {
+                    self.openDesktopExplorerWindow('/');
+                });
+                return;
+            }
+            this.openDesktopExplorerWindow(this.desktopExplorerStartPath());
         },
         /* Alt+Tab / Alt+` 切换桌面窗口：按 z 序循环，最小化窗口会被还原 */
         cycleDesktopWindows: function (dir) {
@@ -12346,7 +13071,7 @@ new Vue({
                     return;
                 }
                 if (item.action === 'explorer') {
-                    this.openDesktopExplorerWindow('/');
+                    this.openDesktopExplorerFromIcon();
                 } else if (item.action === 'editor') {
                     this.openDesktopEditorApp();
                 } else if (item.action === 'terminal') {
@@ -13360,6 +14085,7 @@ new Vue({
         },
         hasDesktopDialogOpen: function () {
             return this.fontVisible || this.hotkeyVisible || this.bgVisible || this.helpVisible
+                || this.sponsorVisible
                 || this.aboutVisible || this.lanVisible || this.authSetVisible || this.aiSetVisible
                 || this.sysInfoVisible || this.procDetailVisible || this.connectDialogVisible
                 || this.connImportVisible
@@ -16830,6 +17556,7 @@ new Vue({
                     var subDialog = this.fontVisible || this.bgVisible || this.aiSetVisible
                         || this.lanVisible || this.authSetVisible || this.aboutVisible
                         || this.sysInfoVisible || this.connectDialogVisible || this.helpVisible
+                        || this.sponsorVisible
                         || this.hotkeyVisible;
                     if (!subDialog) {
                         this.closeDesktopSettings();
@@ -19323,6 +20050,7 @@ new Vue({
             try { fit.fit(); } catch (e) { /* 容器未就绪时忽略 */ }
             tab.term = term;
             tab.fit = fit;
+            self.bindTerminalContextMenu(tab, el);
             tab._dangerInput = '';
             tab._dangerInputUnknown = false;
             tab._termLogPending = '';
@@ -23667,6 +24395,243 @@ new Vue({
                 }
             });
         },
+        bindTerminalContextMenu: function (tab, el) {
+            var self = this;
+            if (!el) {
+                return;
+            }
+            if (el._deepTermMenu && el._deepTermTab === tab) {
+                return;
+            }
+            if (el._deepTermMenu) {
+                el.removeEventListener('contextmenu', el._deepTermMenu);
+            }
+            el._deepTermTab = tab;
+            el._deepTermMenu = function (ev) {
+                if (ev.button !== 2) {
+                    return;
+                }
+                ev.preventDefault();
+                self.openTerminalMenu(tab, ev, el);
+            };
+            el.addEventListener('contextmenu', el._deepTermMenu);
+        },
+        openTerminalMenu: function (tab, ev, el) {
+            if (!tab || !tab.term) {
+                return;
+            }
+            if (!tab.desktopOnly && this.activeKey !== tab.key) {
+                this.activate(tab.key);
+            }
+            var text = '';
+            try {
+                text = tab.term.getSelection() || '';
+            } catch (e) { /* ignore */ }
+            text = text.replace(/\r\n?/g, '\n');
+            this.termMenu = {
+                visible: true,
+                x: ev.clientX,
+                y: ev.clientY,
+                text: text,
+                context: tab.desktopOnly ? 'desktop' : 'workbench',
+                tabKey: tab.key,
+                windowId: tab.windowId || '',
+                hasSelection: !!text.trim(),
+                canAi: !tab.localShell && !!tab.sessionId
+            };
+            var self = this;
+            this.$nextTick(function () {
+                var menu = self.$refs.termMenu;
+                if (!menu) {
+                    return;
+                }
+                var mw = menu.offsetWidth || 180;
+                var mh = menu.offsetHeight || 0;
+                var rect = el && el.getBoundingClientRect
+                    ? el.getBoundingClientRect()
+                    : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+                var pad = 4;
+                var x = Math.min(Math.max(ev.clientX, rect.left + pad), rect.right - mw - pad);
+                var y = Math.min(Math.max(ev.clientY, rect.top + pad), rect.bottom - mh - pad);
+                self.termMenu.x = Math.round(Math.max(4, Math.min(x, window.innerWidth - mw - 4)));
+                self.termMenu.y = Math.round(Math.max(4, Math.min(y, window.innerHeight - mh - 4)));
+            });
+        },
+        closeTerminalMenu: function () {
+            this.termMenu.visible = false;
+        },
+        termMenuTab: function () {
+            var menu = this.termMenu;
+            if (menu.context === 'desktop' && menu.windowId) {
+                var w = this.desktop.windows.find(function (x) {
+                    return x.id === menu.windowId;
+                });
+                return w && w.termTab ? w.termTab : null;
+            }
+            return this.tabs.find(function (t) {
+                return t.key === menu.tabKey;
+            }) || null;
+        },
+        termMenuCopy: function () {
+            var text = this.termMenu.text;
+            this.closeTerminalMenu();
+            if (text) {
+                this.copyText(text);
+            }
+        },
+        termMenuPasteSelection: function () {
+            var t = this.termMenuTab();
+            var text = this.termMenu.text;
+            this.closeTerminalMenu();
+            if (!t || !text) {
+                return;
+            }
+            var oneLine = text.replace(/\n+/g, ' ').trim();
+            if (!oneLine) {
+                return;
+            }
+            this.insertTextToCmdInput(t, oneLine);
+        },
+        termMenuExplain: function () {
+            var t = this.termMenuTab();
+            var text = this.termMenu.text;
+            var context = this.termMenu.context;
+            var self = this;
+            this.closeTerminalMenu();
+            if (!t || !text.trim()) {
+                return;
+            }
+            if (t.localShell) {
+                ELEMENT.Message.warning('本地终端没有 AI 终端，请连接服务器后使用');
+                return;
+            }
+            if (!t.sessionId) {
+                ELEMENT.Message.warning('会话未就绪，请等连接建立后再试');
+                return;
+            }
+            var prompt = this.terminalExplainPrompt(text);
+            var target = t;
+            if (context === 'desktop') {
+                if (!this.openAiDesktopWindow()) {
+                    return;
+                }
+                target = this.desktopTab;
+            } else {
+                this.panelVisible = true;
+                this.panelTab = 'ai';
+            }
+            if (!target) {
+                return;
+            }
+            this.$nextTick(function () {
+                self.aiExplainSelection(target, prompt);
+            });
+        },
+        terminalExplainPrompt: function (text) {
+            var t = String(text == null ? '' : text).replace(/\r\n?/g, '\n').trim();
+            if (t.length > 6000) {
+                t = t.slice(0, 1000) + '\n…（中间内容已省略）…\n' + t.slice(-5000);
+            }
+            return '请解释下面这段终端内容是什么、是否出现错误。'
+                + '如果失败，请分析可能原因并给出解决方向；需要更多信息时，只告诉我该运行哪些命令，'
+                + '不要自己执行任何命令。\n\n'
+                + '--- 终端内容开始 ---\n' + t + '\n--- 终端内容结束 ---';
+        },
+        aiExplainSelection: function (t, prompt) {
+            if (!t || !prompt) {
+                return;
+            }
+            if (t.chatLoading) {
+                t.chatInput = prompt;
+                ELEMENT.Message.info('AI 对话加载中，解释请求已填入输入框，加载完成后回车发送');
+                return;
+            }
+            var conv = this.aiActiveConv(t);
+            if (!conv) {
+                t.chatInput = prompt;
+                ELEMENT.Message.info('AI 对话尚未就绪，解释请求已填入输入框');
+                return;
+            }
+            if (conv._run && conv._run.busy) {
+                t.chatInput = prompt;
+                ELEMENT.Message.info('当前 AI 对话正在执行，解释请求已填入输入框');
+                return;
+            }
+            t.chatInput = prompt;
+            this.aiChatSend(t);
+        },
+        termMenuSearch: function () {
+            var t = this.termMenuTab();
+            var text = (this.termMenu.text || '').trim();
+            var self = this;
+            this.closeTerminalMenu();
+            if (!t || !text) {
+                return;
+            }
+            t.cmdVisible = true;
+            this.$nextTick(function () {
+                self.fitTab(t);
+                var bar = t._cmdBar;
+                if (bar && bar.openSearchWith) {
+                    bar.openSearchWith(text);
+                } else if (t.searchAddon) {
+                    try {
+                        t.searchAddon.findNext(text, self.buildSearchOptions(false, {}));
+                    } catch (e) { /* ignore */ }
+                }
+            });
+        },
+        termMenuSelectAll: function () {
+            var t = this.termMenuTab();
+            this.closeTerminalMenu();
+            if (t && t.term) {
+                t.term.selectAll();
+                t.term.focus();
+            }
+        },
+        termMenuClear: function () {
+            var t = this.termMenuTab();
+            this.closeTerminalMenu();
+            if (!t || !t.term) {
+                return;
+            }
+            t.term.clear();
+            try { t.term.clearSelection(); } catch (e) { /* ignore */ }
+            if (t.searchAddon && t.searchAddon.clearDecorations) {
+                try { t.searchAddon.clearDecorations(); } catch (e) { /* ignore */ }
+            }
+            t.searchResultIndex = -1;
+            t.searchResultCount = 0;
+            t.term.focus();
+        },
+        insertTextToCmdInput: function (tab, text, inputComp) {
+            var self = this;
+            var t = tab || this.activeTab;
+            var txt = text == null ? '' : String(text);
+            if (!t || !txt) {
+                return;
+            }
+            t.cmdVisible = true;
+            this.$nextTick(function () {
+                self.fitTab(t);
+                var comp = inputComp || (t._cmdBar && t._cmdBar.$refs.cmdInput) || self.$refs.cmdInput;
+                var el = comp && comp.$refs.input;
+                var cur = t.cmdText || '';
+                if (el) {
+                    var s = el.selectionStart == null ? cur.length : el.selectionStart;
+                    var e2 = el.selectionEnd == null ? s : el.selectionEnd;
+                    t.cmdText = cur.slice(0, s) + txt + cur.slice(e2);
+                    var caret = s + txt.length;
+                    self.$nextTick(function () {
+                        el.setSelectionRange(caret, caret);
+                        el.focus();
+                    });
+                } else {
+                    t.cmdText = cur + txt;
+                    self.focusCmdInput(t);
+                }
+            });
+        },
         copySelection: function (tab) {
             var t = tab || this.activeTab;
             if (!t) {
@@ -23709,21 +24674,7 @@ new Vue({
                     if (!txt) {
                         return;
                     }
-                    var comp = inputComp || (t._cmdBar && t._cmdBar.$refs.cmdInput) || self.$refs.cmdInput;
-                    var el = comp && comp.$refs.input;
-                    var cur = t.cmdText || '';
-                    if (el) {
-                        var s = el.selectionStart == null ? cur.length : el.selectionStart;
-                        var e2 = el.selectionEnd == null ? s : el.selectionEnd;
-                        t.cmdText = cur.slice(0, s) + txt + cur.slice(e2);
-                        var caret = s + txt.length;
-                        self.$nextTick(function () {
-                            el.setSelectionRange(caret, caret);
-                            el.focus();
-                        });
-                    } else {
-                        t.cmdText = cur + txt;
-                    }
+                    self.insertTextToCmdInput(t, txt, inputComp);
                 }).catch(function () {
                     ELEMENT.Message.warning('浏览器未授予剪贴板读取权限，请直接 Ctrl+V');
                 });
@@ -24139,6 +25090,7 @@ new Vue({
             }
         }, 60 * 1000);
         window.addEventListener('resize', function () {
+            self.termMenu.visible = false;
             self.fitActive();
             self.fitDesktopWindows();
         });
@@ -24180,6 +25132,9 @@ new Vue({
         });
         // 右键菜单关闭时机：点击空白 / Esc / 窗口失焦 / 在他处右键
         document.addEventListener('click', function () {
+            if (self.termMenu.visible) {
+                self.termMenu.visible = false;
+            }
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
             }
@@ -24222,6 +25177,12 @@ new Vue({
             self.closeDesktopSubMenus();
         });
         document.addEventListener('contextmenu', function (e) {
+            var target = e.target;
+            var inTerminal = target && target.closest && target.closest('.term-box, .dsk-term');
+            if (self.termMenu.visible && !inTerminal
+                && !(target && target.closest && target.closest('.term-menu'))) {
+                self.termMenu.visible = false;
+            }
             if (self.tabMenu.visible
                 && !(e.target && e.target.closest && e.target.closest('.ws-topbar'))) {
                 self.tabMenu.visible = false;
@@ -24250,6 +25211,9 @@ new Vue({
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
+                if (self.termMenu.visible) {
+                    self.termMenu.visible = false;
+                }
                 if (self.tabMenu.visible) {
                     self.tabMenu.visible = false;
                 }
@@ -24269,6 +25233,7 @@ new Vue({
         window.addEventListener('blur', function () {
             self.cancelDesktopMarquee();
             self.cancelDesktopIconMarquee();
+            self.termMenu.visible = false;
             if (self.tabMenu.visible) {
                 self.tabMenu.visible = false;
             }

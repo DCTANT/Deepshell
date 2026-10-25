@@ -1108,13 +1108,18 @@
                                 <i class="el-icon-data-line"></i> 实时流量
                             </button>
                             <button type="button" class="dsk-app-tab"
+                                    :class="{ active: netTool.tab === 'ports' }"
+                                    @click="switchNetToolTab('ports')">
+                                <i class="el-icon-connection"></i> 端口与防火墙
+                            </button>
+                            <button type="button" class="dsk-app-tab"
                                     :class="{ active: netTool.tab === 'test' }"
                                     @click="switchNetToolTab('test')">
                                 <i class="dsk-ico-network"></i> 连通性测试
                             </button>
                             <span class="spacer"></span>
                             <span class="dsk-app-host" v-if="desktopTab">
-                                在 {{ desktopTab.title }} 上采样
+                                当前：{{ desktopTab.title }}
                             </span>
                         </div>
 
@@ -1152,12 +1157,12 @@
                                                 <i class="el-icon-lock"></i> root
                                             </span>
                                             <button v-else type="button" class="tm-traf-root"
-                                                    :class="{ active: netTool.traffic.rootEnabled }"
+                                                    :class="{ active: netTool.rootEnabled }"
                                                     :disabled="netTool.root.loading"
                                                     :title="netTrafficRootTitle"
                                                     @click="toggleNetTrafficRoot">
                                                 <i :class="netTool.root.loading ? 'el-icon-loading'
-                                                    : (netTool.traffic.rootEnabled ? 'el-icon-lock' : 'el-icon-unlock')"></i>
+                                                    : (netTool.rootEnabled ? 'el-icon-lock' : 'el-icon-unlock')"></i>
                                                 {{ netTrafficRootText }}
                                             </button>
                                         </template>
@@ -1302,7 +1307,154 @@
                             </div>
                         </template>
 
-                        <template v-else>
+                        <template v-else-if="netTool.tab === 'ports'">
+                            <div class="dsk-tm dsk-ports-tm">
+                                <div class="tm-page">
+                                    <div class="tm-page-head">
+                                        <div class="tm-page-heading">
+                                            <h2>端口与防火墙</h2>
+                                            <p class="tm-page-sub">查看服务器监听端口、进程和防火墙规则，判断服务是否对外开放</p>
+                                        </div>
+                                        <span class="spacer"></span>
+                                        <el-input size="mini" v-model="netTool.ports.keyword"
+                                                  clearable prefix-icon="el-icon-search"
+                                                  class="tm-search net-port-search"
+                                                  placeholder="筛选端口 / 进程 / 地址"></el-input>
+                                        <el-checkbox size="mini" v-model="netTool.ports.exposedOnly"
+                                                     class="net-port-only">只看所有网卡</el-checkbox>
+                                        <button type="button" class="tm-btn"
+                                                :disabled="netTool.ports.loading || !desktopTab || !desktopTab.sessionId"
+                                                @click="loadNetPorts(true)">
+                                            <i :class="netTool.ports.loading ? 'el-icon-loading' : 'el-icon-refresh'"></i>
+                                            刷新
+                                        </button>
+                                        <template v-if="netTool.root.checked">
+                                            <span v-if="netTool.root.isRoot" class="tm-traf-rootbadge"
+                                                  :title="netPortsRootTitle">
+                                                <i class="el-icon-lock"></i> root
+                                            </span>
+                                            <button v-else type="button" class="tm-traf-root"
+                                                    :class="{ active: netTool.rootEnabled }"
+                                                    :disabled="netTool.root.loading"
+                                                    :title="netPortsRootTitle"
+                                                    @click="toggleNetTrafficRoot">
+                                                <i :class="netTool.root.loading ? 'el-icon-loading'
+                                                    : (netTool.rootEnabled ? 'el-icon-lock' : 'el-icon-unlock')"></i>
+                                                {{ netPortsRootText }}
+                                            </button>
+                                        </template>
+                                    </div>
+
+                                    <div class="tm-traf-summary net-port-summary">
+                                        <span class="net-port-kpi">
+                                            <i class="el-icon-connection"></i> 监听
+                                            <b>{{ netPortsStats.total }}</b>
+                                        </span>
+                                        <span class="net-port-kpi" :class="{ warn: netPortsStats.exposed > 0 }">
+                                            <i class="el-icon-warning-outline"></i> 所有网卡
+                                            <b>{{ netPortsStats.exposed }}</b>
+                                        </span>
+                                        <span class="net-port-kpi">TCP {{ netPortsStats.tcp }} · UDP {{ netPortsStats.udp }}</span>
+                                        <span class="dim">仅本机 {{ netPortsStats.local }}</span>
+                                        <span class="dim">指定地址 {{ netPortsStats.bound }}</span>
+                                        <span class="tm-traf-warn" v-if="netPortsStats.hidden">
+                                            <i class="el-icon-lock"></i> {{ netPortsStats.hidden }} 个端口的进程名需要 root
+                                        </span>
+                                        <span class="dim" v-if="netTool.ports.updatedAt">
+                                            更新于 {{ fmtClockTime(netTool.ports.updatedAt) }}
+                                        </span>
+                                    </div>
+
+                                    <div class="tm-inline-error" v-if="netTool.ports.error">
+                                        <i class="el-icon-warning-outline"></i>
+                                        <span>{{ netTool.ports.error }}</span>
+                                    </div>
+
+                                    <div class="net-fw-card" v-if="netTool.ports.data">
+                                        <div class="net-fw-head">
+                                            <span class="net-fw-title"><i class="el-icon-lock"></i> 防火墙</span>
+                                            <span class="net-fw-type">{{ netFirewallView.typeLabel }}</span>
+                                            <span class="net-fw-state" :class="netFirewallView.stateClass">
+                                                {{ netFirewallView.stateText }}
+                                            </span>
+                                            <span class="dim" v-if="netFirewallView.rules.length">
+                                                {{ netFirewallView.rules.length }} 条规则
+                                            </span>
+                                            <span class="spacer"></span>
+                                            <button v-if="netFirewallView.raw" type="button" class="tm-btn small"
+                                                    @click="netTool.ports.rawOpen = !netTool.ports.rawOpen">
+                                                {{ netTool.ports.rawOpen ? '收起原始规则' : '原始规则' }}
+                                            </button>
+                                        </div>
+                                        <div class="net-fw-rules"
+                                             v-if="!netTool.ports.rawOpen && netFirewallView.rules.length">
+                                            <span v-for="(rule, i) in netFirewallView.rules.slice(0, 12)"
+                                                  :key="'fr' + i" class="net-fw-rule" :title="rule">{{ rule }}</span>
+                                            <span v-if="netFirewallView.rules.length > 12" class="net-fw-more">
+                                                +{{ netFirewallView.rules.length - 12 }}
+                                            </span>
+                                        </div>
+                                        <pre class="net-fw-raw" v-if="netTool.ports.rawOpen">{{ netFirewallView.raw }}</pre>
+                                        <div class="net-fw-hint">{{ netFirewallView.hint }}</div>
+                                    </div>
+
+                                    <div class="tm-table-box net-port-box">
+                                        <div class="tm-proc-head net-port-grid">
+                                            <span>协议</span>
+                                            <span>监听地址</span>
+                                            <span class="tm-num">端口</span>
+                                            <span>进程</span>
+                                            <span class="tm-num">PID</span>
+                                            <span>范围</span>
+                                        </div>
+                                        <div class="net-port-scroll">
+                                            <div v-for="row in netPortsRows"
+                                                 :key="'np' + row.protocol + row.address + row.port + row.pid + row.process"
+                                                 class="tm-proc-row net-port-grid"
+                                                 :class="{ exposed: row.scope === 'all' }">
+                                                <span>
+                                                    <span class="net-proto" :class="'proto-' + row.protocol">
+                                                        {{ row.protocol.toUpperCase() }}
+                                                    </span>
+                                                </span>
+                                                <span class="net-mono" :title="row.address">
+                                                    {{ netPortAddressText(row.address) }}
+                                                </span>
+                                                <span class="tm-num net-port-no">{{ row.port }}</span>
+                                                <span class="tm-pname" :title="row.process || '未知进程'">
+                                                    {{ row.process || '未知进程' }}
+                                                </span>
+                                                <span class="net-mono tm-num">{{ row.pid || '—' }}</span>
+                                                <span>
+                                                    <span class="net-scope" :class="'scope-' + row.scope">
+                                                        {{ netPortScopeText(row.scope) }}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div v-if="!netPortsRows.length" class="tm-empty">
+                                                <i :class="netTool.ports.loading ? 'el-icon-loading' : 'el-icon-connection'"></i>
+                                                <p>{{ netTool.ports.loading ? '正在读取监听端口…'
+                                                    : (netTool.ports.data
+                                                        ? ((netTool.ports.keyword || netTool.ports.exposedOnly)
+                                                            ? '没有匹配的端口' : '没有监听端口')
+                                                        : '切换到本页读取端口与防火墙') }}</p>
+                                            </div>
+                                        </div>
+                                        <div class="tm-proc-foot">
+                                            <span class="spacer"></span>
+                                            <span class="tm-foot-hint">
+                                                {{ netPortsRows.length }} / {{ netPortsStats.total }} 个端口
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="tm-page-note" :title="netTool.ports.data ? netTool.ports.data.note : ''">
+                                        {{ netTool.ports.data ? netTool.ports.data.note : '正在等待端口采集…' }}
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template v-else-if="netTool.tab === 'test'">
                             <div class="dsk-net-form">
                                 <el-radio-group v-model="netTool.tool" size="mini">
                                     <el-radio-button label="ping">Ping</el-radio-button>

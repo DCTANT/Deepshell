@@ -1,5 +1,6 @@
 package com.itdct.deepshell.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -119,6 +120,70 @@ public class AiChatClientStreamUsageTest {
             assertEquals("hello world", result.text);
             assertEquals(2, calls.get());
             assertEquals(Integer.valueOf(100), result.usage.promptTokens);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void returnsReasoningOnlyDsmlForAgentFallback() throws Exception {
+        String dsml = "< | | DSML | | calls>\n"
+                + "< | | DSML | | invoke name=\"code_execution\">\n"
+                + "< parameter name=\"cmd\">uname -a</ parameter>\n"
+                + "</ | | DSML | | invoke>\n"
+                + "</ | | DSML | | calls>";
+        String sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":"
+                + new ObjectMapper().writeValueAsString(dsml) + "}}]}\n\n"
+                + "data: [DONE]\n\n";
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] data = sse.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream; charset=utf-8");
+            exchange.sendResponseHeaders(200, data.length);
+            exchange.getResponseBody().write(data);
+            exchange.close();
+        });
+        server.start();
+        try {
+            AiChatClient client = new AiChatClient(new FakeConfig(server.getAddress().getPort()));
+            List<String> reasoningDeltas = new ArrayList<>();
+            AiChatClient.ChatResult result = client.streamDetailed(
+                    "system", history(), s -> { }, reasoningDeltas::add, new AiCancellationToken());
+
+            assertEquals("", result.text);
+            assertEquals(1, reasoningDeltas.size());
+            assertEquals("uname -a", AiAgentService.dsmlParameter(result.reasoning, "cmd"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void returnsReasoningOnlyBareParameterForAgentFallback() throws Exception {
+        String dsml = "<parameter name=\"cmd\">cat /tmp/dsh_cookies.txt</parameter>\n"
+                + "<parameter name=\"note\">查看 cookie</parameter>";
+        String sse = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":"
+                + new ObjectMapper().writeValueAsString(dsml) + "}}]}\n\n"
+                + "data: [DONE]\n\n";
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] data = sse.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream; charset=utf-8");
+            exchange.sendResponseHeaders(200, data.length);
+            exchange.getResponseBody().write(data);
+            exchange.close();
+        });
+        server.start();
+        try {
+            AiChatClient client = new AiChatClient(new FakeConfig(server.getAddress().getPort()));
+            List<String> reasoningDeltas = new ArrayList<>();
+            AiChatClient.ChatResult result = client.streamDetailed(
+                    "system", history(), s -> { }, reasoningDeltas::add, new AiCancellationToken());
+
+            assertEquals("", result.text);
+            assertEquals(1, reasoningDeltas.size());
+            assertEquals("cat /tmp/dsh_cookies.txt", AiAgentService.dsmlParameter(result.reasoning, "cmd"));
+            assertEquals("查看 cookie", AiAgentService.dsmlParameter(result.reasoning, "note"));
         } finally {
             server.stop(0);
         }

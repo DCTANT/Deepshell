@@ -10,20 +10,45 @@ import org.springframework.context.ApplicationListener;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JDialog;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.UIManager;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 import java.awt.AWTException;
-import java.awt.CheckboxMenuItem;
+import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 import java.awt.Image;
-import java.awt.MenuItem;
-import java.awt.PopupMenu;
+import java.awt.MouseInfo;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.SystemTray;
 import java.awt.Toolkit;
 import java.awt.TrayIcon;
+import java.awt.Window;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.ItemEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.io.InputStream;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
-/** 绿色版在后台提供服务时的系统托盘入口：打开界面、开机启动、检查更新、重启 / 退出。 */
+/**
+ * 绿色版在后台提供服务时的系统托盘入口：打开界面、开机启动、检查更新、重启 / 退出。
+ *
+ * <p>菜单使用 Swing JPopupMenu 而不是 AWT PopupMenu：JDK 18+ 默认 file.encoding=UTF-8 时，
+ * AWT 原生菜单在中文 Windows 上会把菜单文字传成无法渲染的方框（实测 JDK 21 + UTF-8 复现）。</p>
+ */
 @Slf4j
 @Service
 public class TrayService implements ApplicationListener<ApplicationReadyEvent>, DisposableBean {
@@ -37,7 +62,15 @@ public class TrayService implements ApplicationListener<ApplicationReadyEvent>, 
 
     private volatile TrayIcon trayIcon;
     private volatile SystemTray tray;
-    private volatile CheckboxMenuItem startupItem;
+    private volatile JCheckBoxMenuItem startupItem;
+    private volatile JPopupMenu popupMenu;
+    /**
+     * JPopupMenu 需要一个已显示的组件作为 invoker。这里用可聚焦的 JDialog 而不是 JWindow：
+     * Swing 的 Popup 窗口本身不可聚焦，只有宿主窗口能拿到焦点，点击其他程序时才能收到焦点丢失并关闭菜单。
+     */
+    private volatile JDialog menuInvoker;
+    /** 某些环境下窗口可能拿不到焦点，用指针离开作为兜底关闭条件 */
+    private volatile Timer dismissWatch;
 
     public TrayService(AppPrefsService prefs, AutoStartService autoStart,
                        UpdateService updateService, AppLifecycleService lifecycle,
@@ -92,61 +125,27 @@ public class TrayService implements ApplicationListener<ApplicationReadyEvent>, 
                 log.warn("托盘图标资源读取失败");
                 return;
             }
-            PopupMenu menu = new PopupMenu();
+            final JPopupMenu menu = createMenuOnEdt();
+            popupMenu = menu;
 
-            MenuItem open = new MenuItem("打开 DeepShell");
-            open.addActionListener(e -> openApp());
-            menu.add(open);
-
-            MenuItem copy = new MenuItem("复制访问地址");
-            copy.addActionListener(e -> copyAddress());
-            menu.add(copy);
-
-            menu.addSeparator();
-
-            CheckboxMenuItem startup = new CheckboxMenuItem("开机启动");
-            try {
-                startup.setState(autoStart.isEnabled());
-            } catch (Exception ignore) {
-                startup.setState(false);
-            }
-            startup.addItemListener(e -> {
-                boolean want = e.getStateChange() == ItemEvent.SELECTED;
-                try {
-                    autoStart.setEnabled(want);
-                    notifyMessage("开机启动", want ? "已开启，下次登录系统会自动启动 DeepShell"
-                            : "已关闭开机启动");
-                } catch (Exception ex) {
-                    startup.setState(!want);
-                    notifyMessage("开机启动设置失败", ex.getMessage());
-                }
-            });
-            menu.add(startup);
-            startupItem = startup;
-
-            MenuItem update = new MenuItem("检查更新");
-            update.addActionListener(e -> checkUpdateAsync());
-            menu.add(update);
-
-            menu.addSeparator();
-
-            MenuItem restart = new MenuItem("重启 DeepShell");
-            restart.addActionListener(e -> {
-                try {
-                    lifecycle.restart();
-                } catch (Exception ex) {
-                    notifyMessage("重启失败", ex.getMessage());
-                }
-            });
-            menu.add(restart);
-
-            MenuItem exit = new MenuItem("退出 DeepShell");
-            exit.addActionListener(e -> lifecycle.shutdown());
-            menu.add(exit);
-
-            TrayIcon icon = new TrayIcon(image, "DeepShell · " + serverInfo.baseUrl(), menu);
+            TrayIcon icon = new TrayIcon(image, "DeepShell · " + serverInfo.baseUrl());
             icon.setImageAutoSize(true);
             icon.addActionListener(e -> openApp());
+            icon.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (e.isPopupTrigger()) {
+                        showMenu(e);
+                    }
+                }
+
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    if (e.isPopupTrigger()) {
+                        showMenu(e);
+                    }
+                }
+            });
             tray = SystemTray.getSystemTray();
             tray.add(icon);
             trayIcon = icon;
@@ -164,25 +163,293 @@ public class TrayService implements ApplicationListener<ApplicationReadyEvent>, 
         }
     }
 
+    private JPopupMenu buildMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        Font font = menuFont();
+        menu.setFont(font);
+
+        JMenuItem open = item("打开 DeepShell", font, this::openApp);
+        menu.add(open);
+
+        JMenuItem copy = item("复制访问地址", font, this::copyAddress);
+        menu.add(copy);
+
+        menu.addSeparator();
+
+        JCheckBoxMenuItem startup = new JCheckBoxMenuItem("开机启动");
+        startup.setFont(font);
+        try {
+            startup.setSelected(autoStart.isEnabled());
+        } catch (Exception ignore) {
+            startup.setSelected(false);
+        }
+        startup.addItemListener(e -> {
+            boolean want = e.getStateChange() == ItemEvent.SELECTED;
+            try {
+                autoStart.setEnabled(want);
+                notifyMessage("开机启动", want ? "已开启，下次登录系统会自动启动 DeepShell"
+                        : "已关闭开机启动");
+            } catch (Exception ex) {
+                startup.setSelected(!want);
+                notifyMessage("开机启动设置失败", ex.getMessage());
+            }
+        });
+        menu.add(startup);
+        startupItem = startup;
+
+        JMenuItem update = item("检查更新", font, this::checkUpdateAsync);
+        menu.add(update);
+
+        menu.addSeparator();
+
+        JMenuItem restart = item("重启 DeepShell", font, () -> {
+            try {
+                lifecycle.restart();
+            } catch (Exception ex) {
+                notifyMessage("重启失败", ex.getMessage());
+            }
+        });
+        menu.add(restart);
+
+        JMenuItem exit = item("退出 DeepShell", font, lifecycle::shutdown);
+        menu.add(exit);
+
+        JDialog invoker = new JDialog();
+        invoker.setUndecorated(true);
+        invoker.setType(Window.Type.UTILITY);
+        invoker.setSize(1, 1);
+        invoker.setLocation(-2, -2);
+        invoker.setFocusableWindowState(true);
+        invoker.setAutoRequestFocus(true);
+        invoker.setAlwaysOnTop(true);
+        invoker.setVisible(false);
+        invoker.addWindowFocusListener(new WindowAdapter() {
+            @Override
+            public void windowLostFocus(WindowEvent e) {
+                JPopupMenu current = popupMenu;
+                if (current != null && current.isVisible()) {
+                    current.setVisible(false);
+                }
+            }
+        });
+        menuInvoker = invoker;
+        menu.addPopupMenuListener(new PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
+                // 无需处理
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {
+                stopDismissWatch();
+                hideInvoker(invoker);
+            }
+
+            @Override
+            public void popupMenuCanceled(PopupMenuEvent e) {
+                stopDismissWatch();
+                hideInvoker(invoker);
+            }
+        });
+        return menu;
+    }
+
+    private static void hideInvoker(JDialog invoker) {
+        if (invoker != null && invoker.isVisible()) {
+            invoker.setVisible(false);
+            invoker.setLocation(-2, -2);
+        }
+    }
+
+    /** Swing 组件与外观初始化放到 EDT，避免和 JFileChooser 等 Swing 操作并发 */
+    private JPopupMenu createMenuOnEdt() throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            initLookAndFeel();
+            return buildMenu();
+        }
+        final JPopupMenu[] holder = new JPopupMenu[1];
+        SwingUtilities.invokeAndWait(() -> {
+            initLookAndFeel();
+            holder[0] = buildMenu();
+        });
+        return holder[0];
+    }
+
+    private static JMenuItem item(String text, Font font, Runnable action) {
+        JMenuItem item = new JMenuItem(text);
+        item.setFont(font);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    private static void initLookAndFeel() {
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception ignore) {
+            // 使用默认外观
+        }
+    }
+
+    /** 选一个能显示中文的字体；Swing 绘制文字不经过 AWT 原生菜单的编码转换 */
+    private static Font menuFont() {
+        int size = 12;
+        try {
+            Font base = UIManager.getFont("MenuItem.font");
+            if (base != null && base.getSize() > 0) {
+                size = base.getSize();
+            }
+        } catch (Exception ignore) {
+            // 使用默认字号
+        }
+        try {
+            Set<String> available = new HashSet<>(Arrays.asList(
+                    GraphicsEnvironment.getLocalGraphicsEnvironment()
+                            .getAvailableFontFamilyNames(Locale.getDefault())));
+            for (String name : new String[]{"Microsoft YaHei UI", "Microsoft YaHei", "SimSun", "宋体",
+                    "Noto Sans CJK SC", "WenQuanYi Micro Hei", "PingFang SC"}) {
+                if (available.contains(name)) {
+                    return new Font(name, Font.PLAIN, size);
+                }
+            }
+        } catch (Throwable ignore) {
+            // 回退到逻辑字体
+        }
+        return new Font(Font.DIALOG, Font.PLAIN, size);
+    }
+
+    private void showMenu(MouseEvent e) {
+        final JPopupMenu menu = popupMenu;
+        final JDialog invoker = menuInvoker;
+        if (menu == null || invoker == null || menu.isVisible()) {
+            return;
+        }
+        try {
+            Point pointer = MouseInfo.getPointerInfo() == null
+                    ? null : MouseInfo.getPointerInfo().getLocation();
+            final Point point = pointer != null ? pointer : e.getLocationOnScreen();
+            SwingUtilities.invokeLater(() -> {
+                if (menu.isVisible()) {
+                    return;
+                }
+                invoker.setLocation(point.x, point.y);
+                invoker.setVisible(true);
+                invoker.toFront();
+                invoker.requestFocus();
+                menu.show(invoker, 0, 0);
+                startDismissWatch(invoker, menu, point);
+            });
+        } catch (Exception ex) {
+            log.debug("显示托盘菜单失败: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 正常情况下菜单靠 invoker 的焦点丢失关闭（点击其他程序窗口会触发）。
+     * 个别环境窗口拿不到焦点时，退化为监听鼠标离开菜单区域后自动关闭。
+     */
+    private void startDismissWatch(final JDialog invoker, final JPopupMenu menu, final Point showPoint) {
+        stopDismissWatch();
+        final long startedAt = System.currentTimeMillis();
+        final boolean[] entered = {false};
+        final int[] outsideTicks = {0};
+        Timer timer = new Timer(200, e -> {
+            if (!menu.isVisible()) {
+                stopDismissWatch();
+                return;
+            }
+            if (invoker.isFocused()) {
+                // 已拿到焦点：后续由 windowLostFocus 负责关闭
+                stopDismissWatch();
+                return;
+            }
+            if (System.currentTimeMillis() - startedAt < 600) {
+                return;
+            }
+            Point pointer = MouseInfo.getPointerInfo() == null
+                    ? null : MouseInfo.getPointerInfo().getLocation();
+            if (pointer == null) {
+                return;
+            }
+            Rectangle bounds;
+            try {
+                bounds = new Rectangle(menu.getLocationOnScreen(), menu.getSize());
+            } catch (Exception ignore) {
+                return;
+            }
+            bounds.grow(6, 6);
+            if (bounds.contains(pointer)) {
+                entered[0] = true;
+                outsideTicks[0] = 0;
+                return;
+            }
+            // 菜单可能被系统挪到指针另一侧：指针还没靠近过菜单时给一段移动距离
+            if (!entered[0] && pointer.distance(showPoint) < 160) {
+                return;
+            }
+            if (++outsideTicks[0] >= 3) {
+                menu.setVisible(false);
+            }
+        });
+        timer.setRepeats(true);
+        timer.start();
+        dismissWatch = timer;
+    }
+
+    private void stopDismissWatch() {
+        Timer timer = dismissWatch;
+        dismissWatch = null;
+        if (timer != null) {
+            timer.stop();
+        }
+    }
+
     private synchronized void uninstall() {
         if (trayIcon != null && tray != null) {
             tray.remove(trayIcon);
             trayIcon = null;
             startupItem = null;
+            stopDismissWatch();
+            final JPopupMenu menu = popupMenu;
+            final JDialog invoker = menuInvoker;
+            popupMenu = null;
+            menuInvoker = null;
+            if (menu != null || invoker != null) {
+                Runnable cleanup = () -> {
+                    if (menu != null) {
+                        menu.setVisible(false);
+                    }
+                    if (invoker != null) {
+                        invoker.setVisible(false);
+                        invoker.dispose();
+                    }
+                };
+                if (SwingUtilities.isEventDispatchThread()) {
+                    cleanup.run();
+                } else {
+                    SwingUtilities.invokeLater(cleanup);
+                }
+            }
             log.info("系统托盘已关闭");
         }
     }
 
     /** 网页端修改开机启动后同步托盘菜单的勾选状态。 */
     public void refreshStartupState() {
-        CheckboxMenuItem item = startupItem;
+        final JCheckBoxMenuItem item = startupItem;
         if (item == null) {
             return;
         }
-        try {
-            item.setState(autoStart.isEnabled());
-        } catch (Exception ignore) {
-            // 读取失败保持原状态
+        Runnable update = () -> {
+            try {
+                item.setSelected(autoStart.isEnabled());
+            } catch (Exception ignore) {
+                // 读取失败保持原状态
+            }
+        };
+        if (SwingUtilities.isEventDispatchThread()) {
+            update.run();
+        } else {
+            SwingUtilities.invokeLater(update);
         }
     }
 
