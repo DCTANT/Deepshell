@@ -1701,7 +1701,7 @@
                      @contextmenu.prevent="desktopBlankContextMenu($event)"
                      @dragover="onDesktopSurfaceDragOver($event, w)" @drop="onDesktopSurfaceDrop($event, w)"
                      @dragleave="onDesktopSurfaceDragLeave($event, w)">
-                    <div class="dsk-marquee" v-if="w.marquee.visible"
+                    <div class="dsk-marquee in-files" v-if="w.marquee.visible"
                          :style="{ left: w.marquee.left + 'px', top: w.marquee.top + 'px',
                                    width: w.marquee.width + 'px', height: w.marquee.height + 'px' }"></div>
                     <div class="dsk-error" v-if="w.error">

@@ -14485,8 +14485,8 @@ new Vue({
             var top = Math.max(rr.top, Math.min(m.startY, m.lastY));
             var bottom = Math.min(rr.bottom, Math.max(m.startY, m.lastY));
             d.marquee.visible = true;
-            d.marquee.left = left;
-            d.marquee.top = top;
+            d.marquee.left = left - rr.left + root.scrollLeft;
+            d.marquee.top = top - rr.top + root.scrollTop;
             d.marquee.width = Math.max(0, right - left);
             d.marquee.height = Math.max(0, bottom - top);
 

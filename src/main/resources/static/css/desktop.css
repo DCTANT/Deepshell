@@ -969,6 +969,11 @@
     box-shadow: 0 0 0 1px rgba(255, 255, 255, .25) inset;
 }
 
+/* 窗口的 backdrop-filter 会成为 fixed 后代的包含块，文件区框选条改为相对滚动容器定位 */
+.dsk-marquee.in-files {
+    position: absolute;
+}
+
 .dsk-error {
     display: flex;
     align-items: center;
