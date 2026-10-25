@@ -4967,7 +4967,7 @@ new Vue({
             authEnabled: false, defaultPassword: false, tlsEnabled: false, tlsMode: 'auto',
             tlsSelfSigned: false, tlsNextEnabled: false
         },
-        appInfo: { version: '1.6.1', java: '', os: '', dataDir: '', buildTime: '',
+        appInfo: { version: '1.6.2', java: '', os: '', dataDir: '', buildTime: '',
             protocolState: '', protocolScheme: 'deepshell', protocolDetail: '' },
         fontSettings: loadFontSettings(),
         hotkeySettings: loadHotkeySettings(),
@@ -6303,7 +6303,7 @@ new Vue({
             return (this.appInfo && this.appInfo.buildTime) || DESKTOP_APP_RELEASE_FALLBACK;
         },
         desktopAppVersion: function () {
-            return (this.appInfo && this.appInfo.version) || '1.6.1';
+            return (this.appInfo && this.appInfo.version) || '1.6.2';
         },
         desktopCommonDirs: function () {
             var t = this.desktopTab;
@@ -11292,7 +11292,8 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             var surfaceWin = this.desktopSurfaceContextWin();
             var dir = this.desktop.surface.dir;
-            if (action === 'newFolder' || action === 'newFile' || action === 'upload' || action === 'openTerminal') {
+            if (action === 'newFolder' || action === 'newFile' || action === 'upload'
+                    || action === 'uploadFolder' || action === 'openTerminal') {
                 if (!dir) {
                     ELEMENT.Message.warning('桌面目录尚未就绪，请稍后再试');
                     return;
@@ -11306,6 +11307,8 @@ new Vue({
                 this.desktopNewFile(surfaceWin);
             } else if (action === 'upload') {
                 this.pickDesktopUpload(surfaceWin);
+            } else if (action === 'uploadFolder') {
+                this.pickDesktopFolderUpload(surfaceWin);
             } else if (action === 'openTerminal') {
                 if (this.desktopServerReady()) {
                     this.openDesktopTerminalWindow(dir);
@@ -15302,6 +15305,8 @@ new Vue({
                 this.desktopNewFile(ctxWin);
             } else if (action === 'upload') {
                 this.pickDesktopUpload(ctxWin);
+            } else if (action === 'uploadFolder') {
+                this.pickDesktopFolderUpload(ctxWin);
             } else if (action === 'refresh') {
                 this.desktopRefresh(ctxWin);
             } else if (action === 'sortName') {
@@ -16822,15 +16827,34 @@ new Vue({
             this.openDesktopTerminalWindow(dir);
         },
         pickDesktopUpload: function (win) {
+            this.pickDesktopUploadInput(win, 'desktopUpload');
+        },
+        pickDesktopFolderUpload: function (win) {
+            this.pickDesktopUploadInput(win, 'desktopFolderUpload');
+        },
+        pickDesktopUploadInput: function (win, ref) {
             var d = win || this.desk;
             this._deskUploadWinId = d.type === 'surface' ? '' : d.id;
             this._deskUploadSurface = d.type === 'surface';
             this._deskUploadDir = d.path || this.desktop.surface.dir;
-            var el = this.$refs.desktopUpload;
+            var el = this.$refs[ref];
             if (el) {
                 el.value = '';
                 el.click();
             }
+        },
+        desktopUploadContext: function () {
+            var surface = this._deskUploadSurface;
+            var d = this.desktopWindowById(this._deskUploadWinId) || this.desk;
+            var win = surface
+                ? { id: '__surface__', type: 'surface',
+                    path: this._deskUploadDir || this.desktop.surface.dir }
+                : d;
+            var dir = surface ? (this._deskUploadDir || this.desktop.surface.dir) : d.path;
+            this._deskUploadSurface = false;
+            this._deskUploadWinId = '';
+            this._deskUploadDir = '';
+            return { win: win, dir: dir };
         },
         onDesktopUploadPick: function (ev) {
             var input = ev.target;
@@ -16839,20 +16863,35 @@ new Vue({
                 files.push(input.files[i]);
             }
             input.value = '';
-            var surface = this._deskUploadSurface;
-            var d = this.desktopWindowById(this._deskUploadWinId) || this.desk;
-            var win = surface
-                ? { id: '__surface__', type: 'surface',
-                    path: this._deskUploadDir || this.desktop.surface.dir }
-                : d;
-            var dir = surface ? (this._deskUploadDir || this.desktop.surface.dir) : d.path;
-            this.desktopUploadFiles(files, dir, win);
-            this._deskUploadSurface = false;
-            this._deskUploadWinId = '';
-            this._deskUploadDir = '';
+            var ctx = this.desktopUploadContext();
+            this.desktopUploadFiles(files, ctx.dir, ctx.win);
+        },
+        onDesktopFolderUploadPick: function (ev) {
+            var input = ev.target;
+            var entries = [];
+            for (var i = 0; input.files && i < input.files.length; i++) {
+                var f = input.files[i];
+                entries.push({ file: f, rel: f.webkitRelativePath || f.name });
+            }
+            input.value = '';
+            var ctx = this.desktopUploadContext();
+            this.desktopUploadEntries(entries, ctx.dir, ctx.win);
         },
         desktopUploadFiles: function (files, destDir, win) {
-            if (!files || !files.length) {
+            var entries = [];
+            for (var i = 0; files && i < files.length; i++) {
+                entries.push({ file: files[i], rel: files[i].name });
+            }
+            return this.desktopUploadEntries(entries, destDir, win);
+        },
+        desktopUploadEntries: function (entries, destDir, win) {
+            var list = [];
+            for (var i = 0; entries && i < entries.length; i++) {
+                if (entries[i] && entries[i].file) {
+                    list.push(entries[i]);
+                }
+            }
+            if (!list.length) {
                 return Promise.resolve();
             }
             var t = this.desktopTab;
@@ -16863,17 +16902,73 @@ new Vue({
             }
             var self = this;
             var dir = destDir || d.path;
+            var folder = list.some(function (e) {
+                return (e.rel || '').indexOf('/') >= 0;
+            });
+            if (folder && !t.local && t.sessionId) {
+                // 远端文件夹走分片上传队列：服务端按 relativePath 建目录，支持失败续传
+                var queued = [];
+                list.forEach(function (e) {
+                    var item = self.enqueueUpload(t, dir, e.file, e.rel);
+                    if (item) {
+                        queued.push(item);
+                    }
+                });
+                if (!queued.length) {
+                    ELEMENT.Message.warning('上传队列未就绪，请稍后再试');
+                    return Promise.resolve();
+                }
+                ELEMENT.Message.success('已加入上传队列：' + queued.length + ' 个文件 → ' + dir);
+                self.pushDesktopNotice('info', '已加入上传队列',
+                    queued.length + ' 个文件 → ' + dir, 'transfers');
+                d.fileDragOver = false;
+                self._deskDragDepth = 0;
+                return new Promise(function (resolve) {
+                    var timer = setInterval(function () {
+                        var running = queued.some(function (x) {
+                            return x.status === 'pending' || x.status === 'uploading'
+                                || x.status === 'processing';
+                        });
+                        if (running) {
+                            return;
+                        }
+                        clearInterval(timer);
+                        var okCount = 0;
+                        var failCount = 0;
+                        queued.forEach(function (x) {
+                            if (x.status === 'done') {
+                                okCount++;
+                            } else if (x.status === 'error') {
+                                failCount++;
+                            }
+                        });
+                        if (failCount > 0) {
+                            ELEMENT.Message.warning('文件夹上传完成：成功 ' + okCount
+                                + ' 个，失败 ' + failCount + ' 个');
+                            self.pushDesktopNotice('warning', '上传部分失败',
+                                '成功 ' + okCount + ' 个，失败 ' + failCount + ' 个 → ' + dir,
+                                'transfers');
+                        } else if (okCount === queued.length) {
+                            self.pushDesktopNotice('success', '上传完成',
+                                queued.length + ' 个文件 → ' + dir, 'transfers');
+                        }
+                        self.desktopRefresh(d);
+                        resolve();
+                    }, 800);
+                });
+            }
             var loading = ELEMENT.Message({
-                message: '正在上传 ' + files.length + ' 个文件到 ' + dir + ' …',
+                message: (folder ? '正在上传文件夹内容：' : '正在上传 ')
+                    + list.length + ' 个文件到 ' + dir + ' …',
                 duration: 0,
                 iconClass: 'el-icon-loading'
             });
             var ok = 0;
             var fail = 0;
             var chain = Promise.resolve();
-            files.forEach(function (f) {
+            list.forEach(function (e) {
                 chain = chain.then(function () {
-                    return self.uploadOne(t, dir, f).then(function () {
+                    return self.uploadOne(t, dir, e.file, e.rel, list.length > 1).then(function () {
                         ok++;
                     }).catch(function () {
                         fail++;
@@ -16884,12 +16979,13 @@ new Vue({
                 loading.close();
                 d.fileDragOver = false;
                 self._deskDragDepth = 0;
+                var label = folder ? '文件夹' : '文件';
                 if (fail === 0) {
-                    ELEMENT.Message.success(files.length === 1
-                        ? ('文件上传成功：' + files[0].name)
-                        : ('文件上传成功：' + files.length + ' 个文件 → ' + dir));
+                    ELEMENT.Message.success(list.length === 1
+                        ? ('文件上传成功：' + list[0].file.name)
+                        : (label + '上传成功：' + list.length + ' 个文件 → ' + dir));
                     self.pushDesktopNotice('success', '上传完成',
-                        files.length === 1 ? files[0].name : (files.length + ' 个文件 → ' + dir), 'transfers');
+                        list.length === 1 ? list[0].file.name : (list.length + ' 个文件 → ' + dir), 'transfers');
                 } else if (ok > 0) {
                     ELEMENT.Message.warning('上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个');
                     self.pushDesktopNotice('warning', '上传部分失败',
@@ -16899,6 +16995,81 @@ new Vue({
                     self.pushDesktopNotice('error', '上传失败', dir, 'transfers');
                 }
                 self.desktopRefresh(d);
+            });
+        },
+        collectDroppedEntries: function (dataTransfer) {
+            // webkitGetAsEntry 只在 drop 事件同步阶段有效，必须先取 entry 再做异步遍历
+            var roots = [];
+            var items = dataTransfer && dataTransfer.items;
+            for (var i = 0; items && i < items.length; i++) {
+                var item = items[i];
+                if (!item || item.kind !== 'file') {
+                    continue;
+                }
+                var entry = null;
+                try {
+                    entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                } catch (e) {
+                    entry = null;
+                }
+                if (entry) {
+                    roots.push(entry);
+                }
+            }
+            if (!roots.length) {
+                var plain = [];
+                var files = dataTransfer && dataTransfer.files;
+                for (var j = 0; files && j < files.length; j++) {
+                    plain.push({ file: files[j], rel: files[j].name });
+                }
+                return Promise.resolve(plain);
+            }
+            function readAll(reader, acc) {
+                return new Promise(function (resolve) {
+                    reader.readEntries(function (batch) {
+                        if (!batch || !batch.length) {
+                            resolve(acc);
+                            return;
+                        }
+                        readAll(reader, acc.concat(Array.prototype.slice.call(batch))).then(resolve);
+                    }, function () {
+                        resolve(acc);
+                    });
+                });
+            }
+            function walk(entry, prefix) {
+                if (entry.isFile) {
+                    return new Promise(function (resolve) {
+                        entry.file(function (file) {
+                            resolve([{ file: file, rel: prefix + file.name }]);
+                        }, function () {
+                            resolve([]);
+                        });
+                    });
+                }
+                if (entry.isDirectory) {
+                    return readAll(entry.createReader(), []).then(function (children) {
+                        return Promise.all(children.map(function (child) {
+                            return walk(child, prefix + entry.name + '/');
+                        }));
+                    }).then(function (lists) {
+                        var out = [];
+                        lists.forEach(function (l) {
+                            out = out.concat(l);
+                        });
+                        return out;
+                    });
+                }
+                return Promise.resolve([]);
+            }
+            return Promise.all(roots.map(function (entry) {
+                return walk(entry, '');
+            })).then(function (lists) {
+                var out = [];
+                lists.forEach(function (l) {
+                    out = out.concat(l);
+                });
+                return out;
             });
         },
         desktopAutoScroll: function (ev, win) {
@@ -17033,28 +17204,34 @@ new Vue({
         },
         onDesktopDrop: function (ev, row, win) {
             var d = win || this.desk;
-            var files = [];
-            if (ev.dataTransfer && ev.dataTransfer.files) {
-                for (var i = 0; i < ev.dataTransfer.files.length; i++) {
-                    files.push(ev.dataTransfer.files[i]);
-                }
-            }
             var destDir = row && row.dir ? this.desktopEntryPath(row, d) : d.path;
+            var fileDrop = this.hasFileDrag(ev)
+                || !!(ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length);
+            if (fileDrop) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                // 先同步取 entry，文件夹会在之后递归展开
+                var entries = this.collectDroppedEntries(ev.dataTransfer);
+                d.dropTarget = '';
+                d.winDragOver = false;
+                d.fileDragOver = false;
+                this._deskDragDepth = 0;
+                this.stopDesktopDragScroll();
+                this.desktop.windows.forEach(function (w) {
+                    w.dragNames = [];
+                });
+                this._deskFileDrag = null;
+                var uploadSelf = this;
+                entries.then(function (list) {
+                    uploadSelf.desktopUploadEntries(list, destDir, d);
+                });
+                return;
+            }
             d.dropTarget = '';
             d.winDragOver = false;
             d.fileDragOver = false;
             this._deskDragDepth = 0;
             this.stopDesktopDragScroll();
-            if (files.length) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                this.desktop.windows.forEach(function (w) {
-                    w.dragNames = [];
-                });
-                this._deskFileDrag = null;
-                this.desktopUploadFiles(files, destDir, d);
-                return;
-            }
             var drag = this._deskFileDrag;
             if (!drag || !drag.names.length) {
                 return;
@@ -17123,23 +17300,29 @@ new Vue({
         },
         onDesktopSurfaceDrop: function (ev, win) {
             var d = win || this.desk;
-            var files = [];
-            if (ev.dataTransfer && ev.dataTransfer.files) {
-                for (var i = 0; i < ev.dataTransfer.files.length; i++) {
-                    files.push(ev.dataTransfer.files[i]);
-                }
+            var fileDrop = this.hasFileDrag(ev)
+                || !!(ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length);
+            if (fileDrop) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                // 先同步取 entry，文件夹会在之后递归展开
+                var entries = this.collectDroppedEntries(ev.dataTransfer);
+                d.dropTarget = '';
+                d.winDragOver = false;
+                d.fileDragOver = false;
+                this._deskDragDepth = 0;
+                this.stopDesktopDragScroll();
+                var uploadSelf = this;
+                entries.then(function (list) {
+                    uploadSelf.desktopUploadEntries(list, d.path, d);
+                });
+                return;
             }
             d.dropTarget = '';
             d.winDragOver = false;
             d.fileDragOver = false;
             this._deskDragDepth = 0;
             this.stopDesktopDragScroll();
-            if (files.length) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                this.desktopUploadFiles(files, d.path, d);
-                return;
-            }
             var drag = this._deskFileDrag;
             if (!drag || !drag.names.length) {
                 return;
@@ -22310,24 +22493,26 @@ new Vue({
                 param.onSuccess();
             }
         },
-        uploadOne: function (tab, dir, file) {
+        uploadOne: function (tab, dir, file, relativePath, silent) {
             // 可视化桌面上传：整文件接口 + 上传进度，失败后可转入分片续传重试
             if (!tab || !file) {
                 return Promise.reject(new Error('参数缺失'));
             }
             var local = !!tab.local;
+            var rel = relativePath || file.name;
             var fd = new FormData();
             if (!local) {
                 fd.append('sessionId', tab.sessionId);
             }
             fd.append('path', dir);
+            fd.append('relativePath', rel);
             fd.append('file', file);
             var item = {
                 id: 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
                 kind: 'upload',
                 name: file.name,
                 dir: dir,
-                rel: file.name,
+                rel: rel,
                 size: file.size || 0,
                 offset: 0,
                 status: 'uploading',
@@ -22338,6 +22523,7 @@ new Vue({
             };
             this.pushTransfer(item);
             return http.post(local ? '/api/local/fs/upload' : '/api/sftp/upload', fd, {
+                silent: !!silent,
                 onUploadProgress: function (e) {
                     if (e && e.total) {
                         item.offset = Math.min(e.loaded, e.total);
@@ -22748,32 +22934,35 @@ new Vue({
                 return;
             }
             e.preventDefault();
-            var files = [];
-            var list = e.dataTransfer ? e.dataTransfer.files : null;
-            for (var i = 0; list && i < list.length; i++) {
-                files.push(list[i]);
-            }
+            var self = this;
+            // 先同步取 entry，文件夹会在之后递归展开
+            var entries = this.collectDroppedEntries(e.dataTransfer);
             this._dragDepth = 0;
             this._deskDragDepth = 0;
             this.fileDragOver = false;
-            if (this.desktop.visible && this.desk.id) {
-                this.desktop.windows.forEach(function (w) {
-                    w.fileDragOver = false;
-                    w.dropTarget = '';
-                });
-                this.stopDesktopDragScroll();
-                this.desktopUploadFiles(files, this.desk.path, this.desk);
-                return;
-            }
-            this.desk.fileDragOver = false;
-            this.handleDroppedFiles(files);
+            entries.then(function (list) {
+                if (!list.length) {
+                    return;
+                }
+                if (self.desktop.visible && self.desk.id) {
+                    self.desktop.windows.forEach(function (w) {
+                        w.fileDragOver = false;
+                        w.dropTarget = '';
+                    });
+                    self.stopDesktopDragScroll();
+                    self.desktopUploadEntries(list, self.desk.path, self.desk);
+                    return;
+                }
+                self.desk.fileDragOver = false;
+                self.handleDroppedEntries(list);
+            });
         },
-        handleDroppedFiles: function (files) {
-            if (!files || !files.length) {
+        handleDroppedEntries: function (entries) {
+            if (!entries || !entries.length) {
                 return;
             }
             if (this.desktop.visible && this.desk.id) {
-                this.desktopUploadFiles(files, this.desk.path, this.desk);
+                this.desktopUploadEntries(entries, this.desk.path, this.desk);
                 return;
             }
             var t = this.activeTab;
@@ -22787,12 +22976,12 @@ new Vue({
                 return;
             }
             var self = this;
-            files.forEach(function (f) {
-                self.enqueueUpload(t, dir, f, f.name);
+            entries.forEach(function (e) {
+                self.enqueueUpload(t, dir, e.file, e.rel);
             });
-            ELEMENT.Message.success(files.length === 1
-                ? ('已加入传输队列：' + files[0].name)
-                : ('已加入传输队列：' + files.length + ' 个文件 → ' + dir));
+            ELEMENT.Message.success(entries.length === 1
+                ? ('已加入传输队列：' + entries[0].file.name)
+                : ('已加入传输队列：' + entries.length + ' 个文件 → ' + dir));
         },
         mkdir: function () {
             var t = this.activeTab;

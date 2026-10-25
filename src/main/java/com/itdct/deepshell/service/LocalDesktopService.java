@@ -43,6 +43,7 @@ public class LocalDesktopService {
     private static final long MAX_TEXT_BYTES = 8L * 1024 * 1024;
     private static final long MAX_THUMB_SOURCE = 30L * 1024 * 1024;
     private static final int MAX_COPY_DEPTH = 64;
+    private static final int MAX_UPLOAD_DEPTH = 64;
     private static final int MAX_CONTENT_SEARCH_DEPTH = 8;
     private static final int MAX_CONTENT_SEARCH_FILES = 2000;
     private static final long MAX_CONTENT_SEARCH_FILE = 5L * 1024 * 1024;
@@ -203,16 +204,61 @@ public class LocalDesktopService {
     }
 
     public void upload(String virtualDir, MultipartFile file) throws IOException {
+        upload(virtualDir, null, file);
+    }
+
+    /** relativePath 可包含多级目录（文件夹上传），自动创建父目录 */
+    public void upload(String virtualDir, String relativePath, MultipartFile file) throws IOException {
         if (file == null) {
             throw new IllegalArgumentException("上传文件不存在");
         }
+        List<String> parts = uploadParts(relativePath, file.getOriginalFilename());
         Path dir = existing(virtualDir);
         requireDirectory(dir);
-        String name = cleanName(file.getOriginalFilename());
-        Path target = writableChild(dir, name);
+        for (int i = 0; i < parts.size() - 1; i++) {
+            dir = writableChild(dir, parts.get(i));
+            if (Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) {
+                requireDirectory(dir);
+            } else {
+                Files.createDirectory(dir);
+            }
+        }
+        Path target = writableChild(dir, parts.get(parts.size() - 1));
         try (InputStream in = file.getInputStream()) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         }
+    }
+
+    private static List<String> uploadParts(String relativePath, String originalName) {
+        String rel = relativePath == null ? "" : relativePath.replace('\\', '/');
+        while (rel.startsWith("/")) {
+            rel = rel.substring(1);
+        }
+        if (rel.isEmpty()) {
+            String name = originalName == null ? "" : originalName.replace('\\', '/');
+            int idx = name.lastIndexOf('/');
+            if (idx >= 0) {
+                name = name.substring(idx + 1);
+            }
+            rel = name;
+        }
+        if (rel.isEmpty() || rel.endsWith("/")) {
+            throw new IllegalArgumentException("文件名不合法");
+        }
+        String[] raw = rel.split("/");
+        if (raw.length > MAX_UPLOAD_DEPTH) {
+            throw new IllegalArgumentException("目录层级过深");
+        }
+        List<String> parts = new ArrayList<>();
+        for (String part : raw) {
+            if (part.isEmpty() || ".".equals(part) || "..".equals(part)
+                    || part.indexOf('\0') >= 0 || part.indexOf('\n') >= 0
+                    || part.indexOf('\r') >= 0) {
+                throw new IllegalArgumentException("上传路径不合法");
+            }
+            parts.add(cleanName(part));
+        }
+        return parts;
     }
 
     public long fileSize(String virtualPath) throws IOException {

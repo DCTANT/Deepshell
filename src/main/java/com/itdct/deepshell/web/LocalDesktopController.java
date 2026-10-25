@@ -116,11 +116,14 @@ public class LocalDesktopController {
     }
 
     @PostMapping("/upload")
-    public R<Void> upload(@RequestParam String path, @RequestParam("file") MultipartFile file)
+    public R<Void> upload(@RequestParam String path,
+                          @RequestParam(value = "relativePath", required = false) String relativePath,
+                          @RequestParam("file") MultipartFile file)
             throws IOException {
-        service.upload(path, file);
-        audit.record("LOCAL_FILE_UPLOAD", path + "/" + file.getOriginalFilename(), "OK",
-                file.getSize() + " bytes");
+        service.upload(path, relativePath, file);
+        String rel = relativePath == null || relativePath.trim().isEmpty()
+                ? file.getOriginalFilename() : relativePath;
+        audit.record("LOCAL_FILE_UPLOAD", path + "/" + rel, "OK", file.getSize() + " bytes");
         return R.ok();
     }
 

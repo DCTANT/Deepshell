@@ -699,10 +699,12 @@ public class SftpController {
 
     @PostMapping("/upload")
     public R<Void> upload(@RequestParam String sessionId, @RequestParam String path,
+                          @RequestParam(value = "relativePath", required = false) String relativePath,
                           @RequestParam("file") MultipartFile file) throws Exception {
-        sftp.upload(sessionId, path, file);
-        audit.record("FILE_UPLOAD", path + "/" + file.getOriginalFilename(), "OK",
-                file.getSize() + " bytes");
+        sftp.upload(sessionId, path, relativePath, file);
+        String rel = relativePath == null || relativePath.trim().isEmpty()
+                ? file.getOriginalFilename() : relativePath;
+        audit.record("FILE_UPLOAD", path + "/" + rel, "OK", file.getSize() + " bytes");
         return R.ok();
     }
 
