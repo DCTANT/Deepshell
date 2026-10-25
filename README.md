@@ -540,3 +540,16 @@ DeepShell 由个人利用业余时间开发和维护。如果它帮你省了时�
 - 贡献代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，并同意 [CLA.md](CLA.md)。
 
 Copyright (C) 2026 DecentAnt
+
+## 联系与反馈
+
+使用中遇到问题、想提建议或交流使用经验，欢迎加入 QQ 群或通过以下方式联系作者。
+
+<p align="center">
+  <img src="src/main/resources/static/img/qq-group.png" width="260" alt="DeepShell 反馈交流群">
+</p>
+
+- **QQ 群**：1126930423
+- **邮箱**：[2427746718@qq.com](mailto:2427746718@qq.com)
+- **Gitee**：<https://gitee.com/decentant>
+- **CSDN**：<https://blog.csdn.net/DCTANT>

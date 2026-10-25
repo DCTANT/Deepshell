@@ -671,6 +671,85 @@ a {
     max-width: 32vw;
 }
 
+/* 联系与反馈（帮助手册与弹窗共用） */
+.contact-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 22px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.contact-qr {
+    flex: none;
+    width: 210px;
+    margin: 0;
+    text-align: center;
+}
+
+.contact-qr > a {
+    display: block;
+    border: 1px solid #e5e9f2;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 4px 14px rgba(15, 30, 55, .08);
+    cursor: zoom-in;
+}
+
+.contact-qr img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.contact-qr figcaption {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #54657e;
+}
+
+.contact-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.contact-info p {
+    font-size: 12.5px;
+    color: #606266;
+    line-height: 1.9;
+    margin: 0 0 10px;
+}
+
+.contact-line {
+    display: flex;
+    gap: 10px;
+    font-size: 12.5px;
+    line-height: 2;
+    color: #606266;
+}
+
+.contact-line > span {
+    flex: none;
+    width: 48px;
+    color: #8b98ad;
+}
+
+.contact-line a {
+    color: var(--accent);
+    text-decoration: none;
+    word-break: break-all;
+}
+
+.contact-line a:hover {
+    text-decoration: underline;
+}
+
+.help-contact .contact-qr {
+    width: 170px;
+    max-width: 32vw;
+}
+
 .help-section p {
     font-size: 12.5px;
     color: #606266;
