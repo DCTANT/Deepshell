@@ -11,6 +11,7 @@ import com.itdct.deepshell.service.AiConnectivityService;
 import com.itdct.deepshell.service.AiConversationService;
 import com.itdct.deepshell.service.AiConversationTitleService;
 import com.itdct.deepshell.service.AiModelCatalogService;
+import com.itdct.deepshell.service.AiUsageService;
 import lombok.Data;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -40,6 +41,7 @@ public class AiController {
     private final AiModelCatalogService catalog;
     private final AiCompactionService compactionService;
     private final AiConnectivityService connectivityService;
+    private final AiUsageService usageService;
 
     /** runId -> 取消令牌：前端停止时可直接取消服务端生成/命令执行 */
     private final Map<String, AiCancellationToken> activeRuns = new ConcurrentHashMap<>();
@@ -54,7 +56,7 @@ public class AiController {
                         AiAgentService agentService, AiConversationService convService,
                         AiConversationTitleService titleService,
                         AiModelCatalogService catalog, AiCompactionService compactionService,
-                        AiConnectivityService connectivityService) {
+                        AiConnectivityService connectivityService, AiUsageService usageService) {
         this.config = config;
         this.commandService = commandService;
         this.agentService = agentService;
@@ -63,6 +65,7 @@ public class AiController {
         this.catalog = catalog;
         this.compactionService = compactionService;
         this.connectivityService = connectivityService;
+        this.usageService = usageService;
     }
 
     @PreDestroy
@@ -80,6 +83,12 @@ public class AiController {
         config.save(form.getProvider(), form.getBaseUrl(), form.getApiKey(), form.getModel(),
                 form.getMaxSteps(), form.getContextWindow());
         return R.ok(current());
+    }
+
+    /** token 用量：今天 / 近 7 天 / 近 30 天 / 累计（按本机日期统计） */
+    @GetMapping("/usage")
+    public R<AiUsageService.Summary> usage() {
+        return R.ok(usageService.summary());
     }
 
     /** 可选厂商预设（名称 / 默认 API 地址 / Key 获取地址 / 内置常用模型） */

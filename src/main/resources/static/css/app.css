@@ -310,6 +310,97 @@ a {
     color: #909399;
 }
 
+/* AI 设置：token 使用统计 */
+.ai-usage {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #ebeef5;
+}
+
+.ai-usage-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 9px;
+}
+
+.ai-usage-head b {
+    flex: 0 0 auto;
+    font-size: 13px;
+    color: #303133;
+}
+
+.ai-usage-head span {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #909399;
+}
+
+.ai-usage-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    min-height: 78px;
+}
+
+.ai-usage-card {
+    padding: 9px 10px;
+    border: 1px solid #e4ecf7;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #f8fbff, #eef4fd);
+    overflow: hidden;
+}
+
+.ai-usage-label {
+    font-size: 11px;
+    color: #7c8da6;
+}
+
+.ai-usage-total {
+    margin-top: 2px;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: #2f5d9e;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.ai-usage-total i {
+    margin-left: 3px;
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 400;
+    color: #93a3b8;
+}
+
+.ai-usage-io {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #607089;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-usage-calls {
+    margin-top: 1px;
+    font-size: 11px;
+    color: #97a3b5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-usage-tip {
+    margin-top: 7px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #a0a8b4;
+}
+
 /* 系统备份与还原 */
 .backup-dialog {
     max-width: calc(100vw - 32px);

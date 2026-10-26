@@ -584,6 +584,26 @@
                     <i class="el-icon-loading" v-if="aiConfig.saving"></i>
                     {{ aiConfig.saving ? '保存中…' : '保存 AI 配置' }}
                 </button>
+                <div class="m-ai-usage">
+                    <div class="m-ai-usage-head">
+                        <b>Token 使用统计</b>
+                        <button type="button" class="m-ai-usage-refresh" @click="loadAiUsage">
+                            <i class="el-icon-refresh" :class="{ 'is-loading': aiUsageLoading }"></i>刷新
+                        </button>
+                    </div>
+                    <div class="m-ai-usage-grid">
+                        <div class="m-ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label">
+                            <span class="m-ai-usage-label">{{ b.label }}</span>
+                            <span class="m-ai-usage-total">{{ b.totalText }}<i>tokens</i></span>
+                            <span class="m-ai-usage-io">输入 {{ b.inputText }} · 输出 {{ b.outputText }}</span>
+                            <span class="m-ai-usage-calls">{{ b.calls }} 次调用<template v-if="b.estimatedCalls"> ·
+                                含 {{ b.estimatedCalls }} 次估算</template></span>
+                        </div>
+                    </div>
+                    <div class="m-ai-usage-tip">
+                        按本机日期统计；接口未返回用量时按字符数估算。统计只在本机保存，不记录对话内容。
+                    </div>
+                </div>
             </div>
         </div>
     </section>

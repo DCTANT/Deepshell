@@ -497,6 +497,17 @@
         return fmtSize((Number(kb) || 0) * 1024);
     }
 
+    function fmtTokens(n) {
+        var v = Math.max(0, Math.round(Number(n) || 0));
+        if (v < 1000) {
+            return String(v);
+        }
+        var scaled = function (x) {
+            return x >= 100 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
+        };
+        return v < 1000000 ? scaled(v / 1000) + 'K' : scaled(v / 1000000) + 'M';
+    }
+
     function fmtTime(ms) {
         if (!ms) {
             return '';
@@ -724,6 +735,8 @@
                     hasKey: false,
                     backTo: ''
                 },
+                aiUsage: null,
+                aiUsageLoading: false,
                 appInfo: null,
                 authStatus: { enabled: false },
 
@@ -841,6 +854,26 @@
             aiModels: function () {
                 var p = this.aiCurrentProvider;
                 return p && p.fallbackModels ? p.fallbackModels : [];
+            },
+            aiUsageBuckets: function () {
+                var u = this.aiUsage || {};
+                var rows = [
+                    { label: '今天', data: u.today },
+                    { label: '近 7 天', data: u.last7Days },
+                    { label: '近 30 天', data: u.last30Days },
+                    { label: '累计', data: u.allTime }
+                ];
+                return rows.map(function (r) {
+                    var d = r.data || {};
+                    return {
+                        label: r.label,
+                        totalText: fmtTokens(d.totalTokens),
+                        inputText: fmtTokens(d.inputTokens),
+                        outputText: fmtTokens(d.outputTokens),
+                        calls: Number(d.calls) || 0,
+                        estimatedCalls: Number(d.estimatedCalls) || 0
+                    };
+                });
             },
             aiCurrentProvider: function () {
                 return this.aiConfig.providers.find(function (x) {
@@ -1154,6 +1187,7 @@
                 this.aiConfig.backTo = this.activeApp === 'aiConfig' ? '' : this.activeApp;
                 this.activeApp = 'aiConfig';
                 this.loadAiConfig(false);
+                this.loadAiUsage();
             },
 
             /* ================= 连接选择 ================= */
@@ -3355,6 +3389,20 @@
                     self.aiConfig.loading = false;
                 }).catch(function () {
                     self.aiConfig.loading = false;
+                });
+            },
+            loadAiUsage: function () {
+                if (this.aiUsageLoading) {
+                    return;
+                }
+                this.aiUsageLoading = true;
+                var self = this;
+                http.get('/api/ai/usage', { silent: true }).then(function (d) {
+                    if (d) {
+                        self.aiUsage = d;
+                    }
+                }).catch(function () { /* 统计不可用时不打断配置页 */ }).then(function () {
+                    self.aiUsageLoading = false;
                 });
             },
             onAiProviderChange: function () {

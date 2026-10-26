@@ -4949,6 +4949,8 @@ new Vue({
         aiSetSaving: false,
         aiSetForm: { provider: 'deepseek', baseUrl: '', model: '', apiKey: '', hasKey: false,
             maxSteps: AI_MAX_STEPS_DEFAULT, contextWindow: AI_CONTEXT_WINDOW_DEFAULT },
+        aiUsage: null,
+        aiUsageLoading: false,
         aiMaxSteps: AI_MAX_STEPS_DEFAULT,
         aiContextWindow: AI_CONTEXT_WINDOW_DEFAULT,
         aiSlashCommands: [
@@ -5148,6 +5150,26 @@ new Vue({
         }
     },
     computed: {
+        aiUsageBuckets: function () {
+            var u = this.aiUsage || {};
+            var rows = [
+                { label: '今天', data: u.today },
+                { label: '近 7 天', data: u.last7Days },
+                { label: '近 30 天', data: u.last30Days },
+                { label: '累计', data: u.allTime }
+            ];
+            return rows.map(function (r) {
+                var d = r.data || {};
+                return {
+                    label: r.label,
+                    totalText: formatTokenCount(d.totalTokens),
+                    inputText: formatTokenCount(d.inputTokens),
+                    outputText: formatTokenCount(d.outputTokens),
+                    calls: Number(d.calls) || 0,
+                    estimatedCalls: Number(d.estimatedCalls) || 0
+                };
+            });
+        },
         /** 外部调用示例：优先使用列表中的第一条已保存连接，链接不含密码 */
         protocolExampleLink: function () {
             if (this.connections && this.connections.length) {
@@ -7267,6 +7289,7 @@ new Vue({
         loadAiConfig: function () {
             var self = this;
             this.aiModelsNote = '';
+            this.loadAiUsage();
             http.get('/api/ai/config').then(function (d) {
                 if (!d) {
                     return;
@@ -7290,6 +7313,20 @@ new Vue({
                     }
                 });
             }).catch(function () { /* 忽略 */ });
+        },
+        loadAiUsage: function () {
+            var self = this;
+            if (this.aiUsageLoading) {
+                return;
+            }
+            this.aiUsageLoading = true;
+            http.get('/api/ai/usage', { silent: true }).then(function (d) {
+                if (d) {
+                    self.aiUsage = d;
+                }
+            }).catch(function () { /* 统计不可用时不打断设置页 */ }).then(function () {
+                self.aiUsageLoading = false;
+            });
         },
         /* 先展示内置常用模型（含已保存的模型），保证下拉不为空 */
         applyPresetModels: function () {

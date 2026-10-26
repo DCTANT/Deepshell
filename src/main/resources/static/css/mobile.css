@@ -2237,6 +2237,111 @@ button {
     padding: 16px 16px calc(26px + var(--sab));
 }
 
+/* AI 配置：token 使用统计 */
+.m-ai-usage {
+    margin-top: 18px;
+    padding-top: 15px;
+    border-top: 1px solid var(--m-line);
+}
+
+.m-ai-usage-head {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.m-ai-usage-head b {
+    flex: 1;
+    font-size: 12.5px;
+    color: var(--m-text);
+    letter-spacing: 0.2px;
+}
+
+.m-ai-usage-refresh {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: rgba(76, 141, 255, 0.1);
+    color: #7fa8e8;
+    font-size: 11px;
+}
+
+.m-ai-usage-refresh i {
+    font-size: 12px;
+}
+
+.m-ai-usage-refresh i.is-loading {
+    animation: m-ai-spin 1s linear infinite;
+}
+
+@keyframes m-ai-spin {
+    to { transform: rotate(360deg); }
+}
+
+.m-ai-usage-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.m-ai-usage-card {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 11px;
+    border: 1px solid rgba(76, 141, 255, 0.16);
+    border-radius: 12px;
+    background: linear-gradient(160deg, rgba(76, 141, 255, 0.09), rgba(139, 92, 246, 0.05));
+    overflow: hidden;
+}
+
+.m-ai-usage-label {
+    font-size: 10.5px;
+    color: #8b98ad;
+}
+
+.m-ai-usage-total {
+    font-size: 19px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #cfe2ff;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.m-ai-usage-total i {
+    margin-left: 3px;
+    font-size: 9.5px;
+    font-style: normal;
+    font-weight: 400;
+    color: #6f83a0;
+}
+
+.m-ai-usage-io {
+    font-size: 10.5px;
+    color: #9fb0c7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.m-ai-usage-calls {
+    font-size: 10px;
+    color: #6f7f96;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.m-ai-usage-tip {
+    margin-top: 8px;
+    font-size: 10.5px;
+    line-height: 1.65;
+    color: #66738a;
+}
+
 .m-form-tip {
     margin-bottom: 16px;
     padding: 12px 13px;

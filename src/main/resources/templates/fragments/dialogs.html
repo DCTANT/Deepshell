@@ -370,6 +370,26 @@
             · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度<br>
             · 上下文窗口用于计算占用比例和压缩保留量，请按所用模型填写；压缩会调用一次模型生成结构化摘要
         </div>
+        <div class="ai-usage">
+            <div class="ai-usage-head">
+                <b>Token 使用统计</b>
+                <span>按本机日期统计，含 AI 终端、命令翻译、标题与上下文压缩</span>
+                <el-button size="mini" type="text" icon="el-icon-refresh"
+                           :loading="aiUsageLoading" @click="loadAiUsage">刷新</el-button>
+            </div>
+            <div class="ai-usage-grid" v-loading="aiUsageLoading">
+                <div class="ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label">
+                    <div class="ai-usage-label">{{ b.label }}</div>
+                    <div class="ai-usage-total">{{ b.totalText }}<i>tokens</i></div>
+                    <div class="ai-usage-io">输入 {{ b.inputText }} · 输出 {{ b.outputText }}</div>
+                    <div class="ai-usage-calls">{{ b.calls }} 次调用<template v-if="b.estimatedCalls">，
+                        含 {{ b.estimatedCalls }} 次估算</template></div>
+                </div>
+            </div>
+            <div class="ai-usage-tip">
+                接口返回 usage 时使用厂商数据；未返回时按字符数估算。统计只在本机保存，不记录对话内容。
+            </div>
+        </div>
         <div slot="footer">
             <el-button size="small" style="float:left" icon="el-icon-magic-stick"
                        @click="openAiWizard">配置向导</el-button>
