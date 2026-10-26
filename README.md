@@ -105,7 +105,7 @@
 > **一键打包**：直接双击仓库根目录的 `build-release.cmd`。脚本会自动查找 JDK 与 Maven（PATH 中没有 Maven 时使用 IDEA 自带的），生成传统分发包、Windows 绿色版和对应的 `.sha256`，完成后打开 `target` 目录。
 
 ```bash
-# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.6.2.zip）
+# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.7.0.zip）
 mvn -DskipTests package
 
 # 2. 生成内置精简 JRE 的 Windows 绿色版
@@ -115,9 +115,9 @@ powershell -ExecutionPolicy Bypass -File tools/build-portable.ps1 -SkipMaven
 产物：
 
 ```
-target/deepshell-1.6.2-windows-x64-portable/        可直接运行的目录
-target/deepshell-1.6.2-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
-target/deepshell-1.6.2-windows-x64-portable.zip.sha256
+target/deepshell-1.7.0-windows-x64-portable/        可直接运行的目录
+target/deepshell-1.7.0-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
+target/deepshell-1.7.0-windows-x64-portable.zip.sha256
 ```
 
 绿色版特性：
@@ -136,7 +136,7 @@ target/deepshell-1.6.2-windows-x64-portable.zip.sha256
 前置要求：JDK 8+、Maven（仅构建需要）。
 
 ```bash
-# 构建（同时生成传统分发包 target/deepshell-1.6.2.zip）
+# 构建（同时生成传统分发包 target/deepshell-1.7.0.zip）
 mvn -DskipTests package
 
 # 或直接运行 jar（开发调试）
@@ -145,10 +145,10 @@ java -jar target/deepshell.jar
 
 ### 分发包
 
-解压 `target/deepshell-1.6.2.zip` 后的目录结构：
+解压 `target/deepshell-1.7.0.zip` 后的目录结构：
 
 ```
-deepshell-1.6.2/
+deepshell-1.7.0/
 ├─ deepshell.jar      主程序
 ├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
 ├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）
