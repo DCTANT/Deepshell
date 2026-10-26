@@ -3,6 +3,7 @@ package com.itdct.deepshell;
 import com.itdct.deepshell.common.AppRestartSupport;
 import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.common.RuntimeSupport;
+import com.itdct.deepshell.mcp.McpStdioBridge;
 import com.itdct.deepshell.protocol.ProtocolLaunchSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
@@ -22,6 +23,12 @@ public class DeepShellApplication {
         // 让 --deepshell.data-dir=... 与 -Ddeepshell.data-dir=... 一样在数据目录解析前生效，
         // 避免数据库走 CLI 参数、密钥/证书/日志却落到 ~/.deepshell
         applyDataDirFromArgs(args);
+        // AI 客户端以 stdio 方式启动本 jar：只做 JSON-RPC 转发，不启动 Spring / 图形界面
+        if (McpStdioBridge.hasStdioArg(args)) {
+            System.setProperty("java.awt.headless", "true");
+            McpStdioBridge.run(args);
+            return;
+        }
         // 开机自启 / 托盘后台启动：不自动弹出浏览器
         if (RuntimeSupport.hasBackgroundArg(args)) {
             System.setProperty("deepshell.background", "true");

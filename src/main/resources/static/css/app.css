@@ -7346,3 +7346,19 @@ body.aichat-resizing {
     color: #d7e1f0;
     border-color: #2a3140;
 }
+
+/* MCP 服务弹窗 */
+.mcp-copy-row {
+    margin-top: 6px;
+}
+
+.mcp-tool-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.mcp-tool-tags .el-tag {
+    margin: 0;
+}

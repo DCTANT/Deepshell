@@ -50,6 +50,7 @@
 
 ## 功能
 
+- **MCP 服务（AI 直接调用）**：内置 `/mcp` 接口，Qoder / Cursor / Claude Code / Claude Desktop 等 AI 客户端可以列出连接、执行 SSH 命令、读写 / 上传 / 下载文件、查看系统信息与进程、打开桌面标签；支持 Streamable HTTP 与 stdio 桥接，MCP Token 独立管理，所有调用写入审计日志
 - **外部调用（跳板机客户端）**：启动后自动把 `deepshell://` 注册为当前用户的 URL 协议（无需浏览器插件），网页 / 运维门户用 `deepshell://connect?id=...` 或 `host/username/password` 链接即可拉起本机 DeepShell 并打开对应连接；已运行时交给现有实例，不会重复启动，调用目标、来源与结果记入审计
 - **HTTP 集成接口（JumpServer / 门户）**：面向服务端的 `POST /api/integration/connections/open` 接口，使用集成 Token 鉴权；按 `id` 或 `host + port + username` 新增 / 更新连接（含密码、密钥），并通知所有已打开的 DeepShell 页面通过 WebSocket 自动打开连接标签；没有在线页面时返回 `workspaceUrl`，门户可直接跳转
 - **新手连接向导**：新建连接默认是分步向导——选阿里云 / 腾讯云 / 华为云 / 其他，选 Ubuntu / Debian / CentOS 等系统镜像并给出建议登录名（ubuntu / root），再填地址、端口、密码或私钥；每一步都说明 IP、安全组、默认用户去哪找。连不上时按错误类型给步骤（拒绝连接、超时、DNS、认证失败、私钥格式、代理 / 跳板机等），不再只报一句 Auth fail
@@ -292,6 +293,89 @@ curl -X POST 'http://127.0.0.1:17777/api/integration/connections/open' \
 }
 ```
 
+## MCP 服务（AI 直接调用）
+
+DeepShell 内置 [MCP（Model Context Protocol）](https://modelcontextprotocol.io) 服务，AI 客户端可以直接把 DeepShell 当成运维工具：列出已保存连接、执行 SSH 命令、通过 SFTP 读写文件、查看系统信息与进程，或者在 DeepShell 页面里打开连接标签。
+
+### 启用与配置
+
+1. 启动 DeepShell，打开右上角菜单「安全与访问 → MCP 服务」
+2. 弹窗里会显示 HTTP 地址、调用 Token，以及可直接复制的 HTTP / stdio 两种客户端配置
+3. 把配置粘贴到 AI 客户端的 MCP 设置里即可；DeepShell 需要保持运行
+
+- Token 优先读取 `deepshell.mcp.token`；未配置时自动生成到数据目录 `mcp.token`，与 JumpServer 集成接口的 Token 相互独立
+- 点击「重新生成 Token」后，旧配置立即失效，需要重新复制配置
+- 默认地址为 `http://127.0.0.1:17777/mcp`（启用 HTTPS 或自定义端口时以弹窗显示为准）；只接受 `POST`，使用 MCP Streamable HTTP 协议
+- AI 客户端在另一台电脑上时，把 `127.0.0.1` 换成 DeepShell 所在机器的局域网地址；这需要开启局域网访问并保持登录保护
+- 开启 TLS 且使用自签证书时，HTTP 客户端可能因证书不受信任而连接失败；可以在客户端信任证书，或改用 stdio 方式（桥接进程会自动信任本机自签证书）
+- stdio 方式由客户端启动 `java -jar deepshell.jar --mcp-stdio`，桥接进程只做 JSON-RPC 转发，不会启动第二个 DeepShell
+
+### HTTP 配置示例
+
+把 Token 换成弹窗里显示的值：
+
+```json
+{
+  "mcpServers": {
+    "deepshell": {
+      "url": "http://127.0.0.1:17777/mcp",
+      "headers": {
+        "Authorization": "Bearer 这里填弹窗里的Token"
+      }
+    }
+  }
+}
+```
+
+只支持 URL、不能加请求头的客户端，可以使用弹窗里的「含 Token 地址」（`/mcp?token=...`）。这种方式会把 Token 留在客户端配置里，仍然要像密码一样保管。
+
+### stdio 配置示例
+
+绿色版会使用自带的精简 JRE，路径以弹窗生成的配置为准：
+
+```json
+{
+  "mcpServers": {
+    "deepshell": {
+      "command": "C:\\DeepShell\\runtime\\bin\\java.exe",
+      "args": [
+        "-Dfile.encoding=UTF-8",
+        "-jar",
+        "C:\\DeepShell\\app\\deepshell.jar",
+        "--mcp-stdio",
+        "--deepshell.data-dir=C:\\DeepShell\\data"
+      ]
+    }
+  }
+}
+```
+
+### 工具列表
+
+| 工具 | 作用 |
+|---|---|
+| `list_connections` | 列出已保存连接（不返回密码），获取 `connectionId` |
+| `list_sessions` | 查看当前存活的 SSH 会话 |
+| `open_session` | 为连接建立并缓存 SSH 会话 |
+| `close_session` | 关闭 MCP 自己建立的会话 |
+| `run_command` | 执行非交互式 shell 命令，返回输出、退出码与 cwd |
+| `list_files` | 列出远程目录 |
+| `read_file` | 读取远程文件（文本 UTF-8 / 二进制 base64） |
+| `write_file` | 覆盖写入远程文本文件，可自动建父目录 |
+| `upload_file` | 上传 DeepShell 所在电脑的文件 |
+| `download_file` | 下载远程文件到 DeepShell 所在电脑 |
+| `get_system_info` | 系统信息（发行版、内核、CPU、内存、磁盘等） |
+| `get_stats` | CPU / 内存 / 交换 / 网络速率 / 负载实时监控 |
+| `list_processes` | 进程列表，可按 CPU / 内存 / PID 排序 |
+| `open_connection_tab` | 通知已打开的 DeepShell 页面切到该连接标签 |
+
+### 安全说明
+
+- 工具会以保存的连接凭据在远程**真实执行命令、读写文件**；`upload_file` / `download_file` 还会读写 DeepShell 所在电脑的文件，首次使用前请确认 AI 客户端可信
+- 每次工具调用记录为「MCP 调用」，命令执行、文件写入 / 上传 / 下载另有独立审计项
+- 开启局域网访问时 `/mcp` 也会监听局域网地址；不要把 Token 发到不受信任的环境，必要时重新生成
+- MCP 不提供删除连接、修改连接凭据等高危管理能力，连接与凭据仍只在 DeepShell 界面中维护
+
 ## 桌面应用插件
 
 AI 可视化桌面的开始菜单 →「已安装应用」→「安装 / 管理」，导入一个 ZIP 即可安装。安装后应用会出现在开始菜单，可像内置应用一样打开为可拖动 / 缩放 / 最大化的桌面窗口。
@@ -498,6 +582,9 @@ deepshell.local-shell.command: ""
 
 # HTTP 集成接口（JumpServer / 门户）Token：留空自动生成到数据目录 integration.token
 deepshell.integration.token: ""
+
+# MCP（AI 客户端调用）Token：留空自动生成到数据目录 mcp.token
+deepshell.mcp.token: ""
 
 # 登录认证（默认关闭；开启后必须登录才能访问工作台）
 deepshell.auth.enabled: false

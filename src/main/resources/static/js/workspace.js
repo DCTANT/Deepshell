@@ -4869,6 +4869,13 @@ new Vue({
             endpoint: '/api/integration/connections/open',
             token: '', configured: false, clients: 0, scheme: 'http', port: 0
         },
+        mcpVisible: false,
+        mcpLoading: false,
+        mcpInfo: {
+            endpoint: '', urlWithToken: '', token: '', configured: false, clients: 0,
+            protocolVersion: '', serverName: 'deepshell', toolCount: 0, tools: [],
+            httpConfig: null, stdio: { available: false }
+        },
         /* DeepShell 后端自身的关闭 / 重启状态 */
         appLifecycle: {
             visible: false,
@@ -4925,6 +4932,14 @@ new Vue({
             ['PROTOCOL_REGISTER', '注册外部调用'],
             ['INTEGRATION_OPEN', '接口打开连接'],
             ['INTEGRATION_TOKEN', '集成接口 Token'],
+            ['MCP_TOOL', 'MCP 调用'],
+            ['MCP_COMMAND', 'MCP 命令'],
+            ['MCP_FILE_WRITE', 'MCP 写入文件'],
+            ['MCP_FILE_UPLOAD', 'MCP 上传'],
+            ['MCP_FILE_DOWNLOAD', 'MCP 下载'],
+            ['MCP_SESSION_CLOSE', 'MCP 关闭会话'],
+            ['MCP_OPEN_TAB', 'MCP 打开连接'],
+            ['MCP_TOKEN', 'MCP Token'],
             ['NETWORK_ROOT', 'root 采样'],
             ['HOST_KEY', '主机指纹'],
             ['PORT_FORWARD', '端口转发'],
@@ -5151,6 +5166,14 @@ new Vue({
                 + "  -d '{\"name\":\"生产服务器\",\"host\":\"10.0.0.10\",\"port\":22,"
                 + "\"username\":\"root\",\"password\":\"******\","
                 + "\"view\":\"desktop\",\"source\":\"jumpserver\"}'";
+        },
+        mcpHttpConfigText: function () {
+            return this.mcpInfo.httpConfig
+                ? JSON.stringify(this.mcpInfo.httpConfig, null, 2) : '';
+        },
+        mcpStdioConfigText: function () {
+            return this.mcpInfo.stdio && this.mcpInfo.stdio.config
+                ? JSON.stringify(this.mcpInfo.stdio.config, null, 2) : '';
         },
         splitDividerKeys: function () {
             return this.splitKeys.length > 1 ? this.splitKeys.slice(0, -1) : [];
@@ -7181,6 +7204,8 @@ new Vue({
                 this.openProtocolDialog();
             } else if (cmd === 'integration') {
                 this.openIntegrationDialog();
+            } else if (cmd === 'mcp') {
+                this.openMcpDialog();
             } else if (cmd === 'audit') {
                 this.openAudit();
             } else if (cmd === 'ai') {
@@ -19603,6 +19628,72 @@ new Vue({
                 return;
             }
             this.copyText(this.integrationCurl);
+        },
+        /* ---------- MCP 服务（AI 调用） ---------- */
+        openMcpDialog: function () {
+            this.mcpVisible = true;
+            this.loadMcpStatus();
+        },
+        loadMcpStatus: function () {
+            var self = this;
+            this.mcpLoading = true;
+            return http.get('/api/mcp/status').then(function (d) {
+                if (d) {
+                    self.mcpInfo = d;
+                }
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.mcpLoading = false;
+            });
+        },
+        regenerateMcpToken: function () {
+            var self = this;
+            this.$confirm('重新生成后，所有已配置的 AI 客户端都会立即连接失败，需要重新复制配置。确定继续？',
+                '重新生成 MCP Token', { type: 'warning' })
+                .then(function () {
+                    return http.post('/api/mcp/token/regenerate');
+                })
+                .then(function (d) {
+                    if (d) {
+                        self.mcpInfo = d;
+                    }
+                    ELEMENT.Message.success('已重新生成 MCP Token，请更新 AI 客户端配置');
+                })
+                .catch(function () { /* 取消或已由拦截器提示 */ });
+        },
+        copyMcpEndpoint: function () {
+            if (!this.mcpInfo.endpoint) {
+                ELEMENT.Message.warning('MCP 地址尚未就绪');
+                return;
+            }
+            this.copyText(this.mcpInfo.endpoint);
+        },
+        copyMcpToken: function () {
+            if (!this.mcpInfo.token) {
+                ELEMENT.Message.warning('Token 尚未生成');
+                return;
+            }
+            this.copyText(this.mcpInfo.token);
+        },
+        copyMcpUrlWithToken: function () {
+            if (!this.mcpInfo.urlWithToken) {
+                ELEMENT.Message.warning('MCP 地址尚未就绪');
+                return;
+            }
+            this.copyText(this.mcpInfo.urlWithToken);
+        },
+        copyMcpHttpConfig: function () {
+            if (!this.mcpHttpConfigText) {
+                ELEMENT.Message.warning('HTTP 配置尚未生成');
+                return;
+            }
+            this.copyText(this.mcpHttpConfigText);
+        },
+        copyMcpStdioConfig: function () {
+            if (!this.mcpStdioConfigText) {
+                ELEMENT.Message.warning('stdio 配置不可用，请使用 HTTP 方式');
+                return;
+            }
+            this.copyText(this.mcpStdioConfigText);
         },
         /* ---------- 工作台事件通道：HTTP 接口打开连接 ---------- */
         connectWorkspaceEvents: function () {

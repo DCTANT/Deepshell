@@ -405,6 +405,17 @@ public class SshSessionManager {
         return out;
     }
 
+    /** 当前进程内所有存活的交互会话（MCP 工具展示 / 排查用）。 */
+    public List<SshSession> liveSessions() {
+        List<SshSession> out = new ArrayList<>();
+        for (SshSession s : sessions.values()) {
+            if (!s.isClosed()) {
+                out.add(s);
+            }
+        }
+        return out;
+    }
+
     private static ChannelSftp openSftpChannel(Session session) throws Exception {
         ChannelSftp channel = (ChannelSftp) session.openChannel("sftp");
         try {

@@ -1032,6 +1032,88 @@
         </div>
     </el-dialog>
 
+    <!-- MCP 服务（AI 调用） -->
+    <el-dialog title="MCP 服务（AI 调用）" :visible.sync="mcpVisible"
+               width="760px" top="6vh" custom-class="protocol-dlg" append-to-body>
+        <div class="protocol-box" v-loading="mcpLoading">
+            <el-alert :title="'MCP 服务可用 · 已开放 ' + (mcpInfo.toolCount || 0) + ' 个工具 · 当前在线页面 ' + (mcpInfo.clients || 0) + ' 个'"
+                      :description="mcpInfo.configured
+                          ? 'Token 由 application.yml 固定配置；下方接入配置已包含当前 Token。'
+                          : 'Token 自动保存在数据目录 mcp.token；重新生成后旧配置立即失效。'"
+                      type="success" :closable="false" show-icon></el-alert>
+            <div class="protocol-grid">
+                <div class="protocol-k">HTTP 地址</div>
+                <div class="protocol-v">
+                    <el-input :value="mcpInfo.endpoint" readonly size="mini">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyMcpEndpoint">复制</el-button>
+                    </el-input>
+                </div>
+                <div class="protocol-k">调用 Token</div>
+                <div class="protocol-v">
+                    <el-input :value="mcpInfo.token" readonly size="mini" class="integration-token"
+                              placeholder="加载中…">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyMcpToken">复制</el-button>
+                    </el-input>
+                </div>
+                <div class="protocol-k">Token 地址</div>
+                <div class="protocol-v">
+                    <el-input :value="mcpInfo.urlWithToken" readonly size="mini" class="integration-token"
+                              placeholder="仅适合只能填写 URL 的客户端">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyMcpUrlWithToken">复制</el-button>
+                    </el-input>
+                </div>
+            </div>
+            <div class="protocol-tip">
+                推荐优先使用 HTTP 配置（Qoder / Cursor / Claude Code 等支持远程 MCP 的客户端）；
+                Claude Desktop 等只支持 stdio 的客户端使用第二种配置。
+                无论哪种方式，DeepShell 都需要保持运行。单条命令最长执行 120 秒，
+                如果客户端请求超时更短，请在客户端调大超时时间。
+            </div>
+            <div class="protocol-example-head">方式一：HTTP 配置（复制到客户端的 MCP 配置里）</div>
+            <el-input type="textarea" :rows="7" readonly :value="mcpHttpConfigText"
+                      class="integration-code"></el-input>
+            <div class="mcp-copy-row">
+                <el-button size="mini" icon="el-icon-document-copy" @click="copyMcpHttpConfig">
+                    复制 HTTP 配置
+                </el-button>
+            </div>
+            <div class="protocol-example-head">方式二：stdio 配置（客户端拉起本机 java 转发）</div>
+            <el-alert v-if="!mcpInfo.stdio || !mcpInfo.stdio.available"
+                      :title="(mcpInfo.stdio && mcpInfo.stdio.reason) || '当前运行方式不支持 stdio，请使用 HTTP 配置'"
+                      type="info" :closable="false" show-icon></el-alert>
+            <template v-else>
+                <el-input type="textarea" :rows="8" readonly :value="mcpStdioConfigText"
+                          class="integration-code"></el-input>
+                <div class="mcp-copy-row">
+                    <el-button size="mini" icon="el-icon-document-copy" @click="copyMcpStdioConfig">
+                        复制 stdio 配置
+                    </el-button>
+                </div>
+            </template>
+            <div class="protocol-example-head">已开放的工具</div>
+            <div class="mcp-tool-tags">
+                <el-tag v-for="t in mcpInfo.tools" :key="t.name" size="mini" type="info"
+                        :title="t.description">{{ t.title || t.name }}</el-tag>
+            </div>
+            <div class="protocol-warn">
+                <i class="el-icon-warning"></i>
+                这些工具会以保存的连接凭据在远程真实执行命令、读写文件；上传 / 下载还会读写 DeepShell 所在电脑的文件，
+                所有调用都会写入审计日志。请像密码一样保管 Token；不再使用时重新生成即可让旧配置立即失效。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="mcpVisible = false">关闭</el-button>
+            <el-button size="small" icon="el-icon-refresh" :loading="mcpLoading"
+                       @click="loadMcpStatus">刷新状态</el-button>
+            <el-button size="small" type="warning" :disabled="mcpInfo.configured"
+                       :title="mcpInfo.configured ? 'Token 已在 application.yml 配置，请修改配置后重启' : ''"
+                       @click="regenerateMcpToken">重新生成 Token</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 帮助 -->
     <el-dialog title="DeepShell 帮助手册" :visible.sync="helpVisible" width="720px" top="4vh" append-to-body>
         <div class="help-box">
@@ -1069,6 +1151,7 @@
                 <div class="help-title"><i class="el-icon-connection"></i>HTTP 集成接口（JumpServer / 门户）</div>
                 <ul>
                     <li>右上角菜单「安全与访问 → 集成接口（HTTP）」可查看接口地址、调用 Token 与 cURL 示例；Token 优先使用 <code>deepshell.integration.token</code>，未配置时自动生成到数据目录 <code>integration.token</code></li>
+                    <li>右上角菜单「安全与访问 → MCP 服务」可查看 MCP 地址与 Token，并复制 HTTP / stdio 接入配置；AI 客户端可通过 MCP 直接列连接、执行命令、读写文件、查看监控，每次调用都会写入审计日志</li>
                     <li>JumpServer / 门户后端向 <code>POST /api/integration/connections/open</code> 发送 JSON，并在请求头携带 <code>X-DeepShell-Integration-Token</code>（或 Bearer Token）。接口按 host + port + username 更新已有连接，匹配不到时新建连接，然后通知已打开的 DeepShell 页面自动打开连接标签</li>
                     <li>关键字段：<code>id</code> 更新指定连接；<code>password</code> / <code>keyPath</code> 更新凭据；<code>view=desktop|workbench</code> 指定打开视图；<code>open=false</code> 只保存不打开；<code>openInBrowser=true</code> 在没有在线页面时让 DeepShell 所在机器打开浏览器</li>
                     <li>接口只面向服务端调用（拒绝浏览器 Origin 请求，不开启 CORS），请在内网 / HTTPS 下使用；没有在线页面时响应会返回 <code>workspaceUrl</code>，由门户把用户浏览器跳转到该地址即可</li>
