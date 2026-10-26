@@ -2300,6 +2300,9 @@ button {
 .m-ai-usage-label {
     font-size: 10.5px;
     color: #8b98ad;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .m-ai-usage-total {
@@ -2322,14 +2325,6 @@ button {
 .m-ai-usage-io {
     font-size: 10.5px;
     color: #9fb0c7;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.m-ai-usage-calls {
-    font-size: 10px;
-    color: #6f7f96;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

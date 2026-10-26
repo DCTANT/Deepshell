@@ -318,7 +318,8 @@
     </el-dialog>
 
     <!-- AI 设置 -->
-    <el-dialog title="AI 设置（大语言模型）" :visible.sync="aiSetVisible" width="640px" append-to-body>
+    <el-dialog title="AI 设置（大语言模型）" :visible.sync="aiSetVisible" width="700px"
+               custom-class="ai-set-dialog" top="5vh" append-to-body>
         <div class="set-row">
             <span class="set-label">模型厂商</span>
             <el-select size="small" v-model="aiSetForm.provider" style="flex:1" @change="onAiProviderChange">
@@ -356,19 +357,16 @@
             <el-input-number v-model="aiSetForm.contextWindow" size="small" :min="4096" :max="2000000"
                              :step="1000" controls-position="right" style="width:160px"></el-input-number>
             <span class="set-hint" style="margin-left:10px;flex:1">
-                按所用模型的上下文窗口填写（tokens），默认 400000；用于计算占用比例和压缩保留量
+                按所用模型的上下文窗口填写（tokens），用于占用比例与压缩保留量
             </span>
         </div>
-        <div class="set-hint" style="line-height:1.9;min-height:19px">
+        <div class="set-hint ai-set-model-note" style="min-height:19px" :title="aiModelsNote">
             <span v-if="aiModelsLoading">正在从厂商接口实时获取模型列表…</span>
             <span v-else-if="aiModelsNote">{{ aiModelsNote }}</span>
         </div>
-        <div class="set-hint" style="margin-top:6px;line-height:1.9">
-            · 模型列表由厂商接口实时获取（点「刷新列表」随时更新），列表中没有的模型可直接输入<br>
-            · <template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">API Key 获取：{{ aiCurrentPreset.keyUrl }}<br></template>
-            · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口<br>
-            · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度<br>
-            · 上下文窗口用于计算占用比例和压缩保留量，请按所用模型填写；压缩会调用一次模型生成结构化摘要
+        <div class="set-hint ai-set-help">
+            · 模型列表实时从厂商获取，也可直接输入模型 ID<template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">；API Key 获取：{{ aiCurrentPreset.keyUrl }}</template><br>
+            · 配置保存在数据目录 ai.properties，仅在调用 AI 功能时发送到该接口；上下文窗口用于计算占用比例与压缩
         </div>
         <div class="ai-usage">
             <div class="ai-usage-head">
@@ -378,12 +376,10 @@
                            :loading="aiUsageLoading" @click="loadAiUsage">刷新</el-button>
             </div>
             <div class="ai-usage-grid" v-loading="aiUsageLoading">
-                <div class="ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label">
-                    <div class="ai-usage-label">{{ b.label }}</div>
+                <div class="ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label" :title="b.hint">
+                    <div class="ai-usage-label">{{ b.labelText }}</div>
                     <div class="ai-usage-total">{{ b.totalText }}<i>tokens</i></div>
                     <div class="ai-usage-io">输入 {{ b.inputText }} · 输出 {{ b.outputText }}</div>
-                    <div class="ai-usage-calls">{{ b.calls }} 次调用<template v-if="b.estimatedCalls">，
-                        含 {{ b.estimatedCalls }} 次估算</template></div>
                 </div>
             </div>
             <div class="ai-usage-tip">

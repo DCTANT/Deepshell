@@ -6276,6 +6276,19 @@
     color: var(--dsk-panel-fg);
 }
 
+/* 设置项里的普通按钮跟随窗口明暗（深色窗口下不再是一块白底） */
+.ai-desktop .dsk-settings .dsk-set-row .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--text) {
+    background: var(--dsk-field-bg);
+    border-color: var(--dsk-panel-line);
+    color: var(--dsk-panel-fg);
+}
+
+.ai-desktop .dsk-settings .dsk-set-row .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--text):hover {
+    background: var(--dsk-panel-hover);
+    border-color: var(--dsk-accent);
+    color: var(--dsk-accent);
+}
+
 .ai-desktop .dsk-set-views {
     border-color: var(--dsk-panel-line);
 }

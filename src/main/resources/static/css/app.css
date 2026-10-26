@@ -310,10 +310,49 @@ a {
     color: #909399;
 }
 
+/* AI 设置：紧凑布局，避免在常见窗口高度下出现滚动条 */
+.ai-set-dialog {
+    max-width: calc(100vw - 24px);
+}
+
+.ai-set-dialog .el-dialog__header {
+    padding: 14px 20px 8px;
+}
+
+.ai-set-dialog .el-dialog__body {
+    padding-top: 12px;
+}
+
+.ai-set-dialog .el-dialog__footer {
+    padding: 8px 20px 14px;
+}
+
+.ai-set-dialog .set-row {
+    margin-bottom: 8px;
+}
+
+.ai-set-dialog .set-label {
+    width: 76px;
+}
+
+.ai-set-help {
+    margin-top: 2px;
+    line-height: 1.65;
+}
+
+.ai-set-model-note {
+    display: -webkit-box;
+    max-height: 3.2em;
+    overflow: hidden;
+    line-height: 1.6;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
 /* AI 设置：token 使用统计 */
 .ai-usage {
-    margin-top: 14px;
-    padding-top: 12px;
+    margin-top: 10px;
+    padding-top: 10px;
     border-top: 1px solid #ebeef5;
 }
 
@@ -321,7 +360,7 @@ a {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 9px;
+    margin-bottom: 7px;
 }
 
 .ai-usage-head b {
@@ -342,25 +381,27 @@ a {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
-    min-height: 78px;
 }
 
 .ai-usage-card {
-    padding: 9px 10px;
+    padding: 7px 9px;
     border: 1px solid #e4ecf7;
-    border-radius: 8px;
+    border-radius: 7px;
     background: linear-gradient(180deg, #f8fbff, #eef4fd);
     overflow: hidden;
 }
 
 .ai-usage-label {
-    font-size: 11px;
+    font-size: 10.5px;
     color: #7c8da6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ai-usage-total {
-    margin-top: 2px;
-    font-size: 20px;
+    margin-top: 1px;
+    font-size: 18px;
     font-weight: 600;
     line-height: 1.25;
     color: #2f5d9e;
@@ -377,27 +418,18 @@ a {
 }
 
 .ai-usage-io {
-    margin-top: 4px;
-    font-size: 11px;
+    margin-top: 2px;
+    font-size: 10.5px;
     color: #607089;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-.ai-usage-calls {
-    margin-top: 1px;
-    font-size: 11px;
-    color: #97a3b5;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
 .ai-usage-tip {
-    margin-top: 7px;
-    font-size: 11px;
-    line-height: 1.6;
+    margin-top: 5px;
+    font-size: 10.5px;
+    line-height: 1.55;
     color: #a0a8b4;
 }
 

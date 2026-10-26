@@ -592,12 +592,10 @@
                         </button>
                     </div>
                     <div class="m-ai-usage-grid">
-                        <div class="m-ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label">
-                            <span class="m-ai-usage-label">{{ b.label }}</span>
+                        <div class="m-ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label" :title="b.hint">
+                            <span class="m-ai-usage-label">{{ b.labelText }}</span>
                             <span class="m-ai-usage-total">{{ b.totalText }}<i>tokens</i></span>
                             <span class="m-ai-usage-io">输入 {{ b.inputText }} · 输出 {{ b.outputText }}</span>
-                            <span class="m-ai-usage-calls">{{ b.calls }} 次调用<template v-if="b.estimatedCalls"> ·
-                                含 {{ b.estimatedCalls }} 次估算</template></span>
                         </div>
                     </div>
                     <div class="m-ai-usage-tip">

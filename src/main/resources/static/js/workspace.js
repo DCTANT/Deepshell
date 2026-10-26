@@ -5160,13 +5160,15 @@ new Vue({
             ];
             return rows.map(function (r) {
                 var d = r.data || {};
+                var calls = Number(d.calls) || 0;
+                var estimated = Number(d.estimatedCalls) || 0;
                 return {
                     label: r.label,
+                    labelText: r.label + ' · ' + calls + ' 次' + (estimated ? ' · 估算 ' + estimated : ''),
+                    hint: estimated ? '其中 ' + estimated + ' 次未返回 usage，按字符数估算' : '',
                     totalText: formatTokenCount(d.totalTokens),
                     inputText: formatTokenCount(d.inputTokens),
-                    outputText: formatTokenCount(d.outputTokens),
-                    calls: Number(d.calls) || 0,
-                    estimatedCalls: Number(d.estimatedCalls) || 0
+                    outputText: formatTokenCount(d.outputTokens)
                 };
             });
         },
