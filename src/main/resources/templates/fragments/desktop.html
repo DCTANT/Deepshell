@@ -1987,6 +1987,9 @@
             <div class="dsk-notif-head">
                 <span><i class="el-icon-bell"></i> 通知</span>
                 <span class="spacer"></span>
+                <button class="dsk-notif-clear" title="提醒设置" @click="openNotifySettings">
+                    <i class="el-icon-setting"></i>
+                </button>
                 <button class="dsk-notif-clear" v-if="desktop.notifications.length"
                         @click="clearDesktopNotifications">全部清除</button>
                 <button class="dsk-notif-x" title="关闭" @click="desktop.notifOpen = false">

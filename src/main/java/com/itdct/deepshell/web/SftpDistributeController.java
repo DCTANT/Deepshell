@@ -24,8 +24,9 @@ public class SftpDistributeController {
     public R<Map<String, Object>> distribute(
             @RequestParam(value = "files", required = false) List<MultipartFile> files,
             @RequestParam(value = "connectionIds", required = false) List<Long> connectionIds,
-            @RequestParam(value = "targetPath", required = false) String targetPath) throws Exception {
-        return R.ok(service.distribute(files, connectionIds, targetPath));
+            @RequestParam(value = "targetPath", required = false) String targetPath,
+            @RequestParam(value = "conflict", required = false) String conflict) throws Exception {
+        return R.ok(service.distribute(files, connectionIds, targetPath, conflict));
     }
 
     @PostMapping("/cross")
@@ -34,7 +35,7 @@ public class SftpDistributeController {
             throw new IllegalArgumentException("请求参数缺失");
         }
         return R.ok(service.crossTransfer(req.getSessionId(), req.getPaths(),
-                req.getConnectionIds(), req.getTargetPath()));
+                req.getConnectionIds(), req.getTargetPath(), req.getConflict()));
     }
 
     @GetMapping("/{taskId}")

@@ -427,7 +427,7 @@
             }
         },
         methods: {
-            open: function (row) {
+            open: function (row, prefill) {
                 var self = this;
                 http.get('/api/folders').then(function (d) {
                     self.folders = d || [];
@@ -451,6 +451,18 @@
                         persistSession: row.persistSession !== false
                     };
                     this.mode = 'advanced';
+                } else if (prefill) {
+                    // 从终端输出里的 IP:端口 打开：预填地址，其余交给用户确认
+                    this.form = emptyForm();
+                    this.form.host = prefill.host || '';
+                    this.form.port = prefill.port || 22;
+                    this.form.username = prefill.username || 'root';
+                    this.form.name = prefill.name || this.form.host;
+                    this.mode = 'advanced';
+                    this.step = 0;
+                    this.provider = 'custom';
+                    this.lastSuggested = '';
+                    this.ipGuideOpen = false;
                 } else {
                     this.form = emptyForm();
                     this.mode = 'wizard';

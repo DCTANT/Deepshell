@@ -28,8 +28,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -209,6 +211,13 @@ public class LocalDesktopService {
 
     /** relativePath 可包含多级目录（文件夹上传），自动创建父目录 */
     public void upload(String virtualDir, String relativePath, MultipartFile file) throws IOException {
+        uploadWithPolicy(virtualDir, relativePath, file, SftpService.CONFLICT_OVERWRITE);
+    }
+
+    /** 按同名冲突策略上传；返回实际写入的相对路径、是否跳过/重命名 */
+    public Map<String, Object> uploadWithPolicy(String virtualDir, String relativePath,
+                                                MultipartFile file, String conflictPolicy)
+            throws IOException {
         if (file == null) {
             throw new IllegalArgumentException("上传文件不存在");
         }
@@ -223,10 +232,106 @@ public class LocalDesktopService {
                 Files.createDirectory(dir);
             }
         }
+        String relative = String.join("/", parts);
+        String virtualPath = virtualJoin(virtualDir, relative);
+        String policy = SftpService.normalizeConflictPolicy(conflictPolicy);
         Path target = writableChild(dir, parts.get(parts.size() - 1));
+        boolean renamed = false;
+        if (SftpService.CONFLICT_SKIP.equals(policy)
+                && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            Map<String, Object> skipped = new LinkedHashMap<>();
+            skipped.put("path", virtualPath);
+            skipped.put("name", target.getFileName().toString());
+            skipped.put("skipped", true);
+            skipped.put("renamed", false);
+            return skipped;
+        }
+        if (SftpService.CONFLICT_RENAME.equals(policy)
+                && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            target = uniqueTarget(dir, target.getFileName().toString());
+            renamed = true;
+        }
         try (InputStream in = file.getInputStream()) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         }
+        String actualName = target.getFileName().toString();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("path", renamed ? virtualJoin(virtualDir, parentRelative(relative) + actualName) : virtualPath);
+        out.put("name", actualName);
+        out.put("skipped", false);
+        out.put("renamed", renamed);
+        return out;
+    }
+
+    /** 上传前预检本地桌面沙箱中的同名文件 */
+    public List<Map<String, Object>> checkUploadConflicts(
+            String virtualDir, List<SftpService.UploadConflictFile> files) throws IOException {
+        Path dir = existing(virtualDir);
+        requireDirectory(dir);
+        List<Map<String, Object>> conflicts = new ArrayList<>();
+        Set<String> checked = new HashSet<>();
+        if (files == null) {
+            return conflicts;
+        }
+        for (SftpService.UploadConflictFile file : files) {
+            if (file == null) {
+                continue;
+            }
+            List<String> parts = uploadParts(file.getRelativePath(), file.getName());
+            String relative = String.join("/", parts);
+            if (!checked.add(relative)) {
+                continue;
+            }
+            Path parent = dir;
+            Path target = null;
+            boolean blocked = false;
+            for (int i = 0; i < parts.size() - 1; i++) {
+                parent = writableChild(parent, parts.get(i));
+                if (!Files.exists(parent, LinkOption.NOFOLLOW_LINKS)) {
+                    break;
+                }
+                if (!Files.isDirectory(parent)) {
+                    blocked = true;
+                    target = parent;
+                    break;
+                }
+            }
+            if (!blocked && Files.exists(parent, LinkOption.NOFOLLOW_LINKS)) {
+                Path candidate = writableChild(parent, parts.get(parts.size() - 1));
+                if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                    target = candidate;
+                }
+            }
+            if (target == null) {
+                continue;
+            }
+            boolean isDir = Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS);
+            long size = isDir ? 0L : Files.size(target);
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("relativePath", relative);
+            item.put("name", parts.get(parts.size() - 1));
+            item.put("dir", isDir);
+            item.put("size", size);
+            item.put("sameSize", !isDir && file.getSize() > 0 && file.getSize() == size);
+            conflicts.add(item);
+        }
+        return conflicts;
+    }
+
+    private static String virtualJoin(String dir, String relative) {
+        String base = dir == null || dir.trim().isEmpty() ? "/" : dir.trim();
+        if (!base.startsWith("/")) {
+            base = "/" + base;
+        }
+        while (base.length() > 1 && base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return ("/".equals(base) ? "/" : base + "/") + relative;
+    }
+
+    private static String parentRelative(String relative) {
+        int idx = relative.lastIndexOf('/');
+        return idx < 0 ? "" : relative.substring(0, idx + 1);
     }
 
     private static List<String> uploadParts(String relativePath, String originalName) {

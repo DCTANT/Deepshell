@@ -97,6 +97,20 @@ function loadSftpFollow() {
     return true;
 }
 
+/* 提醒设置：桌面通知 / 提示音 / 关闭标签前确认 */
+function loadNotifySettings() {
+    var defaults = { desktop: false, sound: false, confirmClose: true };
+    try {
+        var saved = JSON.parse(localStorage.getItem('deepshell.notify') || 'null');
+        if (saved && typeof saved === 'object') {
+            defaults.desktop = !!saved.desktop;
+            defaults.sound = !!saved.sound;
+            defaults.confirmClose = saved.confirmClose !== false;
+        }
+    } catch (e) { /* ignore */ }
+    return defaults;
+}
+
 /* AI 可视化桌面：记住上次使用的图标视图 */
 function loadDesktopView() {
     try {
@@ -849,6 +863,12 @@ function createTerminalState(connId, conn, clientKey) {
         sessionId: null,
         ws: null,
         term: null,
+        outputUnread: false,
+        commandRunning: false,
+        commandStartedAt: 0,
+        commandText: '',
+        _cmdDoneTimer: null,
+        _linkHintShown: false,
         reconnectAttempts: 0,
         reconnectTimer: null,
         explicitClose: false,
@@ -1409,6 +1429,16 @@ function formatTokenCount(n) {
         return x >= 100 ? String(Math.round(x)) : String(Math.round(x * 10) / 10);
     };
     return v < 1000000 ? scaled(v / 1000) + 'K' : scaled(v / 1000000) + 'M';
+}
+
+function formatDurationMs(ms) {
+    var total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+    if (total < 60) {
+        return total + ' 秒';
+    }
+    var minutes = Math.floor(total / 60);
+    var seconds = total % 60;
+    return minutes + ' 分 ' + (seconds < 10 ? '0' : '') + seconds + ' 秒';
 }
 
 /* 上下文 token 粗估：中文 / 日文 / 韩文约 1.6 字符/token，代码与英文约 4 字符/token */
@@ -2281,6 +2311,9 @@ Vue.component('xfer-list', {
                 }
                 return 0;
             }
+            if (t.status === 'skipped') {
+                return 100;
+            }
             if (!t.size) {
                 // 流式打包 ZIP 无法预知总大小，显示不确定进度
                 return (t.kind === 'download' && t.status === 'downloading') ? -1 : (t.status === 'done' ? 100 : 0);
@@ -2324,6 +2357,7 @@ Vue.component('xfer-list', {
             }
             if (t.status === 'processing') return '正在写入服务器…';
             if (t.status === 'done') return '已完成';
+            if (t.status === 'skipped') return '同名文件已跳过';
             if (t.status === 'cancelled') return '已取消';
             return t.error || '失败';
         },
@@ -2578,6 +2612,9 @@ Vue.component('term-cmd-bar', {
             var run = function () {
                 if (!t.ws || t.ws.readyState !== 1) {
                     return;
+                }
+                if (self.$root.markCommandRunning) {
+                    self.$root.markCommandRunning(t, c.command);
                 }
                 t.ws.send(JSON.stringify({ type: 'data', data: c.command + '\r' }));
                 if (self.$root.pushHistory) {
@@ -4749,6 +4786,7 @@ new Vue({
             targetPath: '',
             keyword: '',
             ids: [],
+            conflict: 'overwrite',
             dragOver: false,
             starting: false,
             preparePct: 0,
@@ -4802,6 +4840,13 @@ new Vue({
         sftpFollow: loadSftpFollow(),
         transfers: [],
         transferCenterOpen: false,
+        uploadConflict: { visible: false, local: false, dir: '', tabKey: '', items: [] },
+        _uploadConflictResolve: null,
+        notifySettings: loadNotifySettings(),
+        notifySettingsVisible: false,
+        _notifyAudioCtx: null,
+        _lastUploadNotifyAt: 0,
+        recentlyClosedTabs: [],
         localDownloadStatus: { checked: false, local: false, available: false },
         localDlSummary: { visible: false, item: null },
         permVisible: false,
@@ -7954,6 +7999,7 @@ new Vue({
                 return;
             }
             this.$set(c, 'unread', true);
+            this.refreshUnreadTitle();
             http.put('/api/ai/convs/' + c.id, { unread: true }).catch(function () { /* ignore */ });
         },
         aiConvRead: function (c) {
@@ -7961,6 +8007,7 @@ new Vue({
                 return;
             }
             this.$set(c, 'unread', false);
+            this.refreshUnreadTitle();
             http.put('/api/ai/convs/' + c.id, { unread: false }).catch(function () { /* ignore */ });
         },
         /* 总结标题：force=false 用于新对话自动生成，force=true 用于右键菜单覆盖当前标题 */
@@ -8135,6 +8182,7 @@ new Vue({
             t.chatConvId = act ? act.id : null;
             t.chatMsgs = act && act.msgs ? act.msgs : [];
             t.chatInput = act ? (act.input || '') : '';
+            this.refreshUnreadTitle();
             this.scrollAiChat();
         },
         /* 浏览器里的旧对话一次性上传到服务端，成功后清理本地存储 */
@@ -8957,8 +9005,17 @@ new Vue({
                 }
                 conv.updatedAt = Date.now();
                 // 对话不在当前可见的会话/标签页，或页面在后台时留一个未读亮点，点开后清除
-                if (!t || t !== this.activeTab || t.chatConvId !== conv.id || document.hidden) {
+                var becameUnread = !t || t !== this.activeTab || t.chatConvId !== conv.id
+                    || document.hidden;
+                if (becameUnread) {
                     this.$set(conv, 'unread', true);
+                }
+                this.refreshUnreadTitle();
+                if (becameUnread && document.hidden && !(note && note.indexOf('已停止') >= 0)) {
+                    var failed = note && (note.indexOf('失败') >= 0 || note.indexOf('错误') >= 0);
+                    this.notifyTaskComplete(failed ? 'AI 任务失败' : 'AI 任务完成',
+                        (conv.title || 'AI 终端') + (note ? ' · ' + note : ''),
+                        { tag: 'ai-' + conv.id });
                 }
             }
             this.saveConv(t, conv);
@@ -16969,24 +17026,101 @@ new Vue({
             var folder = list.some(function (e) {
                 return (e.rel || '').indexOf('/') >= 0;
             });
-            if (folder && !t.local && t.sessionId) {
-                // 远端文件夹走分片上传队列：服务端按 relativePath 建目录，支持失败续传
+            return this.prepareUploads(t, dir, list).then(function (actions) {
+                if (!actions) {
+                    d.fileDragOver = false;
+                    self._deskDragDepth = 0;
+                    ELEMENT.Message.info('已取消上传');
+                    return;
+                }
+                d.fileDragOver = false;
+                self._deskDragDepth = 0;
+                if (t.local) {
+                    var loading = ELEMENT.Message({
+                        message: (folder ? '正在上传文件夹内容：' : '正在上传 ')
+                            + list.length + ' 个文件到 ' + dir + ' …',
+                        duration: 0,
+                        iconClass: 'el-icon-loading'
+                    });
+                    var ok = 0;
+                    var fail = 0;
+                    var skipped = 0;
+                    var chain = Promise.resolve();
+                    list.forEach(function (e) {
+                        var rel = e.rel || e.file.name;
+                        var action = actions[rel] || 'overwrite';
+                        if (action === 'skip') {
+                            self.pushSkippedUpload(t, dir, e, rel);
+                            skipped++;
+                            return;
+                        }
+                        chain = chain.then(function () {
+                            return self.uploadOne(t, dir, e.file, e.rel, list.length > 1, action)
+                                .then(function (item) {
+                                    if (item && item.status === 'skipped') {
+                                        skipped++;
+                                    } else {
+                                        ok++;
+                                    }
+                                }).catch(function () {
+                                    fail++;
+                                });
+                        });
+                    });
+                    return chain.then(function () {
+                        loading.close();
+                        self.desktopRefresh(d);
+                        var label = folder ? '文件夹' : '文件';
+                        if (fail === 0 && skipped === 0) {
+                            ELEMENT.Message.success(list.length === 1
+                                ? ('文件上传成功：' + list[0].file.name)
+                                : (label + '上传成功：' + list.length + ' 个文件 → ' + dir));
+                            self.pushDesktopNotice('success', '上传完成',
+                                list.length === 1 ? list[0].file.name
+                                    : (list.length + ' 个文件 → ' + dir), 'transfers');
+                        } else if (fail === 0) {
+                            ELEMENT.Message.info('上传完成：成功 ' + ok + ' 个，跳过 ' + skipped + ' 个同名文件');
+                            self.pushDesktopNotice('info', '上传完成（有跳过）',
+                                '成功 ' + ok + ' 个，跳过 ' + skipped + ' 个 → ' + dir, 'transfers');
+                        } else {
+                            ELEMENT.Message.warning('上传完成：成功 ' + ok + ' 个，失败 ' + fail
+                                + ' 个' + (skipped ? '，跳过 ' + skipped + ' 个' : ''));
+                            self.pushDesktopNotice('warning', '上传部分失败',
+                                '成功 ' + ok + ' 个，失败 ' + fail + ' 个 → ' + dir, 'transfers');
+                        }
+                    });
+                }
                 var queued = [];
+                var skippedCount = 0;
                 list.forEach(function (e) {
-                    var item = self.enqueueUpload(t, dir, e.file, e.rel);
+                    var rel = e.rel || e.file.name;
+                    var action = actions[rel] || 'overwrite';
+                    if (action === 'skip') {
+                        self.pushSkippedUpload(t, dir, e, rel);
+                        skippedCount++;
+                        return;
+                    }
+                    var item = self.enqueueUpload(t, dir, e.file, e.rel, action);
                     if (item) {
                         queued.push(item);
                     }
                 });
+                self.pumpTransfers();
                 if (!queued.length) {
-                    ELEMENT.Message.warning('上传队列未就绪，请稍后再试');
-                    return Promise.resolve();
+                    self.desktopRefresh(d);
+                    if (skippedCount) {
+                        ELEMENT.Message.info('已跳过 ' + skippedCount + ' 个同名文件');
+                        self.pushDesktopNotice('info', '上传已跳过',
+                            skippedCount + ' 个同名文件 → ' + dir, 'transfers');
+                    } else {
+                        ELEMENT.Message.warning('上传队列未就绪，请稍后再试');
+                    }
+                    return;
                 }
-                ELEMENT.Message.success('已加入上传队列：' + queued.length + ' 个文件 → ' + dir);
+                ELEMENT.Message.success('已加入上传队列：' + queued.length + ' 个文件'
+                    + (skippedCount ? '，跳过 ' + skippedCount + ' 个' : '') + ' → ' + dir);
                 self.pushDesktopNotice('info', '已加入上传队列',
                     queued.length + ' 个文件 → ' + dir, 'transfers');
-                d.fileDragOver = false;
-                self._deskDragDepth = 0;
                 return new Promise(function (resolve) {
                     var timer = setInterval(function () {
                         var running = queued.some(function (x) {
@@ -16999,66 +17133,34 @@ new Vue({
                         clearInterval(timer);
                         var okCount = 0;
                         var failCount = 0;
+                        var skippedFiles = 0;
                         queued.forEach(function (x) {
                             if (x.status === 'done') {
                                 okCount++;
                             } else if (x.status === 'error') {
                                 failCount++;
+                            } else if (x.status === 'skipped') {
+                                skippedFiles++;
                             }
                         });
                         if (failCount > 0) {
-                            ELEMENT.Message.warning('文件夹上传完成：成功 ' + okCount
+                            ELEMENT.Message.warning('上传完成：成功 ' + okCount
                                 + ' 个，失败 ' + failCount + ' 个');
                             self.pushDesktopNotice('warning', '上传部分失败',
                                 '成功 ' + okCount + ' 个，失败 ' + failCount + ' 个 → ' + dir,
                                 'transfers');
-                        } else if (okCount === queued.length) {
+                        } else {
+                            var msg = '成功 ' + okCount + ' 个';
+                            if (skippedFiles) {
+                                msg += '，跳过 ' + skippedFiles + ' 个';
+                            }
                             self.pushDesktopNotice('success', '上传完成',
-                                queued.length + ' 个文件 → ' + dir, 'transfers');
+                                msg + ' → ' + dir, 'transfers');
                         }
                         self.desktopRefresh(d);
                         resolve();
                     }, 800);
                 });
-            }
-            var loading = ELEMENT.Message({
-                message: (folder ? '正在上传文件夹内容：' : '正在上传 ')
-                    + list.length + ' 个文件到 ' + dir + ' …',
-                duration: 0,
-                iconClass: 'el-icon-loading'
-            });
-            var ok = 0;
-            var fail = 0;
-            var chain = Promise.resolve();
-            list.forEach(function (e) {
-                chain = chain.then(function () {
-                    return self.uploadOne(t, dir, e.file, e.rel, list.length > 1).then(function () {
-                        ok++;
-                    }).catch(function () {
-                        fail++;
-                    });
-                });
-            });
-            return chain.then(function () {
-                loading.close();
-                d.fileDragOver = false;
-                self._deskDragDepth = 0;
-                var label = folder ? '文件夹' : '文件';
-                if (fail === 0) {
-                    ELEMENT.Message.success(list.length === 1
-                        ? ('文件上传成功：' + list[0].file.name)
-                        : (label + '上传成功：' + list.length + ' 个文件 → ' + dir));
-                    self.pushDesktopNotice('success', '上传完成',
-                        list.length === 1 ? list[0].file.name : (list.length + ' 个文件 → ' + dir), 'transfers');
-                } else if (ok > 0) {
-                    ELEMENT.Message.warning('上传完成：成功 ' + ok + ' 个，失败 ' + fail + ' 个');
-                    self.pushDesktopNotice('warning', '上传部分失败',
-                        '成功 ' + ok + ' 个，失败 ' + fail + ' 个 → ' + dir, 'transfers');
-                } else {
-                    ELEMENT.Message.error('上传失败');
-                    self.pushDesktopNotice('error', '上传失败', dir, 'transfers');
-                }
-                self.desktopRefresh(d);
             });
         },
         collectDroppedEntries: function (dataTransfer) {
@@ -18011,6 +18113,269 @@ new Vue({
         clearDesktopNotifications: function () {
             this.desktop.notifications = [];
             this.desktop.notifUnread = 0;
+        },
+        /* ---------- 提醒设置与后台任务通知 ---------- */
+        saveNotifySettings: function () {
+            try {
+                localStorage.setItem('deepshell.notify', JSON.stringify(this.notifySettings));
+            } catch (e) { /* ignore */ }
+        },
+        openNotifySettings: function () {
+            this.notifySettingsVisible = true;
+        },
+        notifyPermissionText: function () {
+            if (typeof Notification === 'undefined') {
+                return '当前浏览器不支持';
+            }
+            if (Notification.permission === 'granted') {
+                return '已允许';
+            }
+            if (Notification.permission === 'denied') {
+                return '已被浏览器拒绝，请在网站设置中允许';
+            }
+            return '尚未授权，打开开关时会请求权限';
+        },
+        onNotifyDesktopChange: function (enabled) {
+            var self = this;
+            if (!enabled) {
+                this.saveNotifySettings();
+                return;
+            }
+            if (typeof Notification === 'undefined') {
+                this.notifySettings.desktop = false;
+                this.saveNotifySettings();
+                ELEMENT.Message.warning('当前浏览器不支持桌面通知');
+                return;
+            }
+            if (Notification.permission === 'granted') {
+                this.saveNotifySettings();
+                return;
+            }
+            if (Notification.permission === 'denied') {
+                this.notifySettings.desktop = false;
+                this.saveNotifySettings();
+                ELEMENT.Message.warning('浏览器已拒绝通知权限，请在地址栏左侧的网站设置中允许通知');
+                return;
+            }
+            Notification.requestPermission().then(function (permission) {
+                if (permission !== 'granted') {
+                    self.notifySettings.desktop = false;
+                    self.saveNotifySettings();
+                    ELEMENT.Message.warning('未获得通知权限，可在浏览器网站设置中重新允许');
+                } else {
+                    self.saveNotifySettings();
+                }
+            }).catch(function () {
+                self.notifySettings.desktop = false;
+                self.saveNotifySettings();
+            });
+        },
+        onNotifySoundChange: function (enabled) {
+            this.saveNotifySettings();
+            if (enabled) {
+                this.playNotifySound();
+            }
+        },
+        testNotify: function () {
+            this.notifyTaskComplete('DeepShell 通知测试', '后台任务完成时会像这样提醒你',
+                { force: true, tag: 'deepshell-test' });
+            if (!this.notifySettings.desktop && !this.notifySettings.sound) {
+                ELEMENT.Message.info('已发送测试请求；请先打开桌面通知或提示音开关');
+            }
+        },
+        playNotifySound: function () {
+            try {
+                var Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) {
+                    return;
+                }
+                if (!this._notifyAudioCtx) {
+                    this._notifyAudioCtx = new Ctx();
+                }
+                var ctx = this._notifyAudioCtx;
+                if (ctx.state === 'suspended') {
+                    ctx.resume();
+                }
+                var osc = ctx.createOscillator();
+                var gain = ctx.createGain();
+                var now = ctx.currentTime;
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now);
+                osc.frequency.setValueAtTime(1174.66, now + 0.12);
+                gain.gain.setValueAtTime(0.0001, now);
+                gain.gain.exponentialRampToValueAtTime(0.16, now + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.4);
+            } catch (e) { /* 浏览器不支持或自动播放策略拦截时忽略 */ }
+        },
+        notifyTaskComplete: function (title, body, opts) {
+            opts = opts || {};
+            if (!opts.force && !document.hidden) {
+                return;
+            }
+            if (this.notifySettings.sound) {
+                this.playNotifySound();
+            }
+            if (!opts.force && !this.notifySettings.desktop) {
+                return;
+            }
+            if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+                return;
+            }
+            try {
+                var n = new Notification(title || 'DeepShell', {
+                    body: body || '',
+                    tag: opts.tag || '',
+                    icon: '/favicon-32.png',
+                    silent: true
+                });
+                n.onclick = function () {
+                    try { window.focus(); } catch (e) { /* ignore */ }
+                    if (typeof opts.onClick === 'function') {
+                        opts.onClick();
+                    }
+                    n.close();
+                };
+            } catch (e) { /* 通知失败不影响主流程 */ }
+        },
+        refreshUnreadTitle: function () {
+            var base = this._titleBase || 'DeepShell';
+            var count = 0;
+            var seen = {};
+            (this.tabs || []).forEach(function (t) {
+                if (t.outputUnread) {
+                    count++;
+                }
+                (t.chatConvs || []).forEach(function (c, idx) {
+                    if (c && c.unread) {
+                        var key = c.id != null ? String(c.id)
+                            : ('t' + (t.clientKey || '') + ':' + idx + ':' + (c.title || ''));
+                        if (!seen[key]) {
+                            seen[key] = true;
+                            count++;
+                        }
+                    }
+                });
+            });
+            document.title = count ? '(' + count + ') ' + base : base;
+        },
+        clearTabUnread: function (tab) {
+            if (!tab || !tab.outputUnread) {
+                return;
+            }
+            this.$set(tab, 'outputUnread', false);
+            this.refreshUnreadTitle();
+        },
+        isTerminalTabVisible: function (tab) {
+            if (!tab || document.hidden) {
+                return false;
+            }
+            if (tab.desktopOnly) {
+                if (!this.desktop.visible || !tab.windowId) {
+                    return false;
+                }
+                var w = this.desktop.windows.find(function (x) { return x.id === tab.windowId; });
+                return !!w && !w.minimized && this.desktop.activeWinId === tab.windowId;
+            }
+            return !this.desktop.visible && tab.key === this.activeKey;
+        },
+        markTabUnread: function (tab) {
+            if (!tab || this.isTerminalTabVisible(tab)) {
+                return;
+            }
+            if (!tab.outputUnread) {
+                this.$set(tab, 'outputUnread', true);
+                this.refreshUnreadTitle();
+            }
+        },
+        markCommandRunning: function (tab, command) {
+            if (!tab) {
+                return;
+            }
+            tab.commandRunning = true;
+            tab.commandStartedAt = Date.now();
+            tab.commandText = String(command || '').replace(/\s+/g, ' ').slice(0, 200);
+        },
+        scheduleCommandDoneCheck: function (tab) {
+            var self = this;
+            if (!tab) {
+                return;
+            }
+            if (tab._cmdDoneTimer) {
+                clearTimeout(tab._cmdDoneTimer);
+            }
+            tab._cmdDoneTimer = setTimeout(function () {
+                tab._cmdDoneTimer = null;
+                if (!tab.commandRunning) {
+                    return;
+                }
+                var audit = self.terminalAuditCommand(tab);
+                if (audit && audit.prompt) {
+                    self.finishCommandTracking(tab);
+                }
+            }, 700);
+        },
+        finishCommandTracking: function (tab) {
+            if (!tab || !tab.commandRunning) {
+                return;
+            }
+            if (tab._cmdDoneTimer) {
+                clearTimeout(tab._cmdDoneTimer);
+                tab._cmdDoneTimer = null;
+            }
+            var duration = Date.now() - (tab.commandStartedAt || Date.now());
+            var command = tab.commandText || '';
+            var visible = this.isTerminalTabVisible(tab);
+            tab.commandRunning = false;
+            tab.commandStartedAt = 0;
+            tab.commandText = '';
+            if (!visible) {
+                this.markTabUnread(tab);
+            }
+            if (duration < 10000 || visible) {
+                return;
+            }
+            var body = (command ? command + ' · ' : '') + '耗时 ' + formatDurationMs(duration);
+            if (!document.hidden) {
+                ELEMENT.Notification({
+                    title: '命令已完成',
+                    message: body,
+                    type: 'success',
+                    duration: 4500
+                });
+            }
+            this.notifyTaskComplete('命令已完成', body, { tag: 'cmd-' + (tab.clientKey || '') });
+        },
+        queueUploadNotification: function (status) {
+            if (!status) {
+                return;
+            }
+            var stats = this._uploadNotifyStats || (this._uploadNotifyStats = { done: 0, error: 0, skipped: 0 });
+            if (stats[status] != null) {
+                stats[status]++;
+            }
+            if (this._uploadNotifyTimer) {
+                clearTimeout(this._uploadNotifyTimer);
+            }
+            var self = this;
+            this._uploadNotifyTimer = setTimeout(function () {
+                self._uploadNotifyTimer = null;
+                var st = self._uploadNotifyStats || { done: 0, error: 0, skipped: 0 };
+                self._uploadNotifyStats = { done: 0, error: 0, skipped: 0 };
+                var total = st.done + st.error + st.skipped;
+                if (!total || !document.hidden) {
+                    return;
+                }
+                var title = st.error ? '上传完成（有失败）'
+                    : (st.done === 0 && st.skipped ? '上传已跳过' : '上传完成');
+                var body = '成功 ' + st.done + ' 个'
+                    + (st.skipped ? '，跳过 ' + st.skipped + ' 个' : '')
+                    + (st.error ? '，失败 ' + st.error + ' 个' : '');
+                self.notifyTaskComplete(title, body, { tag: 'upload' });
+            }, 1600);
         },
         pushDesktopNotice: function (level, title, text, target) {
             if (!this.desktop.visible) {
@@ -20301,6 +20666,10 @@ new Vue({
             if (!term || data == null) {
                 return;
             }
+            this.markTabUnread(tab);
+            if (tab && tab.commandRunning) {
+                this.scheduleCommandDoneCheck(tab);
+            }
             var isBuffer = (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer);
             var isBytes = isBuffer
                 || (typeof Uint8Array !== 'undefined' && data instanceof Uint8Array);
@@ -20328,6 +20697,208 @@ new Vue({
             } catch (e) {
                 try { term.write(bytes); } catch (err) { /* ignore */ }
             }
+        },
+        /* ---------- 终端输出可点击链接：URL / IP:端口 / 绝对路径 ---------- */
+        bindTerminalLinks: function (tab, term) {
+            if (!term || typeof term.registerLinkProvider !== 'function') {
+                return;
+            }
+            var self = this;
+            var host = term.element;
+            function lineInfo(line) {
+                var text = '';
+                var cells = [];
+                if (!line) {
+                    return { text: text, cells: cells };
+                }
+                for (var x = 0; x < line.length; x++) {
+                    var cell = line.getCell(x);
+                    if (!cell) {
+                        continue;
+                    }
+                    var chars = cell.getChars();
+                    if (!chars) {
+                        chars = ' ';
+                    }
+                    for (var i = 0; i < chars.length; i++) {
+                        text += chars.charAt(i);
+                        cells.push(x + 1);
+                    }
+                }
+                var end = text.length;
+                while (end > 0 && text.charAt(end - 1) === ' ') {
+                    end--;
+                }
+                return { text: text.slice(0, end), cells: cells.slice(0, end) };
+            }
+            function trimTail(raw) {
+                var end = raw.length;
+                while (end > 1 && /[.,;:!?)\]}"'，。；、！？）】》」』]/.test(raw.charAt(end - 1))) {
+                    end--;
+                }
+                return raw.slice(0, end);
+            }
+            function collect(text) {
+                var found = [];
+                function add(kind, start, raw) {
+                    raw = trimTail(raw);
+                    if (!raw) {
+                        return;
+                    }
+                    var end = start + raw.length;
+                    for (var i = 0; i < found.length; i++) {
+                        if (start < found[i].end && found[i].start < end) {
+                            return;
+                        }
+                    }
+                    found.push({ kind: kind, start: start, end: end, text: raw });
+                }
+                var re = /https?:\/\/[^\s"'<>，。；、）】》」』]+/g;
+                var m;
+                while ((m = re.exec(text))) {
+                    add('url', m.index, m[0]);
+                }
+                re = /(^|[^\w.])((?:\d{1,3}\.){3}\d{1,3}:\d{1,5})(?!\d)/g;
+                while ((m = re.exec(text))) {
+                    add('endpoint', m.index + m[0].length - m[2].length, m[2]);
+                }
+                re = /(?:^|[\s"'(\[=])(\/(?:[A-Za-z0-9._@%+~-]+\/?)+)/g;
+                while ((m = re.exec(text))) {
+                    add('path', m.index + m[0].length - m[1].length, m[1]);
+                }
+                found.sort(function (a, b) { return a.start - b.start; });
+                return found;
+            }
+            term.registerLinkProvider({
+                provideLinks: function (bufferLineNumber, callback) {
+                    var buffer = term.buffer && term.buffer.active;
+                    var line = buffer ? buffer.getLine(bufferLineNumber - 1) : null;
+                    var info = lineInfo(line);
+                    var found = collect(info.text);
+                    var links = [];
+                    found.forEach(function (item) {
+                        var startCell = info.cells[item.start];
+                        var endCell = info.cells[item.end - 1];
+                        if (!startCell || !endCell) {
+                            return;
+                        }
+                        links.push({
+                            range: {
+                                start: { x: startCell, y: bufferLineNumber },
+                                end: { x: endCell, y: bufferLineNumber }
+                            },
+                            text: item.text,
+                            activate: function (ev) {
+                                if (!(ev && (ev.ctrlKey || ev.metaKey))) {
+                                    if (!tab._linkHintShown) {
+                                        tab._linkHintShown = true;
+                                        ELEMENT.Message.info('按住 Ctrl（Mac 为 Cmd）点击可在浏览器、SFTP 或连接中打开');
+                                    }
+                                    return;
+                                }
+                                self.activateTerminalLink(tab, item.kind, item.text);
+                            },
+                            hover: function () {
+                                if (host) {
+                                    host.title = 'Ctrl+点击打开：' + item.text;
+                                }
+                            },
+                            leave: function () {
+                                if (host) {
+                                    host.title = '';
+                                }
+                            }
+                        });
+                    });
+                    callback(links.length ? links : undefined);
+                }
+            });
+        },
+        activateTerminalLink: function (tab, kind, text) {
+            if (kind === 'url') {
+                window.open(text, '_blank', 'noopener');
+                return;
+            }
+            if (kind === 'endpoint') {
+                var idx = text.lastIndexOf(':');
+                var host = idx > 0 ? text.substring(0, idx) : text;
+                var port = idx > 0 ? parseInt(text.substring(idx + 1), 10) : 22;
+                if (!host) {
+                    return;
+                }
+                var conn = this.connections.find(function (c) {
+                    return c.host === host && (c.port || 22) === (port || 22);
+                });
+                if (conn) {
+                    if (this.desktop.visible) {
+                        window.open('/workspace?connId=' + encodeURIComponent(conn.id)
+                            + '&view=workbench', '_blank');
+                    } else {
+                        this.openTab(conn.id);
+                    }
+                } else {
+                    this.openConnFormPrefill({ host: host, port: port || 22 });
+                }
+                return;
+            }
+            if (kind === 'path') {
+                this.openTerminalPath(tab, text);
+            }
+        },
+        openConnFormPrefill: function (prefill) {
+            this.loadConnections();
+            if (this.$refs.connForm) {
+                this.$refs.connForm.open(null, prefill);
+            } else {
+                ELEMENT.Message.warning('连接表单尚未就绪，请稍后再试');
+            }
+        },
+        openTerminalPath: function (tab, path) {
+            var self = this;
+            if (!tab) {
+                return;
+            }
+            if (tab.localShell) {
+                ELEMENT.Message.info('本地终端的路径暂不支持点击打开，请使用资源管理器定位');
+                return;
+            }
+            if (!tab.sessionId) {
+                ELEMENT.Message.warning('该终端尚未连接，无法打开路径');
+                return;
+            }
+            http.get('/api/sftp/stat', {
+                params: { sessionId: tab.sessionId, path: path },
+                silent: true
+            }).then(function (info) {
+                if (!info) {
+                    return;
+                }
+                if (info.dir) {
+                    if (self.desktop.visible) {
+                        self.openDesktopExplorerWindow(path);
+                    } else {
+                        if (tab.key !== self.activeKey && !tab.desktopOnly) {
+                            self.activate(tab.key);
+                        }
+                        self.loadDir(path, tab);
+                    }
+                    return;
+                }
+                var dir = path.substring(0, path.lastIndexOf('/')) || '/';
+                if (self.desktop.visible) {
+                    self.openDesktopExplorerWindow(dir);
+                    self.openDesktopEditorWindow(self.desktopTab, path);
+                } else {
+                    if (tab.key !== self.activeKey && !tab.desktopOnly) {
+                        self.activate(tab.key);
+                    }
+                    self.loadDir(dir, tab).then(function () {
+                        self.openRemoteEdit(tab, path);
+                    });
+                }
+            }).catch(function (e) {
+                ELEMENT.Message.warning('无法打开路径：' + ((e && e.message) || '不存在或没有权限'));
+            });
         },
         initTerminal: function (tab, el) {
             var self = this;
@@ -20364,6 +20935,12 @@ new Vue({
             }
             term.open(el);
             try { fit.fit(); } catch (e) { /* 容器未就绪时忽略 */ }
+            this.bindTerminalLinks(tab, term);
+            if (term.textarea) {
+                term.textarea.addEventListener('focus', function () {
+                    self.clearTabUnread(tab);
+                });
+            }
             tab.term = term;
             tab.fit = fit;
             self.bindTerminalContextMenu(tab, el);
@@ -20415,6 +20992,12 @@ new Vue({
                 }
                 var sendData = function () {
                     if (tab.ws && tab.ws.readyState === 1) {
+                        if (newlineCount > 0 && !auditSkip) {
+                            var submitted = auditLine || (audit && audit.command) || '';
+                            if (submitted) {
+                                self.markCommandRunning(tab, submitted);
+                            }
+                        }
                         var frame = { type: 'data', data: data };
                         if (auditTyped) {
                             frame.auditTyped = true;
@@ -20510,6 +21093,9 @@ new Vue({
                         tab.serverClosed = false;
                         tab.explicitClose = false;
                         tab.hostKeyPending = false;
+                        tab.commandRunning = false;
+                        tab.commandStartedAt = 0;
+                        tab.commandText = '';
                         tab.reconnectAttempts = 0;
                         tab.helpShown = false;
                         clearReconnectTimer(tab);
@@ -20611,6 +21197,7 @@ new Vue({
                 this.clearTerminalSplit();
             }
             this.activeKey = key;
+            this.clearTabUnread(this.activeTab);
             if (this.activeTab && this.activeTab.sftpSelected && this.activeTab.sftpSelected.length) {
                 this.activeTab.sftpSelected = [];
                 this.$nextTick(function () {
@@ -20635,11 +21222,125 @@ new Vue({
                 }
             });
         },
+        rememberClosedTab: function (tab) {
+            if (!tab || tab.connId == null || tab.desktopOnly) {
+                return;
+            }
+            this.recentlyClosedTabs.unshift({
+                connId: tab.connId,
+                title: tab.title,
+                host: tab.host,
+                port: tab.port,
+                sftpPath: tab.sftpPath || '',
+                closedAt: Date.now()
+            });
+            if (this.recentlyClosedTabs.length > 10) {
+                this.recentlyClosedTabs.length = 10;
+            }
+        },
+        restoreClosedTab: function () {
+            if (!this.recentlyClosedTabs.length) {
+                ELEMENT.Message.info('没有可恢复的已关闭标签');
+                return;
+            }
+            var entry = this.recentlyClosedTabs.shift();
+            var exists = this.connections.some(function (c) { return c.id === entry.connId; });
+            if (!exists) {
+                ELEMENT.Message.warning('「' + (entry.title || '连接') + '」已被删除，无法恢复');
+                return this.restoreClosedTab();
+            }
+            var tab = this.openTab(entry.connId, null, false, false);
+            if (tab && entry.sftpPath) {
+                tab._restoreSftpPath = entry.sftpPath;
+            }
+            ELEMENT.Message.success('已恢复标签「' + (entry.title || tab.title) + '」');
+            return tab;
+        },
+        tabActiveTransfers: function (tab) {
+            if (!tab) {
+                return [];
+            }
+            var active = ['pending', 'uploading', 'processing', 'queued', 'scanning', 'downloading'];
+            return this.transfers.filter(function (t) {
+                return (t.clientKey === tab.clientKey || t.tabKey === tab.key)
+                    && active.indexOf(t.status) >= 0;
+            });
+        },
+        tabBusyReason: function (tab) {
+            if (!tab) {
+                return '';
+            }
+            var reasons = [];
+            if (tab.commandRunning) {
+                reasons.push('终端中仍有命令在运行');
+            }
+            var xfers = this.tabActiveTransfers(tab);
+            if (xfers.length) {
+                reasons.push('还有 ' + xfers.length + ' 个传输任务未完成');
+            }
+            var aiBusy = this.chatAnyBusy(tab);
+            if (aiBusy) {
+                reasons.push('AI 正在生成或执行命令');
+            }
+            return reasons.join('，');
+        },
+        requestCloseTab: function (tab) {
+            var self = this;
+            if (!tab) {
+                return;
+            }
+            var reason = this.tabBusyReason(tab);
+            if (!this.notifySettings.confirmClose || !reason) {
+                this.closeTab(tab);
+                return;
+            }
+            this.$confirm(reason + '。关闭后该标签的 SSH 会话会断开，确定关闭？',
+                '关闭「' + tab.title + '」', {
+                    type: 'warning',
+                    confirmButtonText: '仍然关闭',
+                    cancelButtonText: '继续使用',
+                    closeOnClickModal: false
+                }).then(function () {
+                    self.closeTab(tab);
+                }).catch(function () { /* 保持打开 */ });
+        },
+        requestCloseTabs: function (tabs, label) {
+            var self = this;
+            var list = (tabs || []).filter(function (t) { return !!t; });
+            if (!list.length) {
+                return;
+            }
+            var busy = [];
+            if (this.notifySettings.confirmClose) {
+                list.forEach(function (t) {
+                    if (self.tabBusyReason(t)) {
+                        busy.push(t);
+                    }
+                });
+            }
+            var doClose = function () {
+                list.forEach(function (t) { self.closeTab(t); });
+            };
+            if (!busy.length) {
+                doClose();
+                return;
+            }
+            var names = busy.slice(0, 3).map(function (t) { return '「' + t.title + '」'; }).join('、');
+            var more = busy.length > 3 ? ' 等 ' + busy.length + ' 个标签' : '';
+            this.$confirm('其中 ' + names + more + ' 仍有命令、AI 任务或传输在进行，关闭后会断开对应会话。确定' + label + '？',
+                label + '标签', {
+                    type: 'warning',
+                    confirmButtonText: '仍然' + label,
+                    cancelButtonText: '取消',
+                    closeOnClickModal: false
+                }).then(doClose).catch(function () { /* 保持打开 */ });
+        },
         closeTab: function (tab) {
             var self = this;
             if (this.desktop.visible && tab.key === this.desktop.tabKey) {
                 this.closeAiDesktop();
             }
+            this.rememberClosedTab(tab);
             var splitIdx = this.splitKeys.indexOf(tab.key);
             var wasActive = this.activeKey === tab.key;
             this.cancelTransfersForTab(tab);
@@ -20692,6 +21393,7 @@ new Vue({
             }
             saveOpenTabs(this);
             this.saveSplitState();
+            this.refreshUnreadTitle();
             this.$nextTick(function () {
                 self.fitActive();
                 if (self.activeTab && self.activeTab.term) {
@@ -20770,7 +21472,6 @@ new Vue({
             if (idx < 0) {
                 return;
             }
-            var self = this;
             if (mode === 'reconnect') {
                 this.reconnectTab(tab);
             } else if (mode === 'disconnect') {
@@ -20800,19 +21501,17 @@ new Vue({
                     this.sysInfoVisible = true;
                 }
             } else if (mode === 'close') {
-                this.closeTab(tab);
+                this.requestCloseTab(tab);
             } else if (mode === 'closeAll') {
-                this.tabs.slice().forEach(function (x) { self.closeTab(x); });
+                this.requestCloseTabs(this.tabs.slice(), '关闭所有');
             } else if (mode === 'closeOthers') {
-                this.tabs.slice().forEach(function (x) {
-                    if (x !== tab) {
-                        self.closeTab(x);
-                    }
-                });
+                this.requestCloseTabs(this.tabs.filter(function (x) { return x !== tab; }), '关闭其他');
             } else if (mode === 'closeRight') {
-                this.tabs.slice(idx + 1).forEach(function (x) { self.closeTab(x); });
+                this.requestCloseTabs(this.tabs.slice(idx + 1), '关闭右边');
             } else if (mode === 'closeLeft') {
-                this.tabs.slice(0, idx).forEach(function (x) { self.closeTab(x); });
+                this.requestCloseTabs(this.tabs.slice(0, idx), '关闭左边');
+            } else if (mode === 'restoreClosed') {
+                this.restoreClosedTab();
             }
         },
         reconnectTab: function (tab, silent) {
@@ -21435,7 +22134,9 @@ new Vue({
             var self = this;
             return http.get('/api/sftp/home', { params: { sessionId: tab.sessionId } }).then(function (home) {
                 tab.sftpHome = home;
-                return self.loadDir(home, tab);
+                var target = tab._restoreSftpPath || home;
+                tab._restoreSftpPath = '';
+                return self.loadDir(target, tab);
             }).catch(function () { /* 已由拦截器提示 */ });
         },
         loadDir: function (path, tab, nav) {
@@ -21753,6 +22454,11 @@ new Vue({
                         item._timer = null;
                         if (item.status === 'done') {
                             item.offset = item.size || item.offset;
+                            self.notifyTaskComplete('下载完成', item.name || '',
+                                { tag: 'download-' + (item.taskId || '') });
+                        } else if (item.status === 'error') {
+                            self.notifyTaskComplete('下载失败', item.name || item.error || '',
+                                { tag: 'download-' + (item.taskId || '') });
                         }
                     }
                 }).catch(function () {
@@ -21999,6 +22705,8 @@ new Vue({
                     type: 'error',
                     duration: 8000
                 });
+                this.notifyTaskComplete('下载到本机失败', item.error || '下载失败',
+                    { tag: 'localdl' });
                 this.showLocalDownloadSummary(item);
                 return;
             }
@@ -22012,6 +22720,9 @@ new Vue({
                     type: 'warning',
                     duration: 8000
                 });
+                this.notifyTaskComplete('下载到本机完成（有失败项）',
+                    '已下载 ' + item.doneFiles + '/' + item.totalFiles + ' 个文件，失败 ' + failed + ' 个',
+                    { tag: 'localdl' });
                 this.showLocalDownloadSummary(item);
             } else {
                 item.status = 'done';
@@ -22022,6 +22733,9 @@ new Vue({
                     type: 'success',
                     duration: 6000
                 });
+                this.notifyTaskComplete('下载到本机完成',
+                    (item.totalFiles > 0 ? '已下载 ' + item.doneFiles + ' 个文件' : '已完成目录创建'),
+                    { tag: 'localdl' });
             }
         },
         showLocalDownloadSummary: function (item) {
@@ -22294,7 +23008,8 @@ new Vue({
                     sessionId: d.sourceSessionId,
                     paths: paths,
                     connectionIds: d.ids,
-                    targetPath: String(d.targetPath).trim()
+                    targetPath: String(d.targetPath).trim(),
+                    conflict: d.conflict || 'overwrite'
                 }, { timeout: 0 }).then(function (task) {
                     d.starting = false;
                     d.preparePct = 100;
@@ -22331,6 +23046,7 @@ new Vue({
                 fd.append('connectionIds', d.ids[j]);
             }
             fd.append('targetPath', String(d.targetPath).trim());
+            fd.append('conflict', d.conflict || 'overwrite');
 
             d.starting = true;
             d.phase = 'run';
@@ -22492,6 +23208,9 @@ new Vue({
                     type: type,
                     duration: 6000
                 });
+                this.notifyTaskComplete(title,
+                    '成功 ' + ok + ' 台' + (failed ? '，失败 ' + failed + ' 台' : ''),
+                    { tag: 'distribute' });
                 this.refreshDistributeDirs(task);
             }
         },
@@ -22554,13 +23273,28 @@ new Vue({
                 return '正在建立连接…';
             }
             if (t.status === 'uploading') {
+                var extra = [];
+                if (t.skippedFiles) {
+                    extra.push('跳过 ' + t.skippedFiles + ' 个');
+                }
+                if (t.renamedFiles) {
+                    extra.push('重命名 ' + t.renamedFiles + ' 个');
+                }
                 return '正在上传 ' + (t.currentFile || '') + '（'
                     + (t.fileIndex || 0) + '/' + (t.fileCount || 0) + '） · '
-                    + this.fmtSize(t.doneBytes || 0) + ' / ' + this.fmtSize(t.totalBytes || 0);
+                    + this.fmtSize(t.doneBytes || 0) + ' / ' + this.fmtSize(t.totalBytes || 0)
+                    + (extra.length ? ' · ' + extra.join('，') : '');
             }
             if (t.status === 'done') {
-                return '已完成 ' + (t.fileCount || 0) + ' 个文件 · '
-                    + this.fmtSize(t.totalBytes || 0);
+                var parts = ['已完成 ' + (t.fileCount || 0) + ' 个文件'];
+                if (t.skippedFiles) {
+                    parts.push('跳过 ' + t.skippedFiles + ' 个');
+                }
+                if (t.renamedFiles) {
+                    parts.push('重命名 ' + t.renamedFiles + ' 个');
+                }
+                parts.push(this.fmtSize(t.totalBytes || 0));
+                return parts.join(' · ');
             }
             if (t.status === 'cancelled') {
                 return '已取消';
@@ -22618,17 +23352,180 @@ new Vue({
                 ELEMENT.Message.warning('请先建立连接');
                 return;
             }
-            this.enqueueUpload(t, t.sftpPath, param.file, param.file.name);
-            if (param.onSuccess) {
-                param.onSuccess();
+            var self = this;
+            this.uploadEntriesWithConflict(t, t.sftpPath, [{ file: param.file, rel: param.file.name }])
+                .then(function () {
+                    if (param.onSuccess) {
+                        param.onSuccess();
+                    }
+                });
+        },
+        /* ---------- 同名文件冲突：上传前预检 + 逐项策略 ---------- */
+        prepareUploads: function (tab, dir, entries) {
+            var self = this;
+            var list = (entries || []).filter(function (e) {
+                return e && e.file;
+            });
+            if (!list.length) {
+                return Promise.resolve({});
+            }
+            if (!dir) {
+                ELEMENT.Message.warning('目标目录尚未就绪，请稍后再试');
+                return Promise.resolve(null);
+            }
+            var local = !!(tab && tab.local);
+            if (!local && (!tab || !tab.sessionId)) {
+                ELEMENT.Message.warning('会话尚未就绪，请稍后再试');
+                return Promise.resolve(null);
+            }
+            var payload = {
+                dir: dir,
+                files: list.map(function (e) {
+                    return {
+                        relativePath: e.rel || e.file.name,
+                        name: e.file.name,
+                        size: e.file.size || 0
+                    };
+                })
+            };
+            if (!local) {
+                payload.sessionId = tab.sessionId;
+            }
+            return http.post(local ? '/api/local/fs/upload/conflicts' : '/api/sftp/upload/conflicts',
+                payload, { silent: true }).then(function (conflicts) {
+                var byRel = {};
+                (conflicts || []).forEach(function (c) {
+                    if (c && c.relativePath) {
+                        byRel[c.relativePath] = c;
+                    }
+                });
+                var items = [];
+                list.forEach(function (e) {
+                    var rel = e.rel || e.file.name;
+                    var c = byRel[rel];
+                    if (!c) {
+                        return;
+                    }
+                    items.push({
+                        relativePath: rel,
+                        name: c.name || e.file.name,
+                        dir: !!c.dir,
+                        size: c.size || 0,
+                        newSize: e.file.size || 0,
+                        sameSize: !!c.sameSize,
+                        action: 'overwrite'
+                    });
+                });
+                if (!items.length) {
+                    return {};
+                }
+                return new Promise(function (resolve) {
+                    self._uploadConflictResolve = resolve;
+                    self.uploadConflict = {
+                        visible: true, local: local, dir: dir,
+                        tabKey: tab ? tab.key : '', items: items
+                    };
+                });
+            }).catch(function (e) {
+                ELEMENT.Message.warning('检查同名文件失败：' + ((e && e.message) || '未知错误'));
+                return null;
+            });
+        },
+        setAllUploadConflict: function (action) {
+            (this.uploadConflict.items || []).forEach(function (item) {
+                item.action = action;
+            });
+        },
+        confirmUploadConflict: function () {
+            var actions = {};
+            (this.uploadConflict.items || []).forEach(function (item) {
+                actions[item.relativePath] = item.action;
+            });
+            var resolve = this._uploadConflictResolve;
+            this._uploadConflictResolve = null;
+            this.uploadConflict.visible = false;
+            if (resolve) {
+                resolve(actions);
             }
         },
-        uploadOne: function (tab, dir, file, relativePath, silent) {
+        cancelUploadConflict: function (done) {
+            this.uploadConflict.visible = false;
+            var resolve = this._uploadConflictResolve;
+            this._uploadConflictResolve = null;
+            if (resolve) {
+                resolve(null);
+            }
+            if (typeof done === 'function') {
+                done();
+            }
+        },
+        pushSkippedUpload: function (tab, dir, entry, rel) {
+            var name = entry && entry.file ? entry.file.name : rel;
+            this.pushTransfer({
+                id: 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+                kind: 'upload',
+                name: name,
+                dir: dir,
+                rel: rel || name,
+                size: entry && entry.file ? (entry.file.size || 0) : 0,
+                offset: 0,
+                status: 'skipped',
+                error: '',
+                skipped: true,
+                file: null,
+                tabKey: tab ? tab.key : '',
+                clientKey: tab ? tab.clientKey : ''
+            });
+        },
+        uploadEntriesWithConflict: function (tab, dir, entries, opts) {
+            var self = this;
+            var list = (entries || []).filter(function (e) {
+                return e && e.file;
+            });
+            return this.prepareUploads(tab, dir, list).then(function (actions) {
+                if (!actions) {
+                    if (!opts || !opts.silent) {
+                        ELEMENT.Message.info('已取消上传');
+                    }
+                    return { cancelled: true, queued: [], skipped: 0 };
+                }
+                var queued = [];
+                var skipped = 0;
+                list.forEach(function (e) {
+                    var rel = e.rel || e.file.name;
+                    var action = actions[rel] || 'overwrite';
+                    if (action === 'skip') {
+                        self.pushSkippedUpload(tab, dir, e, rel);
+                        skipped++;
+                        return;
+                    }
+                    var item = self.enqueueUpload(tab, dir, e.file, rel, action);
+                    if (item) {
+                        queued.push(item);
+                    }
+                });
+                self.pumpTransfers();
+                if (!opts || !opts.silent) {
+                    var msg = '已加入传输队列：' + queued.length + ' 个文件';
+                    if (skipped) {
+                        msg += '，跳过 ' + skipped + ' 个同名文件';
+                    }
+                    if (queued.length) {
+                        ELEMENT.Message.success(msg);
+                    } else if (skipped) {
+                        ELEMENT.Message.info('已跳过 ' + skipped + ' 个同名文件');
+                    }
+                }
+                return { cancelled: false, queued: queued, skipped: skipped };
+            });
+        },
+        uploadOne: function (tab, dir, file, relativePath, silent, conflict) {
             // 可视化桌面上传：整文件接口 + 上传进度，失败后可转入分片续传重试
             if (!tab || !file) {
                 return Promise.reject(new Error('参数缺失'));
             }
             var local = !!tab.local;
+            var self = this;
             var rel = relativePath || file.name;
             var fd = new FormData();
             if (!local) {
@@ -22636,6 +23533,7 @@ new Vue({
             }
             fd.append('path', dir);
             fd.append('relativePath', rel);
+            fd.append('conflict', conflict || 'overwrite');
             fd.append('file', file);
             var item = {
                 id: 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
@@ -22648,6 +23546,7 @@ new Vue({
                 status: 'uploading',
                 error: '',
                 file: file,
+                conflict: conflict || 'overwrite',
                 tabKey: tab.key,
                 clientKey: tab.clientKey
             };
@@ -22659,12 +23558,24 @@ new Vue({
                         item.offset = Math.min(e.loaded, e.total);
                     }
                 }
-            }).then(function () {
+            }).then(function (res) {
+                if (res && res.skipped) {
+                    item.status = 'skipped';
+                    item.offset = 0;
+                    self.queueUploadNotification('skipped');
+                    return item;
+                }
                 item.status = 'done';
                 item.offset = item.size;
+                if (res && res.name) {
+                    item.name = res.name;
+                }
+                self.queueUploadNotification('done');
+                return item;
             }).catch(function (err) {
                 item.status = 'error';
                 item.error = (err && err.message) ? err.message : '上传失败';
+                self.queueUploadNotification('error');
                 throw err;
             });
         },
@@ -22716,7 +23627,7 @@ new Vue({
             }, 1000);
         },
         /* ---------- 分片上传队列（支持失败重试/续传） ---------- */
-        enqueueUpload: function (tab, dir, file, relativePath) {
+        enqueueUpload: function (tab, dir, file, relativePath, conflict) {
             if (!tab || !tab.sessionId || !file) {
                 return null;
             }
@@ -22732,6 +23643,7 @@ new Vue({
                 error: '',
                 uploadId: '',
                 file: file,
+                conflict: conflict || 'overwrite',
                 tabKey: tab.key,
                 clientKey: tab.clientKey
             };
@@ -22769,7 +23681,8 @@ new Vue({
                 name: item.name,
                 relativePath: item.rel,
                 size: item.size,
-                uploadId: item.uploadId || null
+                uploadId: item.uploadId || null,
+                conflict: item.conflict || 'overwrite'
             }).then(function (r) {
                 item.uploadId = r.uploadId;
                 item.offset = r.offset || 0;
@@ -22810,9 +23723,18 @@ new Vue({
                         item.uploadId = '';
                         return;
                     }
-                    item.status = 'done';
-                    item.offset = item.size;
                     item.uploadId = '';
+                    if (res.skipped) {
+                        item.status = 'skipped';
+                        item.offset = 0;
+                    } else {
+                        item.status = 'done';
+                        item.offset = item.size;
+                        if (res.name) {
+                            item.name = res.name;
+                        }
+                    }
+                    self.queueUploadNotification(item.status);
                     if (tab.sftpPath === item.dir) {
                         self.loadDir(item.dir, tab);
                     }
@@ -22824,6 +23746,7 @@ new Vue({
                 item.status = 'error';
                 item.error = (err && err.message) ? err.message : '上传失败';
                 // 保留 uploadId 与 offset：点重试时从服务端已收到的位置继续
+                self.queueUploadNotification('error');
             }).then(function () {
                 self.pumpTransfers();
             });
@@ -22936,13 +23859,14 @@ new Vue({
             }
             var dir = t.sftpPath || t.sftpHome;
             var files = e.target.files || [];
+            var entries = [];
             for (var i = 0; i < files.length; i++) {
                 var f = files[i];
-                this.enqueueUpload(t, dir, f, f.webkitRelativePath || f.name);
+                entries.push({ file: f, rel: f.webkitRelativePath || f.name });
             }
             e.target.value = '';
-            if (files.length) {
-                ELEMENT.Message.success('已加入传输队列：' + files.length + ' 个文件');
+            if (entries.length) {
+                this.uploadEntriesWithConflict(t, dir, entries);
             }
         },
         /* ---------- 权限 ---------- */
@@ -23106,12 +24030,7 @@ new Vue({
                 return;
             }
             var self = this;
-            entries.forEach(function (e) {
-                self.enqueueUpload(t, dir, e.file, e.rel);
-            });
-            ELEMENT.Message.success(entries.length === 1
-                ? ('已加入传输队列：' + entries[0].file.name)
-                : ('已加入传输队列：' + entries.length + ' 个文件 → ' + dir));
+            this.uploadEntriesWithConflict(t, dir, entries);
         },
         mkdir: function () {
             var t = this.activeTab;
@@ -24477,6 +25396,9 @@ new Vue({
                     var line = tab._localLine || '';
                     var atPrompt = !!tab._localPrompt;
                     term.write('\r\n');
+                    if (line && atPrompt) {
+                        self.markCommandRunning(tab, line);
+                    }
                     sendFrame(line + '\n', atPrompt ? line : '', !atPrompt);
                     tab._localLine = '';
                     tab._localPrompt = false;
@@ -24598,6 +25520,9 @@ new Vue({
             this.confirmDangerousCommand(text, function () {
                 targets.forEach(function (x) {
                     if (x.ws && x.ws.readyState === 1) {
+                        if (/[\r\n]/.test(payload)) {
+                            self.markCommandRunning(x, text);
+                        }
                         if (x.localShell && x.localLineMode && x.term) {
                             x.term.write('\r\x1b[K' + text.replace(/\r?\n/g, '\r\n') + '\r\n');
                             x._localLine = '';
@@ -25183,6 +26108,9 @@ new Vue({
             var doSend = function () {
                 targets.forEach(function (x) {
                     if (x.ws && x.ws.readyState === 1) {
+                        if (/[\r\n]/.test(text)) {
+                            self.markCommandRunning(x, String(text).replace(/[\r\n]+/g, ' ').trim());
+                        }
                         x.ws.send(payload);
                     }
                 });
@@ -25221,6 +26149,9 @@ new Vue({
             var doSend = function () {
                 if (!t.ws || t.ws.readyState !== 1) {
                     return;
+                }
+                if (/[\r\n]/.test(text)) {
+                    self.markCommandRunning(t, String(text).replace(/[\r\n]+/g, ' ').trim());
                 }
                 t.ws.send(JSON.stringify({ type: 'data', data: text }));
                 if (t.term) {
@@ -25312,6 +26243,22 @@ new Vue({
     },
     mounted: function () {
         var self = this;
+        this._titleBase = document.title || 'DeepShell';
+        this._onVisibilityChange = function () {
+            if (!document.hidden) {
+                if (self.activeTab) {
+                    self.clearTabUnread(self.activeTab);
+                }
+                if (self.desktop.visible && self.desktopTab) {
+                    (self.allTerminalTabs() || []).forEach(function (t) {
+                        if (self.isTerminalTabVisible(t)) {
+                            self.clearTabUnread(t);
+                        }
+                    });
+                }
+            }
+        };
+        document.addEventListener('visibilitychange', this._onVisibilityChange);
         try {
             var w = parseInt(localStorage.getItem('deepshell.panelWidth') || '', 10);
             if (w >= 320 && w <= 1400) {

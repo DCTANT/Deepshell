@@ -108,9 +108,14 @@ public class SftpDistributeService {
      */
     public Map<String, Object> distribute(List<MultipartFile> files, List<Long> connectionIds,
                                           String targetPath) throws Exception {
+        return distribute(files, connectionIds, targetPath, SftpService.CONFLICT_OVERWRITE);
+    }
+
+    public Map<String, Object> distribute(List<MultipartFile> files, List<Long> connectionIds,
+                                          String targetPath, String conflictPolicy) throws Exception {
         Task task = stage(files);
         try {
-            return start(task, connectionIds, targetPath);
+            return start(task, connectionIds, targetPath, conflictPolicy);
         } catch (Exception e) {
             cleanupDir(task.dir);
             tasks.remove(task.id, task);
@@ -125,9 +130,17 @@ public class SftpDistributeService {
     public Map<String, Object> crossTransfer(String sourceSessionId, List<String> paths,
                                              List<Long> connectionIds, String targetPath)
             throws Exception {
+        return crossTransfer(sourceSessionId, paths, connectionIds, targetPath,
+                SftpService.CONFLICT_OVERWRITE);
+    }
+
+    public Map<String, Object> crossTransfer(String sourceSessionId, List<String> paths,
+                                             List<Long> connectionIds, String targetPath,
+                                             String conflictPolicy)
+            throws Exception {
         Task task = stageRemote(sourceSessionId, paths);
         try {
-            Map<String, Object> out = start(task, connectionIds, targetPath);
+            Map<String, Object> out = start(task, connectionIds, targetPath, conflictPolicy);
             audit.record("FILE_CROSS_TRANSFER", targetPath, "OK",
                     task.files.size() + " 个文件，" + task.totalBytes + " 字节");
             return out;
@@ -190,6 +203,8 @@ public class SftpDistributeService {
                 t.currentFile = "";
                 t.fileIndex = 0;
                 t.doneFiles = 0;
+                t.skippedFiles = 0;
+                t.renamedFiles = 0;
                 t.doneBytes = 0;
                 t.startedAt = 0;
                 t.finishedAt = 0;
@@ -207,12 +222,14 @@ public class SftpDistributeService {
         return snapshot(task);
     }
 
-    private Map<String, Object> start(Task task, List<Long> connectionIds, String targetPath) {
+    private Map<String, Object> start(Task task, List<Long> connectionIds, String targetPath,
+                                      String conflictPolicy) {
         List<Long> ids = normalizeIds(connectionIds);
         if (ids.isEmpty()) {
             throw new IllegalArgumentException("请选择至少一台目标服务器");
         }
         String path = normalizeTargetPath(targetPath);
+        String policy = SftpService.normalizeConflictPolicy(conflictPolicy);
         Map<Long, SshConnection> saved = new HashMap<>();
         for (SshConnection c : connectionService.list()) {
             saved.put(c.getId(), c);
@@ -227,6 +244,7 @@ public class SftpDistributeService {
         }
         synchronized (task) {
             task.targetPath = path;
+            task.conflictPolicy = policy;
             task.targets.clear();
             task.targets.addAll(targets);
             task.status = "running";
@@ -267,6 +285,7 @@ public class SftpDistributeService {
                 throw new IOException("分发已取消");
             }
             target.status = "uploading";
+            Set<String> reserved = new HashSet<>();
             for (int i = 0; i < task.files.size(); i++) {
                 if (task.cancelled) {
                     throw new IOException("分发已取消");
@@ -275,10 +294,22 @@ public class SftpDistributeService {
                 target.currentFile = file.name;
                 target.fileIndex = i + 1;
                 long base = target.doneBytes;
+                String desired = joinRemote(task.targetPath, file.name);
+                String actual = SftpService.resolveRemoteTarget(
+                        handle.getChannel(), desired, task.conflictPolicy, reserved);
+                if (actual == null) {
+                    // 同名跳过：计入已处理字节，让进度正常走到 100%
+                    target.skippedFiles++;
+                    target.doneBytes = base + file.size;
+                    continue;
+                }
+                if (!actual.equals(desired)) {
+                    target.renamedFiles++;
+                    target.currentFile = baseName(actual);
+                }
                 try (InputStream in = new ProgressInputStream(
                         Files.newInputStream(file.path), task, target, base)) {
-                    handle.getChannel().put(in, joinRemote(task.targetPath, file.name),
-                            ChannelSftp.OVERWRITE);
+                    handle.getChannel().put(in, actual, ChannelSftp.OVERWRITE);
                 }
                 target.doneBytes = base + file.size;
                 target.doneFiles++;
@@ -286,7 +317,9 @@ public class SftpDistributeService {
             target.status = "done";
             target.finishedAt = System.currentTimeMillis();
             audit.record("FILE_DISTRIBUTE", target.name + " " + task.targetPath, "OK",
-                    task.files.size() + " 个文件，" + task.totalBytes + " 字节");
+                    task.files.size() + " 个文件，" + task.totalBytes + " 字节"
+                            + (target.skippedFiles > 0 ? "，跳过 " + target.skippedFiles + " 个" : "")
+                            + (target.renamedFiles > 0 ? "，重命名 " + target.renamedFiles + " 个" : ""));
         } catch (Exception e) {
             if (task.cancelled) {
                 target.status = "cancelled";
@@ -475,6 +508,7 @@ public class SftpDistributeService {
             r.put("id", task.id);
             r.put("status", task.status);
             r.put("targetPath", task.targetPath);
+            r.put("conflictPolicy", task.conflictPolicy);
             r.put("error", task.error);
             r.put("createdAt", task.createdAt);
             r.put("startedAt", task.startedAt);
@@ -507,6 +541,8 @@ public class SftpDistributeService {
                 m.put("fileIndex", t.fileIndex);
                 m.put("fileCount", task.files.size());
                 m.put("doneFiles", t.doneFiles);
+                m.put("skippedFiles", t.skippedFiles);
+                m.put("renamedFiles", t.renamedFiles);
                 m.put("doneBytes", t.doneBytes);
                 m.put("totalBytes", t.totalBytes);
                 m.put("startedAt", t.startedAt);
@@ -655,6 +691,14 @@ public class SftpDistributeService {
         return dir + "/" + name;
     }
 
+    private static String baseName(String path) {
+        if (path == null) {
+            return "";
+        }
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
     /** 逐级创建远端目录，已存在则跳过 */
     private static void ensureDirectory(ChannelSftp channel, String dir) throws SftpException {
         if (dir == null || dir.isEmpty() || "/".equals(dir)) {
@@ -748,6 +792,8 @@ public class SftpDistributeService {
         volatile String currentFile = "";
         volatile int fileIndex;
         volatile int doneFiles;
+        volatile int skippedFiles;
+        volatile int renamedFiles;
         volatile long doneBytes;
         volatile long startedAt;
         volatile long finishedAt;
@@ -773,6 +819,7 @@ public class SftpDistributeService {
         final AtomicInteger remaining = new AtomicInteger();
         volatile String status = "created";
         volatile String targetPath = "";
+        volatile String conflictPolicy = SftpService.CONFLICT_OVERWRITE;
         volatile String error;
         volatile long startedAt;
         volatile long finishedAt;

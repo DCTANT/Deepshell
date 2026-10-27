@@ -39,18 +39,25 @@
             <div v-for="t in tabs" :key="t.key" class="tab"
                  :class="{ active: t.key === activeKey }"
                  draggable="true"
-                 @click="activate(t.key)" @mousedown.middle.prevent="closeTab(t)"
+                 @click="activate(t.key)" @mousedown.middle.prevent="requestCloseTab(t)"
                  @contextmenu.prevent="onTabContextMenu($event, t)"
                  @dragstart="onTabDragStart($event, t)"
                  @dragover="onTabDragOver($event, t)"
                  @drop.prevent="onTabDrop($event, t)"
                  @dragend="onTabDragEnd">
                 <span class="dot" :class="'dot-' + t.status"></span>
+                <span class="cmd-spin" v-if="t.commandRunning" title="命令运行中"></span>
+                <span class="unread-dot" v-if="t.outputUnread" title="有新的后台输出"></span>
                 <span class="tname">{{ t.title }}</span>
-                <i class="el-icon-close tclose" @click.stop="closeTab(t)"></i>
+                <i class="el-icon-close tclose" @click.stop="requestCloseTab(t)"></i>
             </div>
             <div class="tab add" title="打开连接" @click="openConnectDialog">
                 <i class="el-icon-plus"></i>
+            </div>
+            <div class="tab restore" v-if="recentlyClosedTabs.length"
+                 :title="'恢复最近关闭的标签：' + recentlyClosedTabs[0].title"
+                 @click="restoreClosedTab">
+                <i class="el-icon-refresh-left"></i>
             </div>
         </div>
         <div class="topbar-actions">
@@ -82,6 +89,9 @@
             <span class="stat-err" v-else-if="activeTab && activeTab.stats && activeTab.stats.error">
                 {{ activeTab.stats.error }}
             </span>
+            <i class="el-icon-bell tbtn" title="提醒与通知设置"
+               :class="{ active: notifySettings.desktop || notifySettings.sound }"
+               @click.stop="openNotifySettings"></i>
             <el-popover placement="bottom-end" width="400" trigger="manual" v-model="transferCenterOpen"
                         popper-class="xfer-pop">
                 <div class="xfer-pop-head">
@@ -683,6 +693,9 @@
             <i class="el-icon-monitor"></i>进入 AI 可视化桌面
         </div>
         <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" v-if="recentlyClosedTabs.length" @click="menuAction('restoreClosed')">
+            <i class="el-icon-refresh-left"></i>恢复关闭的标签（{{ recentlyClosedTabs.length }}）
+        </div>
         <div class="tab-menu-item" @click="menuAction('close')">
             <i class="el-icon-close"></i>关闭
         </div>

@@ -1369,10 +1369,10 @@
             <div class="dist-hint">
                 <i class="el-icon-info"></i>
                 <template v-if="distribute.mode === 'cross'">
-                    把当前服务器选中的文件直接传输到其他服务器，无需下载到本机；源文件保持不变，同名文件会被覆盖。
+                    把当前服务器选中的文件直接传输到其他服务器，无需下载到本机；源文件保持不变。
                 </template>
                 <template v-else>
-                    选择本地文件，同时上传到多台服务器的同一目录；同名文件会被覆盖。
+                    选择本地文件，同时上传到多台服务器的同一目录。
                 </template>
             </div>
             <div class="dist-section">
@@ -1417,6 +1417,19 @@
                     </el-input>
                 </div>
                 <div class="dist-sub">所有服务器使用同一绝对路径；目录不存在时自动逐级创建。</div>
+                <div class="dist-row dist-conflict-row">
+                    <span class="dist-label">同名文件</span>
+                    <el-radio-group v-model="distribute.conflict" size="mini">
+                        <el-radio-button label="overwrite">覆盖</el-radio-button>
+                        <el-radio-button label="skip">跳过</el-radio-button>
+                        <el-radio-button label="rename">自动重命名</el-radio-button>
+                    </el-radio-group>
+                    <span class="dist-sub dist-conflict-hint">
+                        {{ distribute.conflict === 'overwrite' ? '替换目标服务器上的同名文件'
+                            : (distribute.conflict === 'skip' ? '保留目标服务器上的同名文件，不再上传'
+                                : '生成 name (2).ext，原文件保持不变') }}
+                    </span>
+                </div>
             </div>
             <div class="dist-section">
                 <div class="dist-section-head">
@@ -1649,6 +1662,91 @@
             <el-button size="small" @click="permVisible = false">取消</el-button>
             <el-button size="small" type="primary" :loading="permSaving" @click="savePerm">保存</el-button>
         </div>
+    </el-dialog>
+
+    <!-- 提醒与通知设置 -->
+    <el-dialog title="提醒与通知" :visible.sync="notifySettingsVisible" width="520px"
+               custom-class="notify-settings-dlg" append-to-body>
+        <div class="notify-settings-card">
+            <div class="notify-settings-row">
+                <div class="notify-settings-info">
+                    <b>桌面通知</b>
+                    <span>页面在后台时，AI 任务完成、文件传输完成或长命令结束会发送系统通知。权限：{{ notifyPermissionText() }}</span>
+                </div>
+                <el-switch v-model="notifySettings.desktop" size="mini"
+                           @change="onNotifyDesktopChange"></el-switch>
+            </div>
+            <div class="notify-settings-row">
+                <div class="notify-settings-info">
+                    <b>提示音</b>
+                    <span>后台任务完成时播放一声轻提示；浏览器可能要求先在本页有过点击操作</span>
+                </div>
+                <el-switch v-model="notifySettings.sound" size="mini"
+                           @change="onNotifySoundChange"></el-switch>
+            </div>
+            <div class="notify-settings-row">
+                <div class="notify-settings-info">
+                    <b>关闭标签前确认</b>
+                    <span>标签里还有命令运行、AI 任务或未完成传输时，关闭前先确认，避免误断会话</span>
+                </div>
+                <el-switch v-model="notifySettings.confirmClose" size="mini"
+                           @change="saveNotifySettings"></el-switch>
+            </div>
+        </div>
+        <div class="notify-settings-foot">
+            <el-button size="mini" @click="testNotify">测试通知</el-button>
+            <span>只有页面在后台时才会打扰你；切回页面后不会重复提醒。</span>
+        </div>
+        <span slot="footer">
+            <el-button size="small" type="primary" @click="notifySettingsVisible = false">完成</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- 上传同名文件冲突：逐项选择覆盖 / 跳过 / 自动重命名 -->
+    <el-dialog title="同名文件冲突" :visible.sync="uploadConflict.visible" width="720px" top="8vh"
+               custom-class="upload-conflict-dlg" :close-on-click-modal="false" append-to-body
+               :before-close="cancelUploadConflict">
+        <div class="upload-conflict">
+            <div class="upload-conflict-head">
+                <i class="el-icon-warning-outline"></i>
+                <div>
+                    <b>目标目录中已有 {{ uploadConflict.items.length }} 个同名项目</b>
+                    <span class="upload-conflict-dir">{{ uploadConflict.dir }}</span>
+                </div>
+            </div>
+            <div class="upload-conflict-bulk">
+                <span>全部设为</span>
+                <el-button size="mini" @click="setAllUploadConflict('overwrite')">覆盖</el-button>
+                <el-button size="mini" @click="setAllUploadConflict('skip')">跳过</el-button>
+                <el-button size="mini" @click="setAllUploadConflict('rename')">自动重命名</el-button>
+            </div>
+            <div class="upload-conflict-list">
+                <div v-for="it in uploadConflict.items" :key="it.relativePath" class="upload-conflict-item">
+                    <div class="upload-conflict-main">
+                        <div class="upload-conflict-name" :title="it.relativePath">{{ it.relativePath }}</div>
+                        <div class="upload-conflict-meta">
+                            <template v-if="it.dir">服务器上是同名文件夹</template>
+                            <template v-else>
+                                服务器 {{ fmtSize(it.size) }} · 本次 {{ fmtSize(it.newSize) }}
+                                <span v-if="it.sameSize" class="upload-conflict-same">大小相同</span>
+                            </template>
+                        </div>
+                    </div>
+                    <el-radio-group v-model="it.action" size="mini">
+                        <el-radio-button label="overwrite">覆盖</el-radio-button>
+                        <el-radio-button label="skip">跳过</el-radio-button>
+                        <el-radio-button label="rename">自动重命名</el-radio-button>
+                    </el-radio-group>
+                </div>
+            </div>
+            <div class="upload-conflict-note">
+                覆盖会替换服务器上的同名项目；自动重命名会生成「name (2).ext」，原文件保持不变；跳过不会写入任何内容。
+            </div>
+        </div>
+        <span slot="footer">
+            <el-button size="small" @click="cancelUploadConflict">取消上传</el-button>
+            <el-button size="small" type="primary" @click="confirmUploadConflict">按所选策略继续</el-button>
+        </span>
     </el-dialog>
 
     <!-- 下载到本机：结果汇总 -->

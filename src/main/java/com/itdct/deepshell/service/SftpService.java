@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -46,6 +47,19 @@ public class SftpService {
     private static final int MAX_RECURSION = 64;
     private static final int MAX_BUNDLE_SOURCES = 200;
     private static final int MAX_LOCAL_DOWNLOAD_ENTRIES = 200_000;
+
+    /** 同名文件处理策略：覆盖 / 跳过 / 自动重命名 */
+    public static final String CONFLICT_OVERWRITE = "overwrite";
+    public static final String CONFLICT_SKIP = "skip";
+    public static final String CONFLICT_RENAME = "rename";
+
+    public static String normalizeConflictPolicy(String policy) {
+        String value = policy == null ? "" : policy.trim().toLowerCase(Locale.ROOT);
+        if (CONFLICT_SKIP.equals(value) || CONFLICT_RENAME.equals(value)) {
+            return value;
+        }
+        return CONFLICT_OVERWRITE;
+    }
 
     private final SshSessionManager sessions;
 
@@ -157,14 +171,26 @@ public class SftpService {
     /** 把本地上传临时文件写入远端，relativePath 可包含多级目录，自动创建父目录 */
     public void putLocalFile(String sessionId, String dirPath, String relativePath,
                              java.nio.file.Path localFile) throws Exception {
+        putLocalFileWithPolicy(sessionId, dirPath, relativePath, localFile, CONFLICT_OVERWRITE);
+    }
+
+    /** 把本机临时文件写入远端，支持同名冲突策略（分片上传完成时复用） */
+    public UploadResult putLocalFileWithPolicy(String sessionId, String dirPath, String relativePath,
+                                               java.nio.file.Path localFile,
+                                               String conflictPolicy) throws Exception {
         String rel = safeRelativePath(relativePath, null);
         final String target = join(dirPath, rel);
-        withSftp(sessionId, c -> {
-            ensureDir(c, parentOf(target));
-            try (InputStream in = java.nio.file.Files.newInputStream(localFile)) {
-                c.put(in, target, ChannelSftp.OVERWRITE);
+        final String policy = normalizeConflictPolicy(conflictPolicy);
+        return withSftp(sessionId, c -> {
+            String actual = resolveRemoteTarget(c, target, policy, new HashSet<>());
+            if (actual == null) {
+                return UploadResult.skipped(target);
             }
-            return null;
+            ensureDir(c, parentOf(actual));
+            try (InputStream in = java.nio.file.Files.newInputStream(localFile)) {
+                c.put(in, actual, ChannelSftp.OVERWRITE);
+            }
+            return UploadResult.done(target, actual);
         });
     }
 
@@ -250,6 +276,20 @@ public class SftpService {
 
     public boolean exists(String sessionId, String path) throws Exception {
         return withSftp(sessionId, c -> sftpExists(c, path));
+    }
+
+    /** 读取单个路径的属性（终端里点击路径时判断是文件还是目录） */
+    public Map<String, Object> statInfo(String sessionId, String path) throws Exception {
+        return withSftp(sessionId, c -> {
+            SftpATTRS attrs = c.stat(path);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("path", path);
+            out.put("name", baseName(path));
+            out.put("dir", attrs.isDir());
+            out.put("size", attrs.getSize());
+            out.put("mtime", attrs.getMTime() * 1000L);
+            return out;
+        });
     }
 
     /** 下载单个文件到本机临时路径（跨服务器传输暂存用） */
@@ -494,18 +534,186 @@ public class SftpService {
     /** relativePath 可包含多级目录（文件夹上传），自动创建父目录 */
     public void upload(String sessionId, String dirPath, String relativePath,
                        MultipartFile file) throws Exception {
+        uploadWithPolicy(sessionId, dirPath, relativePath, file, CONFLICT_OVERWRITE);
+    }
+
+    /** 按同名冲突策略上传普通文件 */
+    public UploadResult uploadWithPolicy(String sessionId, String dirPath, String relativePath,
+                                         MultipartFile file, String conflictPolicy) throws Exception {
         if (file == null) {
             throw new IllegalArgumentException("上传文件不存在");
         }
         final String rel = safeRelativePath(relativePath, file.getOriginalFilename());
         final String target = join(dirPath, rel);
-        withSftp(sessionId, c -> {
-            ensureDir(c, parentOf(target));
-            try (InputStream in = file.getInputStream()) {
-                c.put(in, target, ChannelSftp.OVERWRITE);
+        final String policy = normalizeConflictPolicy(conflictPolicy);
+        return withSftp(sessionId, c -> {
+            String actual = resolveRemoteTarget(c, target, policy, new HashSet<>());
+            if (actual == null) {
+                return UploadResult.skipped(target);
             }
-            return null;
+            ensureDir(c, parentOf(actual));
+            try (InputStream in = file.getInputStream()) {
+                c.put(in, actual, ChannelSftp.OVERWRITE);
+            }
+            return UploadResult.done(target, actual);
         });
+    }
+
+    /** 上传前预检：返回目标目录中已存在的同名文件/文件夹（只读，不创建任何目录） */
+    public List<Map<String, Object>> checkUploadConflicts(
+            String sessionId, String dirPath, List<UploadConflictFile> files) throws Exception {
+        final List<UploadConflictFile> list = files == null ? new ArrayList<>() : files;
+        return withSftp(sessionId, c -> {
+            List<Map<String, Object>> conflicts = new ArrayList<>();
+            Set<String> checked = new HashSet<>();
+            for (UploadConflictFile file : list) {
+                if (file == null) {
+                    continue;
+                }
+                String rel = safeRelativePath(file.getRelativePath(), file.getName());
+                if (!checked.add(rel)) {
+                    continue;
+                }
+                String target = join(dirPath, rel);
+                SftpATTRS attrs = statOrNull(c, target);
+                if (attrs == null) {
+                    continue;
+                }
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("relativePath", rel);
+                item.put("name", baseName(target));
+                item.put("dir", attrs.isDir());
+                item.put("size", attrs.getSize());
+                item.put("sameSize", !attrs.isDir() && file.getSize() > 0
+                        && file.getSize() == attrs.getSize());
+                conflicts.add(item);
+            }
+            return conflicts;
+        });
+    }
+
+    /** 同名文件冲突预检的输入项（也供本地桌面上传复用） */
+    public static final class UploadConflictFile {
+        private final String relativePath;
+        private final String name;
+        private final long size;
+
+        public UploadConflictFile(String relativePath, String name, long size) {
+            this.relativePath = relativePath;
+            this.name = name;
+            this.size = size;
+        }
+
+        public String getRelativePath() {
+            return relativePath;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public long getSize() {
+            return size;
+        }
+    }
+
+    /** 上传结果：实际路径可能因自动重命名而变化，也可能因同名被跳过 */
+    public static final class UploadResult {
+        public final String path;
+        public final String name;
+        public final boolean skipped;
+        public final boolean renamed;
+
+        private UploadResult(String path, String name, boolean skipped, boolean renamed) {
+            this.path = path;
+            this.name = name;
+            this.skipped = skipped;
+            this.renamed = renamed;
+        }
+
+        static UploadResult skipped(String target) {
+            return new UploadResult(target, baseName(target), true, false);
+        }
+
+        static UploadResult done(String target, String actual) {
+            return new UploadResult(actual, baseName(actual), false, !target.equals(actual));
+        }
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("path", path);
+            out.put("name", name);
+            out.put("skipped", skipped);
+            out.put("renamed", renamed);
+            return out;
+        }
+    }
+
+    /** 远端路径是否已存在（只把“不存在”当 false，其余错误继续抛出） */
+    public static boolean remoteExists(ChannelSftp c, String path) throws SftpException {
+        return statOrNull(c, path) != null;
+    }
+
+    private static SftpATTRS statOrNull(ChannelSftp c, String path) throws SftpException {
+        try {
+            return c.stat(path);
+        } catch (SftpException e) {
+            if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * 计算最终写入路径：skip 返回 null；rename 生成 name (2).ext；overwrite 原样返回。
+     * reserved 用于同一批上传中避免两个文件抢到同一个重命名结果。
+     */
+    public static String resolveRemoteTarget(ChannelSftp c, String target, String conflictPolicy,
+                                             Set<String> reserved) throws SftpException {
+        String policy = normalizeConflictPolicy(conflictPolicy);
+        if (CONFLICT_SKIP.equals(policy)) {
+            return remoteExists(c, target) ? null : target;
+        }
+        if (CONFLICT_RENAME.equals(policy)) {
+            String candidate = target;
+            int n = 2;
+            while (remoteExists(c, candidate)
+                    || (reserved != null && reserved.contains(candidate))) {
+                candidate = numberedName(target, n);
+                n++;
+            }
+            if (reserved != null) {
+                reserved.add(candidate);
+            }
+            return candidate;
+        }
+        if (reserved != null) {
+            reserved.add(target);
+        }
+        return target;
+    }
+
+    private static String numberedName(String path, int n) {
+        String dir = parentOf(path);
+        String name = baseName(path);
+        int dot = name.lastIndexOf('.');
+        String base = name;
+        String ext = "";
+        if (dot > 0 && dot < name.length() - 1) {
+            base = name.substring(0, dot);
+            ext = name.substring(dot);
+        }
+        String renamed = base + " (" + n + ")" + ext;
+        return "/".equals(dir) ? "/" + renamed : join(dir, renamed);
+    }
+
+    private static String baseName(String path) {
+        if (path == null) {
+            return "";
+        }
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
     }
 
     public void download(String sessionId, String path, OutputStream out) throws Exception {

@@ -8,6 +8,7 @@ import com.itdct.deepshell.dto.CopyReq;
 import com.itdct.deepshell.dto.ExtractReq;
 import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
+import com.itdct.deepshell.dto.UploadConflictReq;
 import com.itdct.deepshell.service.ArchiveService;
 import com.itdct.deepshell.service.AuditService;
 import com.itdct.deepshell.service.DownloadTaskService;
@@ -28,6 +29,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,6 +71,13 @@ public class SftpController {
     @GetMapping("/home")
     public R<String> home(@RequestParam String sessionId) throws Exception {
         return R.ok(sftp.home(sessionId));
+    }
+
+    /** 单个路径属性：终端输出里的路径点击后判断文件/目录 */
+    @GetMapping("/stat")
+    public R<Map<String, Object>> stat(@RequestParam String sessionId,
+                                       @RequestParam String path) throws Exception {
+        return R.ok(sftp.statInfo(sessionId, path));
     }
 
     @PostMapping("/mkdir")
@@ -698,14 +707,33 @@ public class SftpController {
     }
 
     @PostMapping("/upload")
-    public R<Void> upload(@RequestParam String sessionId, @RequestParam String path,
-                          @RequestParam(value = "relativePath", required = false) String relativePath,
-                          @RequestParam("file") MultipartFile file) throws Exception {
-        sftp.upload(sessionId, path, relativePath, file);
-        String rel = relativePath == null || relativePath.trim().isEmpty()
-                ? file.getOriginalFilename() : relativePath;
-        audit.record("FILE_UPLOAD", path + "/" + rel, "OK", file.getSize() + " bytes");
-        return R.ok();
+    public R<Map<String, Object>> upload(@RequestParam String sessionId, @RequestParam String path,
+                                         @RequestParam(value = "relativePath", required = false) String relativePath,
+                                         @RequestParam(value = "conflict", required = false) String conflict,
+                                         @RequestParam("file") MultipartFile file) throws Exception {
+        SftpService.UploadResult result = sftp.uploadWithPolicy(
+                sessionId, path, relativePath, file, conflict);
+        audit.record("FILE_UPLOAD", result.path, result.skipped ? "SKIP" : "OK",
+                result.skipped ? "同名文件，已跳过" : file.getSize() + " bytes");
+        return R.ok(result.toMap());
+    }
+
+    /** 上传前预检同名文件，避免静默覆盖 */
+    @PostMapping("/upload/conflicts")
+    public R<List<Map<String, Object>>> uploadConflicts(@RequestBody UploadConflictReq req) throws Exception {
+        if (req == null || req.getSessionId() == null || req.getSessionId().trim().isEmpty()) {
+            throw new IllegalArgumentException("缺少会话");
+        }
+        List<SftpService.UploadConflictFile> files = new ArrayList<>();
+        if (req.getFiles() != null) {
+            for (UploadConflictReq.FileItem item : req.getFiles()) {
+                if (item != null) {
+                    files.add(new SftpService.UploadConflictFile(
+                            item.getRelativePath(), item.getName(), item.getSize()));
+                }
+            }
+        }
+        return R.ok(sftp.checkUploadConflicts(req.getSessionId(), req.getDir(), files));
     }
 
     /** 修改权限（八进制模式） */
@@ -726,7 +754,8 @@ public class SftpController {
         long size = longValue(body.get("size"));
         return R.ok(transferService.init(
                 text(body, "sessionId"), text(body, "dir"), text(body, "name"),
-                text(body, "relativePath"), size, text(body, "uploadId")));
+                text(body, "relativePath"), size, text(body, "uploadId"),
+                text(body, "conflict")));
     }
 
     /** 分片上传：写入一片 */

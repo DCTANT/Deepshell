@@ -8,8 +8,10 @@ import com.itdct.deepshell.dto.FileChecksumResult;
 import com.itdct.deepshell.dto.FileContentMatch;
 import com.itdct.deepshell.dto.SftpEntry;
 import com.itdct.deepshell.dto.SftpReq;
+import com.itdct.deepshell.dto.UploadConflictReq;
 import com.itdct.deepshell.service.AuditService;
 import com.itdct.deepshell.service.LocalDesktopService;
+import com.itdct.deepshell.service.SftpService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,6 +24,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,15 +119,36 @@ public class LocalDesktopController {
     }
 
     @PostMapping("/upload")
-    public R<Void> upload(@RequestParam String path,
-                          @RequestParam(value = "relativePath", required = false) String relativePath,
-                          @RequestParam("file") MultipartFile file)
+    public R<Map<String, Object>> upload(@RequestParam String path,
+                                         @RequestParam(value = "relativePath", required = false) String relativePath,
+                                         @RequestParam(value = "conflict", required = false) String conflict,
+                                         @RequestParam("file") MultipartFile file)
             throws IOException {
-        service.upload(path, relativePath, file);
-        String rel = relativePath == null || relativePath.trim().isEmpty()
-                ? file.getOriginalFilename() : relativePath;
-        audit.record("LOCAL_FILE_UPLOAD", path + "/" + rel, "OK", file.getSize() + " bytes");
-        return R.ok();
+        Map<String, Object> result = service.uploadWithPolicy(path, relativePath, file, conflict);
+        boolean skipped = Boolean.TRUE.equals(result.get("skipped"));
+        String auditPath = result.get("path") == null ? path : String.valueOf(result.get("path"));
+        audit.record("LOCAL_FILE_UPLOAD", auditPath, skipped ? "SKIP" : "OK",
+                skipped ? "同名文件，已跳过" : file.getSize() + " bytes");
+        return R.ok(result);
+    }
+
+    /** 上传前预检本地桌面同名文件 */
+    @PostMapping("/upload/conflicts")
+    public R<List<Map<String, Object>>> uploadConflicts(@RequestBody UploadConflictReq req)
+            throws IOException {
+        if (req == null || req.getDir() == null) {
+            throw new IllegalArgumentException("缺少目标目录");
+        }
+        List<SftpService.UploadConflictFile> files = new ArrayList<>();
+        if (req.getFiles() != null) {
+            for (UploadConflictReq.FileItem item : req.getFiles()) {
+                if (item != null) {
+                    files.add(new SftpService.UploadConflictFile(
+                            item.getRelativePath(), item.getName(), item.getSize()));
+                }
+            }
+        }
+        return R.ok(service.checkUploadConflicts(req.getDir(), files));
     }
 
     /** 普通下载：支持 HTTP Range，浏览器或下载工具可断点续传。 */
