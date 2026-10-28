@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MongoDB 管理器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-icon" src="icon.svg" alt="">
+            <div class="brand-text">
+                <b>MongoDB 管理器</b>
+                <span>DEEPSHELL DESKTOP</span>
+            </div>
+        </div>
+
+        <div id="connBox" class="conn-box">
+            <div class="conn-empty">尚未连接 MongoDB</div>
+        </div>
+
+        <nav class="side-nav">
+            <button id="navOverview" class="nav-item active">
+                <svg class="ico" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>
+                <span>服务器概览</span>
+            </button>
+            <button id="navCommand" class="nav-item">
+                <svg class="ico" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"></rect><path d="M7.5 9l2.5 2.5-2.5 2.5"></path><path d="M12.5 15h4"></path></svg>
+                <span>命令控制台</span>
+            </button>
+        </nav>
+
+        <div class="side-title">数据库 <span id="dbCount"></span></div>
+        <div id="dbList" class="db-list"></div>
+
+        <div id="collectionsSection" class="collections-section hidden">
+            <div class="side-title">集合 <span id="collectionCount"></span></div>
+            <div class="topic-filter">
+                <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.2 4.2"></path></svg>
+                <input id="collectionSearch" placeholder="筛选集合" autocomplete="off" spellcheck="false">
+            </div>
+            <div id="collectionList" class="collection-list"></div>
+            <div id="collectionEmpty" class="side-empty hidden">没有集合</div>
+        </div>
+
+        <div class="side-spacer"></div>
+        <button id="btnNewCollectionSide" class="btn btn-ghost side-connect hidden">新建集合</button>
+        <button id="btnDisconnect" class="btn btn-ghost side-disconnect hidden">断开连接</button>
+        <div class="side-foot"><span class="desktop-dot"></span> 仅 DeepShell 可视化桌面可用</div>
+    </aside>
+
+    <main class="main">
+        <section id="welcome" class="welcome">
+            <div class="welcome-grid"></div>
+            <div class="welcome-card">
+                <div class="welcome-icon"><img src="icon.svg" alt="MongoDB 管理器"></div>
+                <span class="eyebrow">DEEPSHELL · DESKTOP APP</span>
+                <h1>MongoDB 管理器</h1>
+                <p>连接 MongoDB，像浏览文件一样查看数据库和集合、查询与编辑文档、管理索引和运行命令。连接由 DeepShell 本机代理建立，插件本身不直接接触网络。</p>
+                <button id="btnOpenConnect" class="btn btn-primary btn-lg">连接 MongoDB</button>
+                <div class="welcome-feats">
+                    <span>库 / 集合浏览</span><span>文档查询编辑</span><span>索引管理</span><span>命令控制台</span>
+                </div>
+                <div id="savedProfiles" class="saved-profiles hidden">
+                    <div class="saved-head">
+                        <span>已保存的连接</span>
+                        <em>密码使用本机密钥加密保存</em>
+                    </div>
+                    <div id="savedProfileList" class="saved-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1 id="viewTitle">服务器概览</h1>
+                    <span id="viewSub" class="muted"></span>
+                </div>
+                <div class="top-actions">
+                    <span id="connPill" class="count-pill"></span>
+                    <button id="btnRefresh" class="icon-btn" title="刷新">
+                        <svg class="ico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+                    </button>
+                </div>
+            </header>
+
+            <div id="viewOverview" class="view overview-view">
+                <div id="overviewStats" class="stat-grid"></div>
+                <section class="card">
+                    <div class="card-head">
+                        <b>运行时指标</b>
+                        <span class="muted">自服务器启动以来累计</span>
+                    </div>
+                    <div id="runtimeStats" class="runtime-grid"></div>
+                </section>
+                <section class="card">
+                    <div class="card-head">
+                        <b>数据库</b>
+                        <span id="databasesHint" class="muted"></span>
+                    </div>
+                    <div id="dbTable" class="table-wrap"></div>
+                </section>
+            </div>
+
+            <div id="viewDatabase" class="view database-view hidden">
+                <div id="dbHeader" class="db-header"></div>
+                <div id="dbStats" class="stat-grid"></div>
+                <section class="card">
+                    <div class="card-head">
+                        <b>集合</b>
+                        <span id="dbCollectionsHint" class="muted"></span>
+                    </div>
+                    <div id="dbCollections" class="table-wrap"></div>
+                </section>
+            </div>
+
+            <div id="viewCollection" class="view collection-view hidden">
+                <div class="collection-head">
+                    <div class="collection-title">
+                        <span class="type-badge">COLLECTION</span>
+                        <h2 id="collectionName">collection</h2>
+                        <span id="collectionBadges" class="badge-row"></span>
+                    </div>
+                    <div class="collection-actions">
+                        <button id="btnInsertDoc" class="btn btn-primary btn-sm">插入文档</button>
+                        <button id="btnCreateIndex" class="btn btn-ghost btn-sm">新建索引</button>
+                        <button id="btnDropCollection" class="btn btn-ghost btn-sm danger-text">删除集合</button>
+                    </div>
+                </div>
+
+                <nav class="tabs">
+                    <button class="tab active" data-tab="documents">文档</button>
+                    <button class="tab" data-tab="indexes">索引</button>
+                    <button class="tab" data-tab="stats">统计</button>
+                </nav>
+
+                <div id="tabDocuments" class="tab-body documents-body">
+                    <div class="query-panel">
+                        <label class="query-field">
+                            <span>查询条件</span>
+                            <textarea id="queryFilter" class="input textarea query-input" rows="2" spellcheck="false" placeholder='{"status": "active"} 或 {"_id": {"$oid": "..."}}'></textarea>
+                        </label>
+                        <label class="query-field">
+                            <span>排序</span>
+                            <input id="querySort" class="input" spellcheck="false" placeholder='{"createdAt": -1}'>
+                        </label>
+                        <label class="query-field">
+                            <span>字段投影</span>
+                            <input id="queryProjection" class="input" spellcheck="false" placeholder='{"name": 1, "status": 1}'>
+                        </label>
+                        <div class="query-actions">
+                            <button id="btnRunQuery" class="btn btn-primary btn-sm">查询</button>
+                            <button id="btnCountDocs" class="btn btn-ghost btn-sm">统计总数</button>
+                            <select id="queryLimit" class="select" title="每页条数">
+                                <option value="20">20 条</option>
+                                <option value="50">50 条</option>
+                                <option value="100">100 条</option>
+                                <option value="200">200 条</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="docs-toolbar">
+                        <span id="docsInfo" class="muted"></span>
+                        <span class="spacer"></span>
+                        <button id="btnPrevPage" class="btn btn-ghost btn-xs" disabled>上一页</button>
+                        <button id="btnNextPage" class="btn btn-ghost btn-xs" disabled>下一页</button>
+                    </div>
+                    <div id="docsTable" class="table-wrap docs-table-wrap"></div>
+                    <div id="docsEmpty" class="empty-block hidden">没有匹配的文档<br><small>调整查询条件后重试；空集合可以直接插入第一条文档</small></div>
+                </div>
+
+                <div id="tabIndexes" class="tab-body hidden">
+                    <div id="indexTable" class="table-wrap"></div>
+                </div>
+
+                <div id="tabStats" class="tab-body hidden">
+                    <div id="collectionStats" class="stats-body"></div>
+                </div>
+            </div>
+
+            <div id="viewCommand" class="view command-view hidden">
+                <div class="command-head">
+                    <label class="field inline-field">
+                        <span>数据库</span>
+                        <select id="commandDb" class="select"></select>
+                    </label>
+                    <button id="btnRunCommand" class="btn btn-primary btn-sm">执行命令</button>
+                    <button id="btnClearCommand" class="btn btn-ghost btn-sm">清空输出</button>
+                </div>
+                <div class="command-layout">
+                    <label class="command-editor">
+                        <span class="command-label">命令 JSON</span>
+                        <textarea id="commandInput" class="input textarea command-textarea" spellcheck="false">{
+  "ping": 1
+}</textarea>
+                    </label>
+                    <div class="command-output-wrap">
+                        <span class="command-label">输出</span>
+                        <pre id="commandOutput" class="code-block command-output">在左侧输入命令并执行，例如 {"ping": 1} 或 {"serverStatus": 1}</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="connectModal" class="modal hidden">
+        <div class="modal-mask" data-close="connectModal"></div>
+        <div class="modal-card connect-card">
+            <header class="modal-head">
+                <b id="connectTitle">连接 MongoDB</b>
+                <button class="icon-btn" data-close="connectModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <label class="field span-2">
+                        <span>连接名称</span>
+                        <input id="fName" class="input" placeholder="例如：生产库" autocomplete="off">
+                    </label>
+                    <label class="field span-2">
+                        <span>地址</span>
+                        <input id="fHosts" class="input" placeholder="127.0.0.1:27017 或 host1:27017,host2:27017" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="field">
+                        <span>用户名</span>
+                        <input id="fUser" class="input" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span>密码</span>
+                        <input id="fPassword" class="input" type="password" autocomplete="new-password">
+                    </label>
+                    <label class="field">
+                        <span>认证数据库</span>
+                        <input id="fAuthSource" class="input" placeholder="admin" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span>认证机制</span>
+                        <select id="fMechanism" class="select">
+                            <option value="SCRAM-SHA-256">SCRAM-SHA-256</option>
+                            <option value="SCRAM-SHA-1">SCRAM-SHA-1</option>
+                            <option value="PLAIN">PLAIN（LDAP）</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span>超时（毫秒）</span>
+                        <input id="fTimeout" class="input" type="number" min="2000" max="60000" value="8000">
+                    </label>
+                    <label class="check tls-check"><input id="fTls" type="checkbox"> 使用 TLS / SSL</label>
+                </div>
+                <div class="form-tip">MongoDB 4.0 及以上默认使用 SCRAM-SHA-256；老用户认证失败时可切换 SCRAM-SHA-1。TLS 使用本机 JVM 信任库校验服务端证书。</div>
+                <div class="form-row">
+                    <label class="check"><input id="fSave" type="checkbox" checked> 保存连接</label>
+                    <button id="btnDeleteProfile" class="btn btn-ghost btn-xs danger-text hidden">删除此连接</button>
+                </div>
+                <div id="connectError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="connectModal">取消</button>
+                <button id="btnConnect" class="btn btn-primary">连接</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="docModal" class="modal hidden">
+        <div class="modal-mask" data-close="docModal"></div>
+        <div class="modal-card doc-card">
+            <header class="modal-head">
+                <b id="docTitle">编辑文档</b>
+                <button class="icon-btn" data-close="docModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div class="doc-hint">JSON 支持 MongoDB 扩展格式，例如 ObjectId：{"_id": {"$oid": "..."}}；日期：{"$date": "2026-01-01T00:00:00Z"}。</div>
+                <textarea id="docBody" class="input textarea doc-textarea" spellcheck="false"></textarea>
+                <div id="docError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button id="btnDeleteDoc" class="btn btn-ghost btn-sm danger-text">删除文档</button>
+                <span class="spacer"></span>
+                <button class="btn btn-ghost" data-close="docModal">取消</button>
+                <button id="btnSaveDoc" class="btn btn-primary">保存</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="newCollectionModal" class="modal hidden">
+        <div class="modal-mask" data-close="newCollectionModal"></div>
+        <div class="modal-card compact-card">
+            <header class="modal-head">
+                <b>新建集合</b>
+                <button class="icon-btn" data-close="newCollectionModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <p class="modal-note" id="newCollectionNote"></p>
+                <label class="field">
+                    <span>集合名称</span>
+                    <input id="newCollectionName" class="input" placeholder="例如：orders" autocomplete="off" spellcheck="false">
+                </label>
+                <div id="newCollectionError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="newCollectionModal">取消</button>
+                <button id="btnCreateCollection" class="btn btn-primary">创建</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="indexModal" class="modal hidden">
+        <div class="modal-mask" data-close="indexModal"></div>
+        <div class="modal-card">
+            <header class="modal-head">
+                <b>新建索引</b>
+                <button class="icon-btn" data-close="indexModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <label class="field span-2">
+                        <span>索引字段（JSON，1 升序 / -1 降序 / text）</span>
+                        <input id="indexKeys" class="input mono" value='{"field": 1}' spellcheck="false">
+                    </label>
+                    <label class="field span-2">
+                        <span>索引名称（可选）</span>
+                        <input id="indexName" class="input" placeholder="留空由 MongoDB 生成" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span>TTL（秒，可选）</span>
+                        <input id="indexTtl" class="input" type="number" min="0" placeholder="例如 3600">
+                    </label>
+                    <label class="check inline-check"><input id="indexUnique" type="checkbox"> 唯一索引</label>
+                    <label class="check inline-check"><input id="indexSparse" type="checkbox"> 稀疏索引</label>
+                </div>
+                <div id="indexError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="indexModal">取消</button>
+                <button id="btnSaveIndex" class="btn btn-primary">创建</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="confirmModal" class="modal hidden">
+        <div class="modal-mask" data-close="confirmModal"></div>
+        <div class="modal-card compact-card">
+            <header class="modal-head">
+                <b id="confirmTitle">确认</b>
+                <button class="icon-btn" data-close="confirmModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <p id="confirmMessage" class="modal-note"></p>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="confirmModal">取消</button>
+                <button id="btnConfirmOk" class="btn btn-danger">确认</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

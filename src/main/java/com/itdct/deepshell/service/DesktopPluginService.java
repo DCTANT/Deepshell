@@ -64,7 +64,8 @@ public class DesktopPluginService {
     private static final int DEFAULT_WIDTH = 760;
     private static final int DEFAULT_HEIGHT = 520;
     private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList(
-            "com.deepshell.redis", "com.deepshell.elasticsearch"));
+            "com.deepshell.redis", "com.deepshell.elasticsearch",
+            "com.deepshell.kafka", "com.deepshell.mongodb"));
     private static final ObjectMapper OM = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -172,6 +173,13 @@ public class DesktopPluginService {
                 "Elasticsearch 管理器", "1.0.0",
                 "面向 AI 桌面的 Elasticsearch 管理与调试工具：集群概览、索引与映射浏览、文档搜索编辑、REST 控制台，连接凭据本机加密保存。",
                 "/plugin-icons/elasticsearch.svg"));
+        out.add(builtinEntry(installedList, "kafka", "com.deepshell.kafka", "Kafka 管理器", "1.0.0",
+                "面向 AI 桌面的 Kafka 运维工具：保存连接（密码加密）、集群概览、主题与分区浏览、消息拉取与发送、消费组状态与堆积检查。",
+                "/plugin-icons/kafka.svg"));
+        out.add(builtinEntry(installedList, "mongodb", "com.deepshell.mongodb", "MongoDB 管理器",
+                "1.0.0",
+                "面向 AI 桌面的 MongoDB 浏览与调试工具：保存连接（密码加密）、数据库与集合浏览、文档查询编辑、索引管理、统计与命令控制台。",
+                "/plugin-icons/mongodb.svg"));
         return out;
     }
 

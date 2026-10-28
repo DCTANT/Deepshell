@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kafka 管理器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-icon" src="icon.svg" alt="">
+            <div class="brand-text">
+                <b>Kafka 管理器</b>
+                <span>DEEPSHELL DESKTOP</span>
+            </div>
+        </div>
+
+        <div id="connBox" class="conn-box">
+            <div class="conn-empty">尚未连接 Kafka</div>
+        </div>
+
+        <nav class="side-nav">
+            <button id="navOverview" class="nav-item active">
+                <svg class="ico" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>
+                <span>集群概览</span>
+            </button>
+            <button id="navGroups" class="nav-item">
+                <svg class="ico" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"></circle><path d="M3.5 19c0-3 2.4-5 5.5-5s5.5 2 5.5 5"></path><circle cx="17" cy="9" r="2.2"></circle><path d="M16 14.2c2.6.2 4.5 2.1 4.5 4.8"></path></svg>
+                <span>消费组</span>
+                <em id="groupCount" class="nav-count"></em>
+            </button>
+        </nav>
+
+        <div class="side-title">主题 <span id="topicCount"></span></div>
+        <div class="topic-filter">
+            <svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4.2 4.2"></path></svg>
+            <input id="topicSearch" placeholder="筛选主题" autocomplete="off" spellcheck="false">
+        </div>
+        <div id="topicList" class="topic-list"></div>
+        <div id="topicEmpty" class="side-empty hidden">没有匹配的主题</div>
+
+        <div class="side-spacer"></div>
+        <button id="btnNewTopicSide" class="btn btn-ghost side-connect">新建主题</button>
+        <button id="btnDisconnect" class="btn btn-ghost side-disconnect hidden">断开连接</button>
+        <div class="side-foot"><span class="desktop-dot"></span> 仅 DeepShell 可视化桌面可用</div>
+    </aside>
+
+    <main class="main">
+        <section id="welcome" class="welcome">
+            <div class="welcome-grid"></div>
+            <div class="welcome-card">
+                <div class="welcome-icon"><img src="icon.svg" alt="Kafka 管理器"></div>
+                <span class="eyebrow">DEEPSHELL · DESKTOP APP</span>
+                <h1>Kafka 管理器</h1>
+                <p>连接 Kafka 集群，浏览主题与分区、查看和发送消息、检查消费组堆积。连接由 DeepShell 本机代理建立，插件本身不直接接触网络。</p>
+                <button id="btnOpenConnect" class="btn btn-primary btn-lg">连接 Kafka</button>
+                <div class="welcome-feats">
+                    <span>主题与分区</span><span>消息浏览</span><span>消息生产</span><span>消费组堆积</span>
+                </div>
+                <div id="savedProfiles" class="saved-profiles hidden">
+                    <div class="saved-head">
+                        <span>已保存的连接</span>
+                        <em>密码使用本机密钥加密保存</em>
+                    </div>
+                    <div id="savedProfileList" class="saved-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1 id="viewTitle">集群概览</h1>
+                    <span id="viewSub" class="muted"></span>
+                </div>
+                <div class="top-actions">
+                    <span id="connPill" class="count-pill"></span>
+                    <button id="btnRefresh" class="icon-btn" title="刷新">
+                        <svg class="ico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg>
+                    </button>
+                </div>
+            </header>
+
+            <div id="viewOverview" class="view overview-view">
+                <div id="overviewStats" class="stat-grid"></div>
+                <section class="card">
+                    <div class="card-head">
+                        <b>Broker</b>
+                        <span id="overviewCluster" class="muted"></span>
+                    </div>
+                    <div id="brokerTable" class="table-wrap"></div>
+                </section>
+                <section class="card">
+                    <div class="card-head">
+                        <b>常用入口</b>
+                        <span class="muted">消息浏览不会提交消费位点</span>
+                    </div>
+                    <div class="quick-grid">
+                        <button id="quickLatest" class="quick-card">
+                            <b>查看最新消息</b>
+                            <span>选择一个主题，拉取最近 20 条消息</span>
+                        </button>
+                        <button id="quickGroups" class="quick-card">
+                            <b>检查消费组</b>
+                            <span>查看消费组状态与每个分区的堆积量</span>
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <div id="viewGroups" class="view groups-view hidden">
+                <div class="groups-layout">
+                    <section class="card groups-list-card">
+                        <div class="card-head">
+                            <b>消费组</b>
+                            <span id="groupsHint" class="muted"></span>
+                        </div>
+                        <div id="groupsTable" class="table-wrap"></div>
+                    </section>
+                    <section class="card groups-detail-card">
+                        <div class="card-head">
+                            <b id="groupDetailTitle">选择一个消费组</b>
+                            <span id="groupDetailMeta" class="muted"></span>
+                        </div>
+                        <div id="groupDetail" class="group-detail-empty">左侧选择消费组后查看成员与位点</div>
+                    </section>
+                </div>
+            </div>
+
+            <div id="viewTopic" class="view topic-view hidden">
+                <div class="topic-head">
+                    <div class="topic-title">
+                        <span class="type-badge">TOPIC</span>
+                        <h2 id="topicName">topic</h2>
+                        <span id="topicBadges" class="badge-row"></span>
+                    </div>
+                    <div class="topic-actions">
+                        <button id="btnProduce" class="btn btn-primary btn-sm">发送消息</button>
+                        <button id="btnAddPartitions" class="btn btn-ghost btn-sm">增加分区</button>
+                        <button id="btnDeleteTopic" class="btn btn-ghost btn-sm danger-text">删除主题</button>
+                    </div>
+                </div>
+
+                <nav class="tabs">
+                    <button class="tab active" data-tab="messages">消息</button>
+                    <button class="tab" data-tab="partitions">分区</button>
+                    <button class="tab" data-tab="configs">配置</button>
+                </nav>
+
+                <div id="tabMessages" class="tab-body messages-body">
+                    <div class="msg-toolbar">
+                        <select id="msgPartition" class="select" title="分区">
+                            <option value="-1">全部分区</option>
+                        </select>
+                        <select id="msgMode" class="select" title="起始位置">
+                            <option value="latest">最新消息</option>
+                            <option value="earliest">最早消息</option>
+                            <option value="offset">指定位点</option>
+                        </select>
+                        <input id="msgOffset" class="input offset-input hidden" type="number" min="0" value="0" placeholder="位点">
+                        <select id="msgLimit" class="select" title="条数">
+                            <option value="20">20 条</option>
+                            <option value="50">50 条</option>
+                            <option value="100">100 条</option>
+                            <option value="200">200 条</option>
+                        </select>
+                        <button id="btnFetchMessages" class="btn btn-primary btn-sm">拉取</button>
+                        <span id="msgHint" class="muted msg-hint"></span>
+                    </div>
+                    <div id="msgTable" class="table-wrap msg-table-wrap"></div>
+                    <div id="msgEmpty" class="empty-block hidden">没有拉到消息<br><small>主题可能为空，或起始位点没有可消费记录</small></div>
+                </div>
+
+                <div id="tabPartitions" class="tab-body hidden">
+                    <div id="partitionTable" class="table-wrap"></div>
+                </div>
+
+                <div id="tabConfigs" class="tab-body hidden">
+                    <div id="configTable" class="table-wrap"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="connectModal" class="modal hidden">
+        <div class="modal-mask" data-close="connectModal"></div>
+        <div class="modal-card connect-card">
+            <header class="modal-head">
+                <b id="connectTitle">连接 Kafka</b>
+                <button class="icon-btn" data-close="connectModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <label class="field span-2">
+                        <span>连接名称</span>
+                        <input id="fName" class="input" placeholder="例如：生产集群" autocomplete="off">
+                    </label>
+                    <label class="field span-2">
+                        <span>Broker 地址</span>
+                        <input id="fServers" class="input" placeholder="127.0.0.1:9092 或 broker1:9092,broker2:9092" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="field">
+                        <span>安全协议</span>
+                        <select id="fSecurity" class="select">
+                            <option value="PLAINTEXT">PLAINTEXT</option>
+                            <option value="SASL_PLAINTEXT">SASL_PLAINTEXT</option>
+                            <option value="SSL">SSL</option>
+                            <option value="SASL_SSL">SASL_SSL</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span>SASL 机制</span>
+                        <select id="fMechanism" class="select">
+                            <option value="PLAIN">PLAIN</option>
+                            <option value="SCRAM-SHA-256">SCRAM-SHA-256</option>
+                            <option value="SCRAM-SHA-512">SCRAM-SHA-512</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span>用户名</span>
+                        <input id="fUser" class="input" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span>密码</span>
+                        <input id="fPassword" class="input" type="password" autocomplete="new-password">
+                    </label>
+                    <label class="field">
+                        <span>Client ID</span>
+                        <input id="fClientId" class="input" placeholder="deepshell-kafka" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span>超时（毫秒）</span>
+                        <input id="fTimeout" class="input" type="number" min="2000" max="60000" value="10000">
+                    </label>
+                </div>
+                <div class="form-tip">SSL 使用本机 JVM 信任库校验服务端证书；自签证书需先在 DeepShell 的 JVM 中导入。</div>
+                <div class="form-row">
+                    <label class="check"><input id="fSave" type="checkbox" checked> 保存连接</label>
+                    <button id="btnDeleteProfile" class="btn btn-ghost btn-xs danger-text hidden">删除此连接</button>
+                </div>
+                <div id="connectError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="connectModal">取消</button>
+                <button id="btnConnect" class="btn btn-primary">连接</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="produceModal" class="modal hidden">
+        <div class="modal-mask" data-close="produceModal"></div>
+        <div class="modal-card produce-card">
+            <header class="modal-head">
+                <b>发送消息</b>
+                <button class="icon-btn" data-close="produceModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <label class="field">
+                        <span>主题</span>
+                        <input id="pTopic" class="input" readonly>
+                    </label>
+                    <label class="field">
+                        <span>分区</span>
+                        <input id="pPartition" class="input" type="number" min="-1" value="-1" placeholder="-1 由 Kafka 分配">
+                    </label>
+                    <label class="field span-2">
+                        <span>Key（可选）</span>
+                        <input id="pKey" class="input" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="field span-2">
+                        <span>消息内容</span>
+                        <textarea id="pValue" class="input textarea" rows="8" placeholder="消息正文，按 UTF-8 编码发送" spellcheck="false"></textarea>
+                    </label>
+                    <label class="field span-2">
+                        <span>Headers（可选，每行 key=value）</span>
+                        <textarea id="pHeaders" class="input textarea" rows="2" placeholder="traceId=abc123" spellcheck="false"></textarea>
+                    </label>
+                </div>
+                <div id="produceError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="produceModal">取消</button>
+                <button id="btnSendMessage" class="btn btn-primary">发送</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="topicModal" class="modal hidden">
+        <div class="modal-mask" data-close="topicModal"></div>
+        <div class="modal-card">
+            <header class="modal-head">
+                <b>新建主题</b>
+                <button class="icon-btn" data-close="topicModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <label class="field span-2">
+                        <span>主题名称</span>
+                        <input id="tName" class="input" placeholder="例如：orders" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="field">
+                        <span>分区数</span>
+                        <input id="tPartitions" class="input" type="number" min="1" value="3">
+                    </label>
+                    <label class="field">
+                        <span>副本数</span>
+                        <input id="tReplication" class="input" type="number" min="1" value="1">
+                    </label>
+                    <label class="field span-2">
+                        <span>主题配置（每行 key=value，可选）</span>
+                        <textarea id="tConfigs" class="input textarea" rows="3" placeholder="cleanup.policy=delete&#10;retention.ms=604800000" spellcheck="false"></textarea>
+                    </label>
+                </div>
+                <div id="topicError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="topicModal">取消</button>
+                <button id="btnCreateTopic" class="btn btn-primary">创建</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="partitionsModal" class="modal hidden">
+        <div class="modal-mask" data-close="partitionsModal"></div>
+        <div class="modal-card compact-card">
+            <header class="modal-head">
+                <b>增加分区</b>
+                <button class="icon-btn" data-close="partitionsModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <p class="muted modal-note" id="partitionsNote"></p>
+                <label class="field">
+                    <span>分区总数</span>
+                    <input id="newPartitionTotal" class="input" type="number" min="1">
+                </label>
+                <div id="partitionsError" class="form-error hidden"></div>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="partitionsModal">取消</button>
+                <button id="btnConfirmPartitions" class="btn btn-primary">确认</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="messageModal" class="modal hidden">
+        <div class="modal-mask" data-close="messageModal"></div>
+        <div class="modal-card message-card">
+            <header class="modal-head">
+                <b id="messageTitle">消息详情</b>
+                <button class="icon-btn" data-close="messageModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <div id="messageMeta" class="message-meta"></div>
+                <div class="message-block">
+                    <div class="message-block-head"><span>Key</span><button id="btnCopyKey" class="btn btn-ghost btn-xs">复制</button></div>
+                    <pre id="messageKey" class="code-block"></pre>
+                </div>
+                <div class="message-block">
+                    <div class="message-block-head"><span>Value</span><button id="btnCopyValue" class="btn btn-ghost btn-xs">复制</button></div>
+                    <pre id="messageValue" class="code-block"></pre>
+                </div>
+                <div id="messageHeadersWrap" class="message-block hidden">
+                    <div class="message-block-head"><span>Headers</span></div>
+                    <div id="messageHeaders" class="header-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirmModal" class="modal hidden">
+        <div class="modal-mask" data-close="confirmModal"></div>
+        <div class="modal-card compact-card">
+            <header class="modal-head">
+                <b id="confirmTitle">确认</b>
+                <button class="icon-btn" data-close="confirmModal" title="关闭">✕</button>
+            </header>
+            <div class="modal-body">
+                <p id="confirmMessage" class="modal-note"></p>
+            </div>
+            <footer class="modal-foot">
+                <button class="btn btn-ghost" data-close="confirmModal">取消</button>
+                <button id="btnConfirmOk" class="btn btn-danger">确认</button>
+            </footer>
+        </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

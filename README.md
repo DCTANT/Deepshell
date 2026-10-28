@@ -72,6 +72,8 @@
 - **桌面应用插件**：开始菜单「已安装应用 → 安装 / 管理」支持导入 ZIP 插件；插件自带图标、窗口尺寸与静态 HTML / JS / CSS 应用，安装后直接出现在开始菜单，打开后是可拖动 / 缩放 / 最大化的桌面窗口，运行在隔离沙箱 iframe 中。插件包支持 **RSA 官方签名验证**，官方签名插件显示「官方签名」，未验证插件明确标记为「未验证」，仅修改作者字段无法冒充官方；插件还可以声明并携带后端 JAR，由 DeepShell 启动时隔离加载，安装 / 更新 / 卸载后需重启生效。支持在线更新（同 ID 覆盖）与卸载，插件文件保存于数据目录 `plugins/`。详见下方「桌面应用插件」格式说明
 - **内置 Redis 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 Redis 直连（主机 / 端口 / ACL 用户名 / 密码 / DB，默认关闭登录时也可用）、**保存多个连接**（欢迎页与连接弹窗均可选择，连接成功后可自动保存；密码由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.redis/connections.properties`，不会回传给浏览器）、SCAN 模式搜索与分批加载、列表 / 按冒号分组的可折叠键树、按类型查看和编辑 String / Hash / List / Set / ZSet / Stream、TTL 设置 / 永久化、重命名与删除、多数据库切换、命令控制台（危险命令二次确认）以及 INFO 服务器信息面板；Redis 连接由插件自带的后端 JAR 建立，空闲 30 分钟自动释放。前端通过当前插件窗口的受限消息桥调用自己的后端模块，不接触登录 Cookie，也不能直接访问其他插件的后端
 - **内置 Elasticsearch 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 HTTP / HTTPS 直连（Basic 认证、API Key、自签名证书忽略校验）、集群健康与节点概览、索引筛选与文档 / 存储统计、映射 / 设置 / 别名查看、索引创建与删除、文档查询（Lucene 查询语法）、文档查看 / 新建 / 编辑 / 删除，以及可执行任意 GET / POST / PUT / DELETE / HEAD 请求的 REST 控制台；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.elasticsearch/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR 建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟自动释放
+- **内置 Kafka 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 PLAINTEXT / SSL / SASL_PLAINTEXT / SASL_SSL（PLAIN、SCRAM-SHA-256 / SHA-512）、集群与 Broker 概览、主题创建 / 删除 / 增加分区、分区位点与主题配置查看、按分区 / 最新 / 最早 / 指定位点拉取消息、消息发送与 Headers、消费组状态与各分区堆积；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.kafka/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR（内置 kafka-clients 3.7.1）建立，消息浏览使用不提交位点的临时消费组，会话仅保存在内存中，最多 8 个、空闲 30 分钟释放
+- **内置 MongoDB 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持单机 / 多地址（副本集）连接、SCRAM-SHA-256 / SCRAM-SHA-1 / PLAIN 认证与 TLS、数据库与集合浏览、JSON 查询条件 / 排序 / 投影 / 分页、文档新增 / 编辑（整文档替换，_id 保持不变）/ 删除、索引查看与创建删除、集合统计和命令控制台；**保存多个连接**，密码由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.mongodb/connections.properties`。连接由插件自带的后端 JAR（内置 MongoDB Java 驱动 5.2.1）建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟释放
 - **桌面图标与本地 Desktop**：桌面按服务器当前用户 home 读取 `Desktop`（优先）或 `桌面`，都不存在时自动创建 `Desktop`（root 为 `/root/Desktop`），把其中的文件 / 文件夹 / 快捷方式映射为桌面图标。默认提供资源管理器（双击进入 `/`）、文本编辑器、终端、传输中心、设置、AI 终端等应用图标；所有图标使用统一顺序网格，可拖动调整顺序，新增文件追加到末尾，顺序与内置图标的隐藏状态按连接保存到 SQLite（`desktop_icon_layout`）。桌面空白右键支持粘贴、刷新、**新建文件夹 / 新建文本文件 / 上传文件 / 在此打开终端**、新建资源管理器窗口、个性化（打开设置并定位外观与桌面）和在新标签页打开工作台（保留当前桌面）；应用图标右键可打开 / 隐藏，隐藏后可在设置中恢复；桌面内置**回收站**图标：删除文件 / 文件夹默认移入 `~/.local/share/Trash`（遵循 freedesktop.org 回收站规范：`files/` 存文件本体、`info/` 存 `.trashinfo` 元数据，与 GNOME / KDE 等桌面共用同一份回收站；首次删除时才创建，`Shift+Delete` 彻底删除），双击打开后可还原到原路径（冲突时自动生成「- 恢复」名称）、彻底删除或清空回收站，回收站项目右键保留还原 / 打开原目录 / 复制原路径 / 属性等操作，回收站图标可隐藏并在设置中恢复；文件和文件夹图标复用资源管理器右键菜单，并可「发送到桌面快捷方式」——在远程 Desktop 写入 JSON 格式 `.lnk`（`target` / `targetType`），不复制原文件，双击快捷方式解析并打开目标。桌面图片与视频文件直接加载缩略图（视频叠加播放角标）；快捷方式按目标类型显示文件夹图标、文件类型图标或图片 / 视频缩略图，并在右下角叠加 link 角标，而不是显示通用的 LNK 文件图标。地址栏左侧星标可把当前目录加入 / 移出「常用目录」，资源管理器任务栏按钮右键可查看常用目录（点击在新窗口打开）、新建窗口和关闭。终端背景与 AI 桌面背景**分别配置**（各自上传或 URL、透明度、模糊度）。
 - **AI 桌面窗口与新标签页工作台**：任务栏「AI 终端」会在桌面内打开一个 AI 对话窗口，与右侧 AI 面板共用同一套对话列表、当前对话、输入和流式输出，支持新建 / 切换 / 删除对话、自动执行 / 每步确认、命令确认与停止；窗口本身和资源管理器一样可拖动、缩放、最小化、最大化、关闭，采用暗色对话控件。开始菜单底部的「新标签页工作台」（或桌面右键同名入口）不会关闭桌面，而是在**新的浏览器标签页**打开同一连接的工作台，原标签页的桌面和所有窗口保持不变；开始菜单底部仍保留真正的「返回工作台」退出桌面。
 - **服务器监控**：工作台顶栏实时显示远端 CPU / 内存 / 交换利用率（阈值变色进度条）与网络上下行速率；每 3 秒经独立 exec 通道采样 `/proc`，不占用交互终端；仅支持 Linux 服务器（Windows 目标会自动提示"监控不可用"）
@@ -456,7 +458,7 @@ public interface DesktopPluginModule {
 - 前端通过宿主消息桥调用当前插件自己的 `/api/desktop/plugins/runtime/{id}/invoke`，不能调用其他插件
 - 含后端 JAR 的插件安装 / 更新后会显示「待重启」，重启 DeepShell 后加载新模块；卸载时会立即释放已加载模块并关闭插件窗口，再次安装后仍需重启加载
 - 未签名的后端插件同样可以安装（用户自行承担来源风险），但会显示「未验证」；后端 JAR 拥有 DeepShell 服务端权限，请只安装可信插件
-- 官方 Redis / Elasticsearch 管理器已经使用该机制：Redis RESP2 客户端和 Elasticsearch REST 客户端都编译在各自插件的后端 JAR 中，主程序不包含对应的 Controller / Service
+- 官方 Redis / Elasticsearch / Kafka / MongoDB 管理器已经使用该机制：Redis RESP2 客户端与 Elasticsearch REST 客户端编译在各自插件的后端 JAR 中；Kafka 插件内置 kafka-clients 3.7.1 及压缩编解码 JAR，MongoDB 插件内置官方同步驱动 5.2.1，主程序不包含对应的 Controller / Service，也不需要把驱动加入主程序依赖
 
 插件的独立数据目录为 `plugin-data/<id>/`（由 `PluginContext.getDataDir()` 提供）。
 
@@ -476,6 +478,25 @@ public interface DesktopPluginModule {
 - 文档页支持 Lucene 查询语法搜索、分页浏览、查看 / 新建 / 编辑 / 删除文档；REST 控制台可执行 GET / POST / PUT / DELETE / HEAD 请求并查看状态码、耗时与格式化响应，仅允许以 `/` 开头的集群内路径
 - 保存的连接配置（名称、地址、用户名、认证方式、超时、TLS、最近使用时间）持久化在 `plugin-data/com.deepshell.elasticsearch/connections.properties`；密码 / API Key 使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接
 - 插件源码位于 `plugin-src/elasticsearch/`（前端）和 `plugin-src/elasticsearch/backend/src/`（后端）；修改后重新打包 `elasticsearch.zip` 并使用 `PluginSigner` 签名即可随程序分发
+
+### 内置 Kafka 管理器
+
+- 在桌面「安装 / 管理」的「内置应用」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名、`backend/kafka-backend.jar` 与 `backend/lib/` 下的 kafka-clients 3.7.1、lz4、snappy、zstd 依赖，安装或更新后需重启 DeepShell 加载后端
+- 使用官方 Kafka 客户端直连 Broker，支持 PLAINTEXT / SSL / SASL_PLAINTEXT / SASL_SSL（PLAIN、SCRAM-SHA-256 / SCRAM-SHA-512）；SSL 使用本机 JVM 信任库校验服务端证书，自签证书需先在运行 DeepShell 的 JVM 中导入
+- 集群概览展示 Broker、Controller、主题与分区数、消费组数；主题页可创建 / 删除主题、增加分区、查看分区位点 / ISR / 配置，并可按全部或指定分区、最新 / 最早 / 指定位点拉取消息，发送消息时支持 Key、Headers 与指定分区
+- 消息浏览使用 `deepshell-browser-*` 临时消费组且不提交位点，不会影响业务消费组；单次最多 200 条，超过 64KB 的文本会截断，二进制内容以 Base64 展示；消费组页展示成员、分配关系与各分区 LAG
+- 保存的连接配置（名称、Broker 地址、安全协议、SASL 机制、用户名、Client ID、超时、最近使用时间）持久化在 `plugin-data/com.deepshell.kafka/connections.properties`；密码使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
+- 插件源码位于 `plugin-src/kafka/`（前端）和 `plugin-src/kafka/backend/src/`（后端）；修改后重新打包 `kafka.zip` 并使用 `PluginSigner` 签名即可随程序分发
+
+### 内置 MongoDB 管理器
+
+- 在桌面「安装 / 管理」的「内置应用」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名、`backend/mongodb-backend.jar` 与 `backend/lib/` 下的 MongoDB 驱动 5.2.1、BSON 依赖，安装或更新后需重启 DeepShell 加载后端
+- 使用 MongoDB 官方同步驱动直连，支持单机、多地址（副本集）与 TLS；认证支持 SCRAM-SHA-256 / SCRAM-SHA-1 / PLAIN（LDAP），认证数据库默认 `admin`。TLS 使用本机 JVM 信任库校验服务端证书
+- 概览页展示版本、运行时间、连接数、操作计数、网络流量与数据库大小；数据库页展示集合、文档数、数据 / 存储 / 索引大小；集合页支持 JSON 查询条件、排序、字段投影、分页浏览与总数统计，文档可新增、编辑（整文档替换）与删除，索引页支持查看、创建（唯一 / 稀疏 / TTL）与删除，统计页展示 `collStats` 原始结果
+- 命令控制台可以按当前连接用户的权限执行任意数据库命令（`runCommand`），输入为 JSON；删除数据库、删除集合等危险操作需要二次确认，空条件更新也会要求确认，删除文档必须提供查询条件
+- 保存的连接配置（名称、地址、用户名、认证数据库、认证机制、TLS、超时、最近使用时间）持久化在 `plugin-data/com.deepshell.mongodb/connections.properties`；密码使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
+- 查询结果单次最多 500 条；`listDatabases` 权限不足时仅显示数据库名称，不显示大小；编辑文档时 `_id` 由原文档保留，替换内容中即使包含 `_id` 也会被忽略
+- 插件源码位于 `plugin-src/mongodb/`（前端）和 `plugin-src/mongodb/backend/src/`（后端）；修改后重新打包 `mongodb.zip` 并使用 `PluginSigner` 签名即可随程序分发
 
 运行与安全：
 
@@ -526,6 +547,8 @@ public interface DesktopPluginModule {
 | 本地桌面文件 | `Desktop/`（无 SSH 会话进入本地桌面时读写；路径限制在该目录内） |
 | 内置 Redis 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.redis/connections.properties`，密码为 AES-GCM 密文 |
 | 内置 Elasticsearch 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.elasticsearch/connections.properties`，密码 / API Key 为 AES-GCM 密文 |
+| 内置 Kafka 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.kafka/connections.properties`，密码为 AES-GCM 密文 |
+| 内置 MongoDB 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.mongodb/connections.properties`，密码为 AES-GCM 密文 |
 | 插件解压临时目录 | `plugin-staging/`（安装过程使用，启动时自动清理） |
 | 官方插件签名私钥 | 仅维护者本机 `~/.deepshell/signing/`；不进入仓库和分发包 |
 | 审计日志 | `db/deepshell.db` 的 `audit_log` 表（默认最多 5 万条） |
