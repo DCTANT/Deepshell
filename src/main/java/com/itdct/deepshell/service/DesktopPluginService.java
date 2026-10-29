@@ -65,7 +65,8 @@ public class DesktopPluginService {
     private static final int DEFAULT_HEIGHT = 520;
     private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList(
             "com.deepshell.redis", "com.deepshell.elasticsearch",
-            "com.deepshell.kafka", "com.deepshell.mongodb"));
+            "com.deepshell.kafka", "com.deepshell.mongodb",
+            "com.deepshell.containers"));
     private static final ObjectMapper OM = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -180,6 +181,10 @@ public class DesktopPluginService {
                 "1.0.0",
                 "面向 AI 桌面的 MongoDB 浏览与调试工具：保存连接（密码加密）、数据库与集合浏览、文档查询编辑、索引管理、统计与命令控制台。",
                 "/plugin-icons/mongodb.svg"));
+        out.add(builtinEntry(installedList, "containers", "com.deepshell.containers",
+                "容器与集群管理器", "1.0.0",
+                "面向 AI 桌面的 Docker / Kubernetes 运维工具：Docker 本机或 SSH 连接，容器、镜像、卷、网络管理；Kubernetes 使用 kubeconfig 浏览节点、Pod、Deployment、Service 与事件，支持日志与一次性命令。",
+                "/plugin-icons/containers.svg"));
         return out;
     }
 

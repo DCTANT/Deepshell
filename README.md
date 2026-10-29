@@ -74,6 +74,7 @@
 - **内置 Elasticsearch 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 HTTP / HTTPS 直连（Basic 认证、API Key、自签名证书忽略校验）、集群健康与节点概览、索引筛选与文档 / 存储统计、映射 / 设置 / 别名查看、索引创建与删除、文档查询（Lucene 查询语法）、文档查看 / 新建 / 编辑 / 删除，以及可执行任意 GET / POST / PUT / DELETE / HEAD 请求的 REST 控制台；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.elasticsearch/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR 建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟自动释放
 - **内置 Kafka 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 PLAINTEXT / SSL / SASL_PLAINTEXT / SASL_SSL（PLAIN、SCRAM-SHA-256 / SHA-512）、集群与 Broker 概览、主题创建 / 删除 / 增加分区、分区位点与主题配置查看、按分区 / 最新 / 最早 / 指定位点拉取消息、消息发送与 Headers、消费组状态与各分区堆积；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.kafka/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR（内置 kafka-clients 3.7.1）建立，消息浏览使用不提交位点的临时消费组，会话仅保存在内存中，最多 8 个、空闲 30 分钟释放
 - **内置 MongoDB 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持单机 / 多地址（副本集）连接、SCRAM-SHA-256 / SCRAM-SHA-1 / PLAIN 认证与 TLS、数据库与集合浏览、JSON 查询条件 / 排序 / 投影 / 分页、文档新增 / 编辑（整文档替换，_id 保持不变）/ 删除、索引查看与创建删除、集合统计和命令控制台；**保存多个连接**，密码由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.mongodb/connections.properties`。连接由插件自带的后端 JAR（内置 MongoDB Java 驱动 5.2.1）建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟释放
+- **内置容器与集群管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。Docker 支持本机或 SSH（密码 / 私钥，首次连接确认主机指纹）执行 docker CLI，管理容器、镜像、卷、网络，查看日志、详情与一次性命令；Kubernetes 使用本机 kubectl + kubeconfig（可留空使用默认配置），浏览节点、命名空间、Pod、Deployment、Service、事件，支持日志、一次性命令、缩放 / 重启 / 删除。**保存多个连接**，SSH 密码、私钥、口令与 kubeconfig 由服务端使用本机密钥加密写入 `plugin-data/com.deepshell.containers/connections.properties`。运行 DeepShell 的电脑需安装 kubectl；Docker 需本机或 SSH 目标机已安装 docker CLI
 - **桌面图标与本地 Desktop**：桌面按服务器当前用户 home 读取 `Desktop`（优先）或 `桌面`，都不存在时自动创建 `Desktop`（root 为 `/root/Desktop`），把其中的文件 / 文件夹 / 快捷方式映射为桌面图标。默认提供资源管理器（双击进入 `/`）、文本编辑器、终端、传输中心、设置、AI 终端等应用图标；所有图标使用统一顺序网格，可拖动调整顺序，新增文件追加到末尾，顺序与内置图标的隐藏状态按连接保存到 SQLite（`desktop_icon_layout`）。桌面空白右键支持粘贴、刷新、**新建文件夹 / 新建文本文件 / 上传文件 / 在此打开终端**、新建资源管理器窗口、个性化（打开设置并定位外观与桌面）和在新标签页打开工作台（保留当前桌面）；应用图标右键可打开 / 隐藏，隐藏后可在设置中恢复；桌面内置**回收站**图标：删除文件 / 文件夹默认移入 `~/.local/share/Trash`（遵循 freedesktop.org 回收站规范：`files/` 存文件本体、`info/` 存 `.trashinfo` 元数据，与 GNOME / KDE 等桌面共用同一份回收站；首次删除时才创建，`Shift+Delete` 彻底删除），双击打开后可还原到原路径（冲突时自动生成「- 恢复」名称）、彻底删除或清空回收站，回收站项目右键保留还原 / 打开原目录 / 复制原路径 / 属性等操作，回收站图标可隐藏并在设置中恢复；文件和文件夹图标复用资源管理器右键菜单，并可「发送到桌面快捷方式」——在远程 Desktop 写入 JSON 格式 `.lnk`（`target` / `targetType`），不复制原文件，双击快捷方式解析并打开目标。桌面图片与视频文件直接加载缩略图（视频叠加播放角标）；快捷方式按目标类型显示文件夹图标、文件类型图标或图片 / 视频缩略图，并在右下角叠加 link 角标，而不是显示通用的 LNK 文件图标。地址栏左侧星标可把当前目录加入 / 移出「常用目录」，资源管理器任务栏按钮右键可查看常用目录（点击在新窗口打开）、新建窗口和关闭。终端背景与 AI 桌面背景**分别配置**（各自上传或 URL、透明度、模糊度）。
 - **AI 桌面窗口与新标签页工作台**：任务栏「AI 终端」会在桌面内打开一个 AI 对话窗口，与右侧 AI 面板共用同一套对话列表、当前对话、输入和流式输出，支持新建 / 切换 / 删除对话、自动执行 / 每步确认、命令确认与停止；窗口本身和资源管理器一样可拖动、缩放、最小化、最大化、关闭，采用暗色对话控件。开始菜单底部的「新标签页工作台」（或桌面右键同名入口）不会关闭桌面，而是在**新的浏览器标签页**打开同一连接的工作台，原标签页的桌面和所有窗口保持不变；开始菜单底部仍保留真正的「返回工作台」退出桌面。
 - **服务器监控**：工作台顶栏实时显示远端 CPU / 内存 / 交换利用率（阈值变色进度条）与网络上下行速率；每 3 秒经独立 exec 通道采样 `/proc`，不占用交互终端；仅支持 Linux 服务器（Windows 目标会自动提示"监控不可用"）
@@ -107,7 +108,7 @@
 > **一键打包**：直接双击仓库根目录的 `build-release.cmd`。脚本会自动查找 JDK 与 Maven（PATH 中没有 Maven 时使用 IDEA 自带的），生成传统分发包、Windows 绿色版和对应的 `.sha256`，完成后打开 `target` 目录。
 
 ```bash
-# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.7.0.zip）
+# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.8.0.zip）
 mvn -DskipTests package
 
 # 2. 生成内置精简 JRE 的 Windows 绿色版
@@ -117,9 +118,9 @@ powershell -ExecutionPolicy Bypass -File tools/build-portable.ps1 -SkipMaven
 产物：
 
 ```
-target/deepshell-1.7.0-windows-x64-portable/        可直接运行的目录
-target/deepshell-1.7.0-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
-target/deepshell-1.7.0-windows-x64-portable.zip.sha256
+target/deepshell-1.8.0-windows-x64-portable/        可直接运行的目录
+target/deepshell-1.8.0-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
+target/deepshell-1.8.0-windows-x64-portable.zip.sha256
 ```
 
 绿色版特性：
@@ -138,7 +139,7 @@ target/deepshell-1.7.0-windows-x64-portable.zip.sha256
 前置要求：JDK 8+、Maven（仅构建需要）。
 
 ```bash
-# 构建（同时生成传统分发包 target/deepshell-1.7.0.zip）
+# 构建（同时生成传统分发包 target/deepshell-1.8.0.zip）
 mvn -DskipTests package
 
 # 或直接运行 jar（开发调试）
@@ -167,10 +168,10 @@ npm start
 
 ### 分发包
 
-解压 `target/deepshell-1.7.0.zip` 后的目录结构：
+解压 `target/deepshell-1.8.0.zip` 后的目录结构：
 
 ```
-deepshell-1.7.0/
+deepshell-1.8.0/
 ├─ deepshell.jar      主程序
 ├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
 ├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）
@@ -478,7 +479,7 @@ public interface DesktopPluginModule {
 - 前端通过宿主消息桥调用当前插件自己的 `/api/desktop/plugins/runtime/{id}/invoke`，不能调用其他插件
 - 含后端 JAR 的插件安装 / 更新后会显示「待重启」，重启 DeepShell 后加载新模块；卸载时会立即释放已加载模块并关闭插件窗口，再次安装后仍需重启加载
 - 未签名的后端插件同样可以安装（用户自行承担来源风险），但会显示「未验证」；后端 JAR 拥有 DeepShell 服务端权限，请只安装可信插件
-- 官方 Redis / Elasticsearch / Kafka / MongoDB 管理器已经使用该机制：Redis RESP2 客户端与 Elasticsearch REST 客户端编译在各自插件的后端 JAR 中；Kafka 插件内置 kafka-clients 3.7.1 及压缩编解码 JAR，MongoDB 插件内置官方同步驱动 5.2.1，主程序不包含对应的 Controller / Service，也不需要把驱动加入主程序依赖
+- 官方 Redis / Elasticsearch / Kafka / MongoDB / 容器与集群管理器已经使用该机制：Redis RESP2 客户端与 Elasticsearch REST 客户端编译在各自插件的后端 JAR 中；Kafka 插件内置 kafka-clients 3.7.1 及压缩编解码 JAR，MongoDB 插件内置官方同步驱动 5.2.1，容器插件通过本机 / SSH 的 docker CLI 与本机 kubectl 工作，主程序不包含对应的 Controller / Service，也不需要把驱动加入主程序依赖
 
 插件的独立数据目录为 `plugin-data/<id>/`（由 `PluginContext.getDataDir()` 提供）。
 
@@ -517,6 +518,15 @@ public interface DesktopPluginModule {
 - 保存的连接配置（名称、地址、用户名、认证数据库、认证机制、TLS、超时、最近使用时间）持久化在 `plugin-data/com.deepshell.mongodb/connections.properties`；密码使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
 - 查询结果单次最多 500 条；`listDatabases` 权限不足时仅显示数据库名称，不显示大小；编辑文档时 `_id` 由原文档保留，替换内容中即使包含 `_id` 也会被忽略
 - 插件源码位于 `plugin-src/mongodb/`（前端）和 `plugin-src/mongodb/backend/src/`（后端）；修改后重新打包 `mongodb.zip` 并使用 `PluginSigner` 签名即可随程序分发
+
+### 内置容器与集群管理器
+
+- 在桌面「安装 / 管理」的「内置应用」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名与 `backend/containers-backend.jar`，安装或更新后需重启 DeepShell 加载后端
+- Docker：可选择本机 docker CLI，或通过 SSH（密码 / 私钥 + 口令）在目标主机执行 docker；支持容器列表与 CPU / 内存统计、启动 / 停止 / 重启 / 暂停 / 删除、日志、JSON 详情、一次性命令，镜像拉取 / 删除，卷与网络查看 / 删除。首次连接新 SSH 主机会显示 SHA-256 指纹，确认后写入 `known_hosts.properties`，之后密钥变化会拒绝连接
+- Kubernetes：使用运行 DeepShell 的电脑上的 kubectl 和 kubeconfig（可留空使用默认 `~/.kube/config`），支持指定 context，浏览节点、命名空间、Pod、Deployment、Service 与事件，查看 Pod 日志、一次性命令、describe，以及 Deployment 缩放 / 滚动重启 / 删除
+- 保存的连接配置持久化在 `plugin-data/com.deepshell.containers/connections.properties`；SSH 密码、私钥、私钥口令与 kubeconfig 使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
+- 依赖：Docker 需要本机或 SSH 目标机已安装 docker CLI；Kubernetes 需要运行 DeepShell 的电脑已安装 kubectl。kubeconfig 只会在连接期间写入插件数据目录并在断开时删除
+- 插件源码位于 `plugin-src/containers/`（前端）和 `plugin-src/containers/backend/src/`（后端）；修改后重新打包 `containers.zip` 并使用 `PluginSigner` 签名即可随程序分发
 
 运行与安全：
 
@@ -569,6 +579,7 @@ public interface DesktopPluginModule {
 | 内置 Elasticsearch 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.elasticsearch/connections.properties`，密码 / API Key 为 AES-GCM 密文 |
 | 内置 Kafka 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.kafka/connections.properties`，密码为 AES-GCM 密文 |
 | 内置 MongoDB 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.mongodb/connections.properties`，密码为 AES-GCM 密文 |
+| 内置容器插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.containers/connections.properties`，SSH 密码 / 私钥 / 口令与 kubeconfig 为 AES-GCM 密文；已知 SSH 主机指纹在 `known_hosts.properties` |
 | 插件解压临时目录 | `plugin-staging/`（安装过程使用，启动时自动清理） |
 | 官方插件签名私钥 | 仅维护者本机 `~/.deepshell/signing/`；不进入仓库和分发包 |
 | 审计日志 | `db/deepshell.db` 的 `audit_log` 表（默认最多 5 万条） |

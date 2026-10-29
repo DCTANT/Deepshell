@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>容器与集群管理器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app">
+    <aside class="sidebar">
+        <div class="brand">
+            <img class="brand-icon" src="icon.svg" alt="">
+            <div class="brand-text">
+                <b>容器与集群管理器</b>
+                <span>DEEPSHELL DESKTOP</span>
+            </div>
+        </div>
+
+        <div id="connBox" class="conn-box">
+            <div class="conn-empty">尚未连接</div>
+        </div>
+
+        <nav id="sideNav" class="side-nav"></nav>
+
+        <div class="side-spacer"></div>
+        <button id="btnDisconnect" class="btn btn-ghost side-disconnect hidden">断开连接</button>
+        <div class="side-foot"><span class="desktop-dot"></span> 仅 DeepShell 可视化桌面可用</div>
+    </aside>
+
+    <main class="main">
+        <section id="welcome" class="welcome">
+            <div class="welcome-grid"></div>
+            <div class="welcome-card">
+                <div class="welcome-icon"><img src="icon.svg" alt="容器与集群管理器"></div>
+                <span class="eyebrow">DEEPSHELL · DESKTOP APP</span>
+                <h1>容器与集群管理器</h1>
+                <p>用一个窗口管理 Docker 与 Kubernetes：Docker 支持本机或 SSH 上的 docker CLI，Kubernetes 使用 kubeconfig + kubectl。连接由 DeepShell 本机代理执行，插件不直接接触密码。</p>
+                <div class="type-grid">
+                    <button class="type-card" data-type="docker">
+                        <span class="type-icon docker-icon">D</span>
+                        <b>Docker</b>
+                        <span>容器 / 镜像 / 卷 / 网络，支持本机与 SSH</span>
+                    </button>
+                    <button class="type-card" data-type="kubernetes">
+                        <span class="type-icon kube-icon">K</span>
+                        <b>Kubernetes</b>
+                        <span>节点 / Pod / Deployment / Service / 事件</span>
+                    </button>
+                </div>
+                <div id="savedProfiles" class="saved-profiles hidden">
+                    <div class="saved-head">
+                        <span>已保存的连接</span>
+                        <em>密码 / 私钥 / kubeconfig 使用本机密钥加密保存</em>
+                    </div>
+                    <div id="savedProfileList" class="saved-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+            <header class="topbar">
+                <div class="topbar-title">
+                    <h1 id="viewTitle">概览</h1>
+                    <span id="viewSub" class="muted"></span>
+                </div>
+                <div class="top-actions">
+                    <select id="nsFilter" class="select hidden" title="命名空间"></select>
+                    <span id="connPill" class="count-pill"></span>
+                    <button id="btnRefresh" class="icon-btn" title="刷新">
+                        <svg class="ico" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.7"></path><path d="M20 4v7h-7"></path></svg>
+                    </button>
+                </div>
+            </header>
+            <div id="viewHost" class="view"></div>
+        </section>
+    </main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<!-- 连接弹窗 -->
+<div id="connectModal" class="modal hidden">
+    <div class="modal-mask" data-close="connectModal"></div>
+    <div class="modal-card connect-card">
+        <div class="modal-head">
+            <b id="connectTitle">连接 Docker</b>
+            <button class="icon-btn" data-close="connectModal">✕</button>
+        </div>
+        <div class="modal-body">
+            <div id="connectError" class="form-error hidden"></div>
+            <div class="form-grid">
+                <label class="field span-2"><span>连接名称（可选）</span>
+                    <input id="fName" class="input" placeholder="例如：生产 Docker / 测试集群"></label>
+
+                <div id="dockerFields" class="form-grid span-2">
+                    <label class="field"><span>连接方式</span>
+                        <select id="fDockerMode" class="select">
+                            <option value="local">本机 Docker CLI</option>
+                            <option value="ssh">SSH 到远程主机</option>
+                        </select>
+                    </label>
+                    <label class="field"><span>Docker 命令</span>
+                        <input id="fDockerCmd" class="input" value="docker" placeholder="docker 或完整路径"></label>
+                    <label class="field span-2"><span>Docker Context（可选，仅本机模式）</span>
+                        <input id="fDockerContext" class="input" placeholder="例如：default；留空使用当前 Context"></label>
+
+                    <div id="sshFields" class="form-grid span-2 hidden">
+                        <label class="field"><span>SSH 主机</span>
+                            <input id="fSshHost" class="input" placeholder="192.168.1.10"></label>
+                        <label class="field"><span>端口</span>
+                            <input id="fSshPort" class="input" type="number" min="1" max="65535" value="22"></label>
+                        <label class="field"><span>用户名</span>
+                            <input id="fSshUser" class="input" placeholder="root"></label>
+                        <label class="field"><span>认证方式</span>
+                            <select id="fSshAuth" class="select">
+                                <option value="password">密码</option>
+                                <option value="key">私钥</option>
+                            </select>
+                        </label>
+                        <label id="passwordField" class="field span-2"><span>密码</span>
+                            <input id="fSshPassword" class="input" type="password" autocomplete="new-password"
+                                   placeholder="留空则使用已保存密码"></label>
+                        <div id="keyFields" class="form-grid span-2 hidden">
+                            <label class="field span-2"><span>私钥（PEM / OpenSSH）</span>
+                                <textarea id="fSshKey" class="input textarea" rows="5"
+                                          placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
+                            <label class="field span-2"><span>私钥口令（可选）</span>
+                                <input id="fSshPassphrase" class="input" type="password" autocomplete="new-password"></label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="kubeFields" class="form-grid span-2 hidden">
+                    <label class="field"><span>kubectl 命令</span>
+                        <input id="fKubectlCmd" class="input" value="kubectl" placeholder="kubectl 或完整路径"></label>
+                    <label class="field"><span>Context（可选）</span>
+                        <input id="fKubeContext" class="input" placeholder="留空使用 current-context"></label>
+                    <label class="field span-2"><span>kubeconfig（留空使用本机默认 ~/.kube/config）</span>
+                        <textarea id="fKubeconfig" class="input textarea" rows="8"
+                                  placeholder="apiVersion: v1&#10;kind: Config&#10;..."></textarea></label>
+                    <label class="field span-2"><span>从文件读取 kubeconfig</span>
+                        <input id="fKubeconfigFile" class="input" type="file" accept=".yaml,.yml,.config,text/plain"></label>
+                </div>
+
+                <label class="field"><span>命令超时（毫秒）</span>
+                    <input id="fTimeout" class="input" type="number" min="2000" max="120000" value="20000"></label>
+                <label class="check save-check"><input id="fSave" type="checkbox" checked> 保存连接</label>
+            </div>
+            <div class="form-tip">Docker 需要运行 DeepShell 的电脑或 SSH 目标机上已安装 docker CLI；Kubernetes 需要本机已安装 kubectl。首次 SSH 连接会显示主机指纹供确认。</div>
+        </div>
+        <div class="modal-foot">
+            <button id="btnDeleteProfile" class="btn btn-ghost danger-text hidden">删除此连接</button>
+            <span class="spacer"></span>
+            <button class="btn btn-ghost" data-close="connectModal">取消</button>
+            <button id="btnConnect" class="btn btn-primary">测试并连接</button>
+        </div>
+    </div>
+</div>
+
+<!-- 主机指纹确认 -->
+<div id="trustModal" class="modal hidden">
+    <div class="modal-mask" data-close="trustModal"></div>
+    <div class="modal-card compact-card">
+        <div class="modal-head"><b>确认 SSH 主机指纹</b><button class="icon-btn" data-close="trustModal">✕</button></div>
+        <div class="modal-body">
+            <p class="modal-note">首次连接该主机。请确认下面的指纹与服务器一致，确认后会保存在插件数据目录，之后密钥变化将拒绝连接。</p>
+            <div class="message-meta">
+                <span>主机<b id="trustHost">—</b></span>
+                <span>密钥类型<b id="trustType">—</b></span>
+            </div>
+            <div class="code-block mono" id="trustFingerprint">—</div>
+            <div id="trustError" class="form-error hidden"></div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" data-close="trustModal">取消</button>
+            <button id="btnTrustConnect" class="btn btn-primary">信任并连接</button>
+        </div>
+    </div>
+</div>
+
+<!-- 通用确认 -->
+<div id="confirmModal" class="modal hidden">
+    <div class="modal-mask" data-close="confirmModal"></div>
+    <div class="modal-card compact-card">
+        <div class="modal-head"><b id="confirmTitle">确认操作</b><button class="icon-btn" data-close="confirmModal">✕</button></div>
+        <div class="modal-body"><p class="modal-note" id="confirmMessage">—</p></div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" data-close="confirmModal">取消</button>
+            <button id="btnConfirmOk" class="btn btn-danger">确认</button>
+        </div>
+    </div>
+</div>
+
+<!-- 日志 -->
+<div id="logsModal" class="modal hidden">
+    <div class="modal-mask" data-close="logsModal"></div>
+    <div class="modal-card message-card">
+        <div class="modal-head">
+            <b id="logsTitle">日志</b>
+            <div class="modal-head-actions">
+                <select id="logsTail" class="select select-sm">
+                    <option value="100">100 行</option>
+                    <option value="200" selected>200 行</option>
+                    <option value="500">500 行</option>
+                    <option value="1000">1000 行</option>
+                </select>
+                <button id="btnReloadLogs" class="btn btn-ghost btn-sm">刷新</button>
+                <button class="icon-btn" data-close="logsModal">✕</button>
+            </div>
+        </div>
+        <div class="modal-body logs-body">
+            <div class="logs-meta">
+                <label class="inline-label" id="logsContainerWrap">容器
+                    <input id="logsContainer" class="input input-sm" placeholder="可选，默认第一个容器"></label>
+            </div>
+            <pre id="logsOutput" class="code-block logs-output">正在读取…</pre>
+        </div>
+    </div>
+</div>
+
+<!-- 一次性命令 -->
+<div id="execModal" class="modal hidden">
+    <div class="modal-mask" data-close="execModal"></div>
+    <div class="modal-card message-card">
+        <div class="modal-head"><b id="execTitle">执行命令</b><button class="icon-btn" data-close="execModal">✕</button></div>
+        <div class="modal-body">
+            <div class="form-grid">
+                <label class="field" id="execContainerWrap"><span>容器（可选）</span>
+                    <input id="execContainer" class="input" placeholder="默认第一个容器"></label>
+                <label class="field"><span>Shell</span>
+                    <input id="execShell" class="input" value="/bin/sh"></label>
+                <label class="field span-2"><span>命令</span>
+                    <textarea id="execCommand" class="input textarea" rows="3" placeholder="例如：ps aux | head -20"></textarea></label>
+            </div>
+            <div class="exec-actions">
+                <button id="btnRunExec" class="btn btn-primary btn-sm">执行</button>
+                <span id="execStatus" class="muted"></span>
+            </div>
+            <pre id="execOutput" class="code-block exec-output">命令输出会显示在这里</pre>
+        </div>
+    </div>
+</div>
+
+<!-- 详情 / describe -->
+<div id="viewModal" class="modal hidden">
+    <div class="modal-mask" data-close="viewModal"></div>
+    <div class="modal-card message-card">
+        <div class="modal-head"><b id="viewModalTitle">详情</b><button class="icon-btn" data-close="viewModal">✕</button></div>
+        <div class="modal-body"><pre id="viewModalBody" class="code-block view-output">—</pre></div>
+    </div>
+</div>
+
+<!-- 拉取镜像 -->
+<div id="pullModal" class="modal hidden">
+    <div class="modal-mask" data-close="pullModal"></div>
+    <div class="modal-card compact-card">
+        <div class="modal-head"><b>拉取镜像</b><button class="icon-btn" data-close="pullModal">✕</button></div>
+        <div class="modal-body">
+            <label class="field"><span>镜像名称</span>
+                <input id="pullRef" class="input" placeholder="例如：nginx:1.27 或 ghcr.io/org/app:tag"></label>
+            <div id="pullError" class="form-error hidden"></div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" data-close="pullModal">取消</button>
+            <button id="btnPull" class="btn btn-primary">开始拉取</button>
+        </div>
+    </div>
+</div>
+
+<!-- 调整副本数 -->
+<div id="scaleModal" class="modal hidden">
+    <div class="modal-mask" data-close="scaleModal"></div>
+    <div class="modal-card compact-card">
+        <div class="modal-head"><b id="scaleTitle">调整副本数</b><button class="icon-btn" data-close="scaleModal">✕</button></div>
+        <div class="modal-body">
+            <label class="field"><span>副本数</span>
+                <input id="scaleReplicas" class="input" type="number" min="0" max="1000" value="1"></label>
+            <div id="scaleError" class="form-error hidden"></div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-ghost" data-close="scaleModal">取消</button>
+            <button id="btnScale" class="btn btn-primary">保存</button>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
