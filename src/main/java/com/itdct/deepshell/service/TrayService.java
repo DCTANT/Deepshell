@@ -5,6 +5,7 @@ import com.itdct.deepshell.config.BrowserLauncher;
 import com.itdct.deepshell.config.LocalServerInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.stereotype.Service;
@@ -83,9 +84,12 @@ public class TrayService implements ApplicationListener<ApplicationReadyEvent>, 
         this.serverInfo = serverInfo;
     }
 
+    @Value("${deepshell.tray.enabled:true}")
+    private boolean trayEnabled;
+
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
-        if (prefs.trayEnabled()) {
+        if (trayEnabled && prefs.trayEnabled()) {
             install();
         }
     }
@@ -112,7 +116,7 @@ public class TrayService implements ApplicationListener<ApplicationReadyEvent>, 
     }
 
     private synchronized void install() {
-        if (trayIcon != null) {
+        if (!trayEnabled || trayIcon != null) {
             return;
         }
         if (!isSupported()) {
