@@ -1888,6 +1888,51 @@
     text-overflow: ellipsis;
 }
 
+.dsk-task-caret {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 38px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #7f90a8;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dsk-task-caret:hover {
+    background: #222c3d;
+    color: #e8f1ff;
+}
+
+.dsk-task-caret > i {
+    font-size: 11px;
+}
+
+.dsk-shell-menu .dsk-menu-item {
+    gap: 8px;
+}
+
+.dsk-shell-check {
+    width: 14px;
+    flex: 0 0 auto;
+    color: var(--dsk-accent, #5b9bff);
+    font-size: 12px;
+}
+
+.dsk-shell-item-note {
+    margin-left: auto;
+    font-size: 11px;
+    color: #8a96a6;
+}
+
+.ai-desktop .dsk-shell-item-note {
+    color: var(--dsk-panel-fg-dim, #9fb0c6);
+}
+
 .dsk-task-busy {
     position: absolute;
     top: 5px;

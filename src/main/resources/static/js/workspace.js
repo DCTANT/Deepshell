@@ -4503,7 +4503,7 @@ new Vue({
               category: '效率工具', desc: '新建、打开和编辑远程服务器上的文本文件' },
             { key: 'app:terminal', type: 'app', action: 'terminal', label: '终端',
               icon: 'el-icon-monitor', color: '#22a06b',
-              category: '终端与连接', desc: '打开新的终端窗口（本地桌面为当前机器的本地 Shell）' },
+              category: '终端与连接', desc: '打开新的终端窗口（本地桌面可选 PowerShell / cmd）' },
             { key: 'app:transfers', type: 'app', action: 'transfers', label: '传输中心',
               icon: 'el-icon-s-promotion', color: '#0ea5a4',
               category: '文件与存储', desc: '查看所有会话的上传、下载任务与进度' },
@@ -4589,6 +4589,10 @@ new Vue({
             { id: 'system', label: '系统信息', icon: 'el-icon-cpu' }
         ],
         desktopResizeDirs: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
+        /* 本地桌面可选 Shell：cmd / Windows PowerShell / PowerShell 7 */
+        localShellOptions: [],
+        localShellDefault: '',
+        localShellPick: '',
         /* 无 SSH 会话的本地桌面：数据目录 Desktop 沙箱，服务器专属功能禁用 */
         localDesktopTab: {
             key: '__local_desktop__',
@@ -4614,6 +4618,7 @@ new Vue({
             wallMenu: { visible: false, x: 0, y: 0 },
             taskMenu: { visible: false, x: 0, y: 0, winId: '' },
             taskbarMenu: { visible: false, x: 0, y: 0 },
+            shellMenu: { visible: false, x: 0, y: 0 },
             trayMenu: { visible: false, x: 0, y: 0 },
             showDesktopIds: [],
             surface: { dir: '', loading: false, error: '', loaded: false, entries: [] },
@@ -9141,6 +9146,7 @@ new Vue({
         /* 直接进入本地桌面：不建立 SSH 会话，文件都放在数据目录的 Desktop 沙箱 */
         openLocalDesktop: function () {
             var t = this.localDesktopTab;
+            this.loadLocalShellOptions();
             this.transferCenterOpen = false;
             t.desktopBg = loadDesktopBgSettings(null);
             this.desktop.local = true;
@@ -9302,6 +9308,7 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             this.desktop.taskMenu.visible = false;
             this.desktop.taskbarMenu.visible = false;
+            this.closeLocalShellMenu();
             this.desktop.trayMenu.visible = false;
             this.desktop.startOpen = false;
             this.desktopAppProps.visible = false;
@@ -9457,7 +9464,7 @@ new Vue({
                     return '';
                 }
                 if (tab.localShell) {
-                    return '本地 Shell · ' + this.statusText(tab);
+                    return '本地终端 · ' + this.statusText(tab);
                 }
                 var addr = tab.host ? (tab.host + ':' + (tab.port || 22)) : '';
                 return '终端 · ' + (addr ? addr + ' · ' : '') + this.statusText(tab);
@@ -10768,17 +10775,23 @@ new Vue({
             return w;
         },
         /** 本地桌面：为当前机器开一个本地 Shell 窗口（不经过 SSH） */
-        openLocalShellWindow: function () {
+        openLocalShellWindow: function (shellId) {
             if (!this.desktop.visible || !this.desktop.local) {
                 return null;
             }
+            var kind = shellId || this.preferredLocalShell();
+            var option = this.localShellOption(kind);
+            try { localStorage.setItem('deepshell.localShell', kind); } catch (e) { /* ignore */ }
+            this.localShellPick = kind;
             var w = this.addDesktopWindow('terminal');
             var tab = createTerminalState(null, null, newSessionKey());
             tab.desktopOnly = true;
             tab.localShell = true;
+            tab.localShellKind = kind;
+            tab.localShellName = option ? option.name : '';
             tab.localPty = false;
             tab.windowId = w.id;
-            tab.title = '本地终端';
+            tab.title = option ? option.name : '本地终端';
             tab.host = '';
             tab.port = 0;
             tab.sftpHome = null;
@@ -10796,6 +10809,82 @@ new Vue({
                 }
             });
             return w;
+        },
+        /** 任务栏下拉：用指定 Shell 新开一个本地终端窗口 */
+        openLocalShellWith: function (shellId) {
+            if (!this.desktop.visible || !this.desktop.local) {
+                return;
+            }
+            this.closeLocalShellMenu();
+            this.openLocalShellWindow(shellId);
+        },
+        openLocalShellMenu: function (ev) {
+            if (!this.desktop.visible || !this.desktop.local) {
+                return;
+            }
+            if (this.desktop.shellMenu.visible) {
+                this.closeLocalShellMenu();
+                return;
+            }
+            var rect = ev && ev.currentTarget ? ev.currentTarget.getBoundingClientRect() : null;
+            var width = 222;
+            var height = 30 + this.localShellOptions.length * 34;
+            var x = rect ? rect.left - 40 : (window.innerWidth - width - 8);
+            this.desktop.shellMenu.x = Math.max(8, Math.min(x, window.innerWidth - width - 8));
+            this.desktop.shellMenu.y = Math.max(8, rect ? rect.top - height - 8 : window.innerHeight - 60 - height);
+            this.desktop.shellMenu.visible = true;
+            var self = this;
+            setTimeout(function () {
+                self._shellMenuOutside = function (e) {
+                    var t = e.target;
+                    if (t && t.closest && (t.closest('.dsk-shell-menu') || t.closest('.dsk-task-caret'))) {
+                        return;
+                    }
+                    self.closeLocalShellMenu();
+                };
+                document.addEventListener('mousedown', self._shellMenuOutside, true);
+            }, 0);
+        },
+        closeLocalShellMenu: function () {
+            this.desktop.shellMenu.visible = false;
+            if (this._shellMenuOutside) {
+                document.removeEventListener('mousedown', this._shellMenuOutside, true);
+                this._shellMenuOutside = null;
+            }
+        },
+        loadLocalShellOptions: function () {
+            var self = this;
+            axios.get('/api/local-shell/shells').then(function (r) {
+                var d = r && r.data && r.data.data;
+                if (!d || !d.available) {
+                    return;
+                }
+                self.localShellOptions = d.shells || [];
+                self.localShellDefault = d.default || '';
+                self.localShellPick = self.preferredLocalShell();
+            }).catch(function () { /* 忽略：使用默认 Shell */ });
+        },
+        localShellOption: function (id) {
+            if (!id) {
+                return null;
+            }
+            return this.localShellOptions.find(function (o) { return o.id === id; }) || null;
+        },
+        preferredLocalShell: function () {
+            var stored = '';
+            try { stored = localStorage.getItem('deepshell.localShell') || ''; } catch (e) { /* ignore */ }
+            var usable = function (id) {
+                return !!id && !!this.localShellOption(id) && this.localShellOption(id).available;
+            }.bind(this);
+            if (usable(stored)) {
+                return stored;
+            }
+            if (usable(this.localShellDefault)) {
+                return this.localShellDefault;
+            }
+            var first = this.localShellOptions.find(function (o) { return o.available; });
+            // 列表尚未加载时交给后端默认 Shell 决定，避免误开 cmd
+            return first ? first.id : '';
         },
         closeDesktopTerminal: function (w) {
             var tab = w && w.termTab;
@@ -21067,6 +21156,7 @@ new Vue({
             if (tab.localShell) {
                 url = proto + location.host + '/ws/local-shell?cols=' + (term.cols || 120)
                     + '&rows=' + (term.rows || 30)
+                    + '&shell=' + encodeURIComponent(tab.localShellKind || '')
                     + '&sid=' + encodeURIComponent(tab.clientKey || '');
             } else {
                 url = proto + location.host + '/ws/ssh?connId=' + tab.connId
@@ -21085,6 +21175,17 @@ new Vue({
                         tab.sessionId = tab.localShell ? null : msg.sessionId;
                         tab.localPty = !!msg.pty;
                         if (tab.localShell) {
+                            tab.localShellName = msg.shellName || tab.localShellName || '';
+                            tab.localShellKind = msg.shell || tab.localShellKind || '';
+                            if (tab.localShellName) {
+                                tab.title = tab.localShellName;
+                            }
+                            if (tab.localShellKind) {
+                                self.localShellPick = tab.localShellKind;
+                                try {
+                                    localStorage.setItem('deepshell.localShell', tab.localShellKind);
+                                } catch (e) { /* ignore */ }
+                            }
                             tab.localLineMode = !msg.pty;
                             tab._localLine = '';
                             tab._localPrompt = false;
@@ -26244,6 +26345,7 @@ new Vue({
     mounted: function () {
         var self = this;
         this._titleBase = document.title || 'DeepShell';
+        this.loadLocalShellOptions();
         this._onVisibilityChange = function () {
             if (!document.hidden) {
                 if (self.activeTab) {

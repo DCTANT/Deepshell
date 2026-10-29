@@ -95,9 +95,11 @@ deepshell:
     enabled: true
     scheme: deepshell
 
-  # 本地桌面「终端」：留空使用系统默认 Shell（Windows cmd，Unix $SHELL）；
-  # 也可填本机 Shell 可执行文件绝对路径。仅本机回环 + 登录保护，不会暴露给局域网。
+  # 本地桌面「终端」：default 可选 powershell / pwsh / cmd，留空时 Windows 优先 PowerShell（无则 cmd），
+  # Unix 使用 $SHELL；command 可填本机 Shell 可执行文件绝对路径（作为额外选项并默认使用）。
+  # 仅本机回环 + 登录保护，不会暴露给局域网。
   local-shell:
+    default: ""
     command: ""
 
   # HTTP 集成接口（JumpServer / 门户）Token：留空自动生成到数据目录 integration.token，

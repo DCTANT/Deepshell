@@ -1875,6 +1875,11 @@
                     <i v-else :class="desktopAppIconByAction('terminal', 'el-icon-monitor')"></i>
                     <span class="dsk-task-label">{{ desktopIsLocal ? '本地终端' : '新建终端' }}</span>
                 </button>
+                <button v-if="desktopIsLocal && localShellOptions.length > 1"
+                        class="dsk-task-caret" title="选择本地终端 Shell"
+                        @click.stop="openLocalShellMenu($event)">
+                    <i class="el-icon-caret-top"></i>
+                </button>
                 <span class="dsk-taskbar-sep"></span>
                 <button v-for="w in desktopTaskWindows" :key="'tw' + w.id"
                         class="dsk-task-app dsk-task-win"
@@ -3627,6 +3632,20 @@
             </div>
             <div class="dsk-menu-item" @click="desktopTaskbarMenuAction('showDesktop')">
                 <i class="el-icon-s-fold"></i>显示桌面
+            </div>
+        </div>
+
+        <!-- 本地终端 Shell 选择菜单 -->
+        <div class="dsk-menu dsk-shell-menu" v-if="desktop.shellMenu.visible"
+             :style="{ left: desktop.shellMenu.x + 'px', top: desktop.shellMenu.y + 'px' }"
+             @click.stop @contextmenu.prevent>
+            <div class="dsk-menu-title">本地终端</div>
+            <div v-for="s in localShellOptions" :key="s.id" class="dsk-menu-item"
+                 :class="{ disabled: !s.available }"
+                 @click="s.available && openLocalShellWith(s.id)">
+                <i class="dsk-shell-check" :class="s.id === localShellPick ? 'el-icon-check' : ''"></i>
+                <span>{{ s.name }}</span>
+                <span v-if="!s.available" class="dsk-shell-item-note">未安装</span>
             </div>
         </div>
 
