@@ -50,6 +50,8 @@
                     <span class="conn-row-name">{{ row.name }}</span>
                     <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
                     <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                    <el-tag v-if="row.gatewayId" size="mini" class="conn-gw-tag"
+                            title="经执行网关转发 TCP">网关</el-tag>
                     <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
                     <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
                                 :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">
@@ -856,6 +858,119 @@
             · 正式证书可配置 deepshell.tls.keystore / keystore-password；由反向代理终止 TLS 时设 deepshell.tls.mode: off<br>
             · 首次开放如弹出 Windows 防火墙提示，请选择「允许访问」
         </div>
+    </el-dialog>
+
+    <!-- 执行网关 -->
+    <el-dialog title="执行网关" :visible.sync="gatewayVisible" width="820px" top="6vh" append-to-body>
+        <el-tabs v-model="gatewayTab">
+            <el-tab-pane label="使用网关（本机出口）" name="client">
+                <div class="gw-intro">
+                    连接可经另一台 DeepShell 转发 TCP：目标机凭据仍保存在本机，远端只负责拨号与转发。
+                    对方需要在「作为网关」中启用，并把目标地址加入白名单。
+                </div>
+                <div class="gw-list">
+                    <div v-for="g in gateways" :key="g.id" class="gw-row">
+                        <div class="gw-main">
+                            <b>{{ g.name }}</b>
+                            <span>{{ g.baseUrl }}</span>
+                        </div>
+                        <el-tag v-if="!g.enabled" size="mini" type="info">已停用</el-tag>
+                        <el-tag v-if="g.insecureTls" size="mini" type="warning">跳过证书校验</el-tag>
+                        <span class="gw-actions">
+                            <el-button size="mini" @click="testGatewayRow(g)">测试</el-button>
+                            <el-button size="mini" @click="editGateway(g)">编辑</el-button>
+                            <el-button size="mini" type="text" @click="removeGateway(g)">删除</el-button>
+                        </span>
+                    </div>
+                    <div v-if="!gateways.length && !gatewayLoading" class="panel-tip">
+                        还没有添加网关。在另一台能访问目标机的 DeepShell 上打开「执行网关 → 作为网关」，
+                        启用后复制 Token 填到这里。
+                    </div>
+                </div>
+
+                <div class="gw-form" v-if="gatewayEditing">
+                    <div class="gw-form-title">{{ gatewayForm.id ? '编辑网关' : '添加网关' }}</div>
+                    <el-form label-width="96px" size="small">
+                        <el-form-item label="名称">
+                            <el-input v-model="gatewayForm.name" placeholder="例如：机房出口"></el-input>
+                        </el-form-item>
+                        <el-form-item label="网关地址">
+                            <el-input v-model="gatewayForm.baseUrl"
+                                      placeholder="https://192.168.0.20:17777"></el-input>
+                            <div class="gw-hint">对方 DeepShell 的访问地址；经反向代理时可带路径前缀。</div>
+                        </el-form-item>
+                        <el-form-item label="Token">
+                            <el-input v-model="gatewayForm.token" type="password" show-password
+                                      :placeholder="gatewayForm.id ? '留空表示不修改' : '对方「作为网关」中的 Token'"></el-input>
+                        </el-form-item>
+                        <el-form-item label="选项">
+                            <el-checkbox v-model="gatewayForm.insecureTls">跳过 HTTPS 证书校验（自签证书）</el-checkbox>
+                            <el-checkbox v-model="gatewayForm.enabled">启用</el-checkbox>
+                        </el-form-item>
+                        <el-form-item>
+                            <el-button size="small" :loading="gatewayTesting" @click="testGatewayForm">测试</el-button>
+                            <el-button size="small" type="primary" :loading="gatewaySaving"
+                                       @click="saveGateway">保存</el-button>
+                            <el-button size="small" @click="resetGatewayForm">取消</el-button>
+                        </el-form-item>
+                        <div v-if="gatewayTestResult" class="gw-test"
+                             :class="gatewayTestResult.ok ? 'ok' : 'fail'">
+                            <i :class="gatewayTestResult.ok ? 'el-icon-circle-check' : 'el-icon-warning-outline'"></i>
+                            {{ gatewayTestResult.message }}
+                            <span v-if="gatewayTestResult.ok && gatewayTestResult.maxConnections">
+                                · 并发 {{ gatewayTestResult.activeTunnels || 0 }}/{{ gatewayTestResult.maxConnections }}
+                                · 白名单 {{ gatewayTestResult.allowlistCount }} 条
+                            </span>
+                        </div>
+                    </el-form>
+                </div>
+                <div v-else>
+                    <el-button size="small" icon="el-icon-plus" @click="startGatewayForm">添加网关</el-button>
+                </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="作为网关（提供服务）" name="server">
+                <el-alert v-if="gatewayInfo.enabled && !gatewayAllowlistText.trim()" type="warning"
+                          :closable="false" show-icon
+                          title="已启用但没有配置白名单：所有目标都会被拒绝"></el-alert>
+                <el-form label-width="110px" size="small" style="margin-top:8px">
+                    <el-form-item label="启用网关">
+                        <el-switch v-model="gatewayInfo.enabled"></el-switch>
+                        <span class="gw-hint" style="margin-left:8px">开启后其他 DeepShell 可经本机转发 TCP 连接</span>
+                    </el-form-item>
+                    <el-form-item label="网关 Token">
+                        <div class="gw-token-row">
+                            <el-input :value="gatewayInfo.token" readonly></el-input>
+                            <el-button size="small" @click="copyGatewayToken">复制</el-button>
+                            <el-button size="small" @click="regenerateGatewayToken">重新生成</el-button>
+                        </div>
+                        <div class="gw-hint">
+                            在本地 DeepShell 的「使用网关」中填写此 Token；
+                            {{ gatewayInfo.tokenConfigured ? '当前由 application.yml 固定' : '保存在数据目录 gateway.token' }}
+                        </div>
+                    </el-form-item>
+                    <el-form-item label="目标白名单">
+                        <el-input type="textarea" :rows="6" v-model="gatewayAllowlistText"
+                                  placeholder="每行一条：10.0.0.0/8、192.168.0.34、*.corp.example.com"></el-input>
+                        <div class="gw-hint">
+                            支持精确主机、*.域名、IP 与 CIDR；留空会拒绝全部目标。白名单按主机生效，包含该主机的所有端口；
+                            只放行你确定允许 SSH 的地址。
+                        </div>
+                    </el-form-item>
+                    <el-form-item label="并发上限">
+                        <el-input-number v-model="gatewayInfo.maxConnections" :min="1" :max="64"
+                                         :controls="false" style="width:100px"></el-input-number>
+                        <span class="gw-hint" style="margin-left:8px">
+                            当前隧道 {{ gatewayInfo.activeTunnels || 0 }} 条
+                        </span>
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button size="small" type="primary" @click="saveGatewaySettings">保存设置</el-button>
+                        <span class="gw-hint" style="margin-left:8px">版本 {{ gatewayInfo.version }}</span>
+                    </el-form-item>
+                </el-form>
+            </el-tab-pane>
+        </el-tabs>
     </el-dialog>
 
     <!-- 登录与安全 -->

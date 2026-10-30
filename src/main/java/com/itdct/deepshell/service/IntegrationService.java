@@ -159,6 +159,7 @@ public class IntegrationService {
         form.setProxyPort(existing.getProxyPort());
         form.setProxyUsername(existing.getProxyUsername());
         form.setJumpConnectionId(existing.getJumpConnectionId());
+        form.setGatewayId(existing.getGatewayId());
         form.setPersistSession(existing.getPersistSession());
         form.setSortOrder(existing.getSortOrder());
         form.setFolderId(existing.getFolderId());

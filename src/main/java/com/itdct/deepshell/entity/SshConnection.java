@@ -69,6 +69,9 @@ public class SshConnection {
     /** 通过哪个已保存连接作为跳板机（可递归成链） */
     private Long jumpConnectionId;
 
+    /** 经哪个执行网关转发（null 表示直连）；网关只做 TCP 隧道，目标凭据仍保存在本机 */
+    private Long gatewayId;
+
     /** 持久会话：可用时自动以 tmux 新建/附着，程序重启后仍可恢复 */
     private Boolean persistSession = Boolean.TRUE;
 

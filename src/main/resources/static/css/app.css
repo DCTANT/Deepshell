@@ -7663,3 +7663,96 @@ body.aichat-resizing {
 @keyframes ds-cmd-spin {
     to { transform: rotate(360deg); }
 }
+
+/* ---------- 执行网关 ---------- */
+.gw-intro {
+    font-size: 12px;
+    line-height: 1.7;
+    color: #606266;
+    background: #f5f7fa;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+.gw-intro.warn {
+    background: #fdf6ec;
+    color: #b88230;
+}
+.gw-list {
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+.gw-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #f2f3f5;
+    font-size: 12px;
+}
+.gw-row:last-child {
+    border-bottom: none;
+}
+.gw-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.gw-main b {
+    font-size: 13px;
+    color: #303133;
+}
+.gw-main span {
+    color: #909399;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.gw-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.gw-form {
+    border-top: 1px dashed #ebeef5;
+    padding-top: 12px;
+}
+.gw-form-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #303133;
+}
+.gw-hint {
+    font-size: 11px;
+    color: #909399;
+    line-height: 1.6;
+}
+.gw-test {
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 6px 8px;
+    border-radius: 4px;
+}
+.gw-test.ok {
+    background: #f0f9eb;
+    color: #529b2e;
+}
+.gw-test.fail {
+    background: #fef0f0;
+    color: #c45656;
+}
+.gw-token-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.conn-gw-tag {
+    margin-left: 4px;
+    padding: 0 4px;
+    height: 18px;
+    line-height: 18px;
+    flex: none;
+}

@@ -191,6 +191,8 @@
                                     <span class="conn-row-name">{{ row.name }}</span>
                                     <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
                                     <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                                    <el-tag v-if="row.gatewayId" size="mini" class="conn-gw-tag"
+                                            title="经执行网关转发 TCP">网关</el-tag>
                                     <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
                                     <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
                                                 :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">

@@ -27,6 +27,8 @@ public class ConnectionForm {
     private String proxyPassword;
     /** 跳板机连接 id（必须是另一条已保存连接） */
     private Long jumpConnectionId;
+    /** 执行网关 id（null 表示直连） */
+    private Long gatewayId;
     /** 持久会话（tmux） */
     private Boolean persistSession;
     private Integer sortOrder;

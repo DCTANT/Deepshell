@@ -82,7 +82,7 @@
             id: null, name: '', folderId: null, host: '', port: 22, username: '',
             authType: 'PASSWORD', password: '', keyPath: '', passphrase: '', remark: '',
             proxyType: 'NONE', proxyHost: '', proxyPort: null, proxyUsername: '', proxyPassword: '',
-            jumpConnectionId: null, persistSession: true
+            jumpConnectionId: null, gatewayId: null, persistSession: true
         };
     }
 
@@ -296,6 +296,17 @@
             </el-select>
             <div class="conn-form-hint">目标连接将通过所选连接建立隧道，可多级串联；代理只作用于链路最外层。</div>
         </el-form-item>
+        <el-form-item label="执行网关">
+            <el-select v-model="form.gatewayId" clearable filterable
+                       placeholder="直连（不经过执行网关）" style="width: 100%">
+                <el-option v-for="g in gatewayOptions" :key="g.id"
+                           :label="g.name + '（' + g.baseUrl + '）'"
+                           :value="g.id"></el-option>
+            </el-select>
+            <div class="conn-form-hint">
+                经另一台 DeepShell 转发 TCP 到目标机；本机仍保存目标机凭据。使用网关时不能同时设置代理。
+            </div>
+        </el-form-item>
         <el-form-item label="代理">
             <el-select v-model="form.proxyType" style="width: 130px" @change="onProxyTypeChange">
                 <el-option label="不使用" value="NONE"></el-option>
@@ -372,6 +383,7 @@
                 folders: [],
                 folderOptions: [],
                 connections: [],
+                gateways: [],
                 providerPresets: CLOUD_PROVIDERS,
                 osPresets: OS_PRESETS,
                 form: emptyForm(),
@@ -424,6 +436,11 @@
                 return (this.connections || []).filter(function (c) {
                     return c.id !== selfId;
                 });
+            },
+            gatewayOptions: function () {
+                return (this.gateways || []).filter(function (g) {
+                    return g.enabled !== false;
+                });
             }
         },
         methods: {
@@ -435,6 +452,9 @@
                 }).catch(function () { /* 忽略 */ });
                 http.get('/api/connections').then(function (d) {
                     self.connections = d || [];
+                }).catch(function () { /* 忽略 */ });
+                http.get('/api/gateways').then(function (d) {
+                    self.gateways = d || [];
                 }).catch(function () { /* 忽略 */ });
                 this.testState = emptyTestState();
                 this.testing = false;
@@ -448,6 +468,7 @@
                         proxyType: row.proxyType || 'NONE', proxyHost: row.proxyHost || '',
                         proxyPort: row.proxyPort || null, proxyUsername: row.proxyUsername || '',
                         proxyPassword: '', jumpConnectionId: row.jumpConnectionId || null,
+                        gatewayId: row.gatewayId || null,
                         persistSession: row.persistSession !== false
                     };
                     this.mode = 'advanced';
@@ -532,6 +553,10 @@
                     ELEMENT.Message.warning('请填写私钥文件的绝对路径');
                     return false;
                 }
+                if (this.form.gatewayId && this.form.proxyType && this.form.proxyType !== 'NONE') {
+                    ELEMENT.Message.warning('使用执行网关时不能同时设置代理，请把代理改为「不使用」');
+                    return false;
+                }
                 return true;
             },
             runTest: function () {
@@ -547,7 +572,8 @@
                     authType: f.authType, password: f.password, keyPath: f.keyPath,
                     passphrase: f.passphrase, proxyType: f.proxyType, proxyHost: f.proxyHost,
                     proxyPort: f.proxyPort, proxyUsername: f.proxyUsername,
-                    proxyPassword: f.proxyPassword, jumpConnectionId: f.jumpConnectionId
+                    proxyPassword: f.proxyPassword, jumpConnectionId: f.jumpConnectionId,
+                    gatewayId: f.gatewayId
                 }).then(function (d) {
                     if (d && d.needTrust) {
                         self.testState = {
@@ -631,7 +657,8 @@
                         keyPath: f.keyPath, passphrase: f.passphrase, remark: f.remark,
                         proxyType: f.proxyType, proxyHost: f.proxyHost, proxyPort: f.proxyPort,
                         proxyUsername: f.proxyUsername, proxyPassword: f.proxyPassword,
-                        jumpConnectionId: f.jumpConnectionId, persistSession: f.persistSession
+                        jumpConnectionId: f.jumpConnectionId, gatewayId: f.gatewayId,
+                        persistSession: f.persistSession
                     };
                     self.saving = true;
                     var req = f.id ? http.put('/api/connections/' + f.id, body) : http.post('/api/connections', body);

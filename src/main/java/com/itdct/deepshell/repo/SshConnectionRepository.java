@@ -12,4 +12,6 @@ public interface SshConnectionRepository extends JpaRepository<SshConnection, Lo
     List<SshConnection> findByFolderId(Long folderId);
 
     List<SshConnection> findByJumpConnectionId(Long jumpConnectionId);
+
+    List<SshConnection> findByGatewayId(Long gatewayId);
 }

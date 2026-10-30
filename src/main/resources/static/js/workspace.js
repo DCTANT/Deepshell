@@ -4936,6 +4936,22 @@ new Vue({
             elapsed: 0
         },
         lanVisible: false,
+        gatewayVisible: false,
+        gatewayTab: 'client',
+        gateways: [],
+        gatewayLoading: false,
+        gatewayEditing: false,
+        gatewaySaving: false,
+        gatewayTesting: false,
+        gatewayTestResult: null,
+        gatewayForm: {
+            id: null, name: '', baseUrl: '', token: '', insecureTls: false, enabled: true
+        },
+        gatewayInfo: {
+            enabled: false, allowlist: [], maxConnections: 16, activeTunnels: 0,
+            token: '', tokenConfigured: false, version: ''
+        },
+        gatewayAllowlistText: '',
         authSetVisible: false,
         authSetSaving: false,
         authSetHours: 6,
@@ -6822,6 +6838,7 @@ new Vue({
             return {
                 _rowType: 'conn', key: (prefix || 'c') + '-' + c.id, id: c.id, name: c.name,
                 host: c.host, port: c.port, username: c.username, folderId: c.folderId,
+                gatewayId: c.gatewayId || null,
                 favorite: !!c.favorite, pinned: !!c.pinned, depth: depth, noDrag: !!noDrag
             };
         },
@@ -7274,6 +7291,8 @@ new Vue({
             } else if (cmd === 'lan') {
                 this.loadLan();
                 this.lanVisible = true;
+            } else if (cmd === 'gateway') {
+                this.openGatewayDialog();
             } else if (cmd === 'auth') {
                 this.openAuthSettings();
             } else if (cmd === 'protocol') {
@@ -20135,6 +20154,164 @@ new Vue({
                 return;
             }
             this.copyText(this.integrationCurl);
+        },
+        /* ---------- 执行网关（本机作为客户端 / 服务端） ---------- */
+        openGatewayDialog: function () {
+            this.gatewayVisible = true;
+            this.gatewayTab = 'client';
+            this.resetGatewayForm();
+            this.loadGateways();
+            this.loadGatewaySettings();
+        },
+        loadGateways: function () {
+            var self = this;
+            this.gatewayLoading = true;
+            return http.get('/api/gateways').then(function (list) {
+                self.gateways = Array.isArray(list) ? list : [];
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.gatewayLoading = false;
+            });
+        },
+        resetGatewayForm: function () {
+            this.gatewayEditing = false;
+            this.gatewayTesting = false;
+            this.gatewayTestResult = null;
+            this.gatewayForm = {
+                id: null, name: '', baseUrl: '', token: '', insecureTls: false, enabled: true
+            };
+        },
+        startGatewayForm: function () {
+            this.resetGatewayForm();
+            this.gatewayEditing = true;
+        },
+        editGateway: function (g) {
+            this.gatewayEditing = true;
+            this.gatewayTesting = false;
+            this.gatewayTestResult = null;
+            this.gatewayForm = {
+                id: g.id, name: g.name, baseUrl: g.baseUrl, token: '',
+                insecureTls: !!g.insecureTls, enabled: g.enabled !== false
+            };
+        },
+        gatewayBody: function () {
+            var f = this.gatewayForm;
+            return {
+                id: f.id, name: f.name, baseUrl: f.baseUrl, token: f.token,
+                insecureTls: !!f.insecureTls, enabled: f.enabled !== false
+            };
+        },
+        testGatewayForm: function () {
+            var self = this;
+            if (this.gatewayTesting) {
+                return;
+            }
+            this.gatewayTesting = true;
+            this.gatewayTestResult = null;
+            http.post('/api/gateways/test', this.gatewayBody()).then(function (d) {
+                self.gatewayTestResult = d || { ok: false, message: '测试失败' };
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.gatewayTesting = false;
+            });
+        },
+        testGatewayRow: function (g) {
+            http.post('/api/gateways/test', {
+                id: g.id, name: g.name, baseUrl: g.baseUrl, token: '',
+                insecureTls: !!g.insecureTls
+            }).then(function (d) {
+                if (d && d.ok) {
+                    ELEMENT.Message.success('网关可用' + (d.version ? '，版本 ' + d.version : ''));
+                } else {
+                    ELEMENT.Message.error((d && d.message) || '网关不可用');
+                }
+            }).catch(function () { /* 已由拦截器提示 */ });
+        },
+        saveGateway: function () {
+            var self = this;
+            var f = this.gatewayForm;
+            if (!f.name || !f.name.trim()) {
+                ELEMENT.Message.warning('请填写网关名称');
+                return;
+            }
+            if (!f.baseUrl || !f.baseUrl.trim()) {
+                ELEMENT.Message.warning('请填写网关地址，例如 https://192.168.0.20:17777');
+                return;
+            }
+            this.gatewaySaving = true;
+            var req = f.id
+                ? http.put('/api/gateways/' + f.id, this.gatewayBody())
+                : http.post('/api/gateways', this.gatewayBody());
+            req.then(function () {
+                ELEMENT.Message.success('网关已保存');
+                self.resetGatewayForm();
+                self.loadGateways();
+            }).catch(function () { /* 已由拦截器提示 */ }).then(function () {
+                self.gatewaySaving = false;
+            });
+        },
+        removeGateway: function (g) {
+            var self = this;
+            this.$confirm('删除后，使用该网关的连接会无法连接，请先把这些连接改为直连。确定删除「' + g.name + '」？',
+                '删除执行网关', { type: 'warning' })
+                .then(function () {
+                    return http.delete('/api/gateways/' + g.id);
+                })
+                .then(function () {
+                    ELEMENT.Message.success('已删除');
+                    self.loadGateways();
+                })
+                .catch(function () { /* 取消或已由拦截器提示 */ });
+        },
+        loadGatewaySettings: function () {
+            var self = this;
+            return http.get('/api/gateway/settings').then(function (d) {
+                if (d) {
+                    self.gatewayInfo = d;
+                    self.gatewayAllowlistText = (d.allowlist || []).join('\n');
+                }
+            }).catch(function () { /* 已由拦截器提示 */ });
+        },
+        saveGatewaySettings: function () {
+            var self = this;
+            var lines = String(this.gatewayAllowlistText || '').split(/[\r\n,]+/)
+                .map(function (s) { return s.trim(); })
+                .filter(function (s) { return !!s; });
+            if (this.gatewayInfo.enabled && !lines.length) {
+                ELEMENT.Message.warning('启用网关前请至少配置一条白名单，否则所有目标都会被拒绝');
+                return;
+            }
+            http.put('/api/gateway/settings', {
+                enabled: !!this.gatewayInfo.enabled,
+                allowlist: lines,
+                maxConnections: this.gatewayInfo.maxConnections || 16
+            }).then(function (d) {
+                if (d) {
+                    self.gatewayInfo = d;
+                    self.gatewayAllowlistText = (d.allowlist || []).join('\n');
+                }
+                ELEMENT.Message.success('网关设置已保存');
+            }).catch(function () { /* 已由拦截器提示 */ });
+        },
+        regenerateGatewayToken: function () {
+            var self = this;
+            this.$confirm('重新生成后，所有使用该网关的 DeepShell 实例都会立即连接失败，需要重新填写 Token。确定继续？',
+                '重新生成网关 Token', { type: 'warning' })
+                .then(function () {
+                    return http.post('/api/gateway/token/regenerate');
+                })
+                .then(function (d) {
+                    if (d) {
+                        self.gatewayInfo.token = d.token;
+                    }
+                    ELEMENT.Message.success('已重新生成网关 Token');
+                })
+                .catch(function () { /* 取消或已由拦截器提示 */ });
+        },
+        copyGatewayToken: function () {
+            if (!this.gatewayInfo.token) {
+                ELEMENT.Message.warning('Token 尚未生成');
+                return;
+            }
+            this.copyText(this.gatewayInfo.token);
         },
         /* ---------- MCP 服务（AI 调用） ---------- */
         openMcpDialog: function () {
