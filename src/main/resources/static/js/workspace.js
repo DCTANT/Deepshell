@@ -167,6 +167,26 @@ function loadDesktopIdleMinutes() {
     return 0;
 }
 
+/* ---------- 文本编辑器：外观风格（浅色 / 深色 / 跟随桌面） ---------- */
+var EDITOR_THEME_KEY = 'deepshell.editorTheme';
+var EDITOR_THEME_OPTIONS = [
+    { id: 'light', label: '浅色' },
+    { id: 'dark', label: '深色' },
+    { id: 'auto', label: '跟随桌面' }
+];
+
+function normalizeEditorTheme(v) {
+    return v === 'dark' || v === 'auto' ? v : 'light';
+}
+
+function loadEditorTheme() {
+    try {
+        return normalizeEditorTheme(localStorage.getItem(EDITOR_THEME_KEY));
+    } catch (e) {
+        return 'light';
+    }
+}
+
 /* ---------- AI 可视化桌面：外观主题 ---------- */
 var DESKTOP_APPEARANCE_KEY = 'deepshell.desktopAppearance';
 var DESKTOP_THEME_DEFAULT = 'dark';
@@ -2852,9 +2872,23 @@ Vue.component('editor-menu-bar', {
     props: {
         state: { type: Object, default: function () { return {}; } }
     },
+    data: function () {
+        return { themes: EDITOR_THEME_OPTIONS };
+    },
+    computed: {
+        dropClass: function () {
+            return this.state && this.state.dark ? 'em-drop em-drop-dark' : 'em-drop';
+        }
+    },
     methods: {
         emitCommand: function (cmd) {
             this.$emit('command', cmd);
+        },
+        chooseTheme: function (id) {
+            this.emitCommand('view.theme.' + id);
+            if (this.$refs.viewDrop) {
+                this.$refs.viewDrop.hide();
+            }
         }
     }
 });
@@ -2885,6 +2919,7 @@ Vue.component('desktop-text-editor', {
             lineNumbers: true,
             activeLine: true,
             fontSize: 13,
+            editorTheme: loadEditorTheme(),
             opening: false,
             saving: false,
             picker: {
@@ -2930,12 +2965,34 @@ Vue.component('desktop-text-editor', {
             return this.validName(this.picker.name)
                 && this.normalizeDir(this.picker.dir).charAt(0) === '/';
         },
+        desktopEditorDark: function () {
+            var app = this.$root && this.$root.desktopAppearance;
+            return !!(app && typeof desktopColorIsDark === 'function' && desktopColorIsDark(app.windowColor));
+        },
+        resolvedEditorTheme: function () {
+            if (this.editorTheme === 'auto') {
+                return this.desktopEditorDark ? 'dark' : 'light';
+            }
+            return this.editorTheme === 'dark' ? 'dark' : 'light';
+        },
+        editorThemeClass: function () {
+            return 'te-theme-' + this.resolvedEditorTheme;
+        },
+        editorThemeLabel: function () {
+            if (this.editorTheme === 'auto') {
+                return '跟随桌面';
+            }
+            return this.editorTheme === 'dark' ? '深色' : '浅色';
+        },
         menuState: function () {
             return {
                 wrap: this.wrap,
                 lineNumbers: this.lineNumbers,
                 activeLine: this.activeLine,
-                fontSize: this.fontSize
+                fontSize: this.fontSize,
+                theme: this.editorTheme,
+                themeLabel: this.editorThemeLabel,
+                dark: this.resolvedEditorTheme === 'dark'
             };
         }
     },
@@ -2950,6 +3007,10 @@ Vue.component('desktop-text-editor', {
         this.initEditor();
         this.setupResize();
         var self = this;
+        this._onEditorTheme = function (e) {
+            self.editorTheme = normalizeEditorTheme(e && e.detail);
+        };
+        window.addEventListener('deepshell:editor-theme', this._onEditorTheme);
         this.$nextTick(function () {
             if (self.pendingPath) {
                 self.openPath(self.pendingPath);
@@ -2961,6 +3022,10 @@ Vue.component('desktop-text-editor', {
     beforeDestroy: function () {
         this._destroyed = true;
         this._pickerSeq = (this._pickerSeq || 0) + 1;
+        if (this._onEditorTheme) {
+            window.removeEventListener('deepshell:editor-theme', this._onEditorTheme);
+            this._onEditorTheme = null;
+        }
         if (this._findTimer) {
             clearTimeout(this._findTimer);
             this._findTimer = null;
@@ -3830,6 +3895,8 @@ Vue.component('desktop-text-editor', {
                 this.setFontSize(this.fontSize - 1);
             } else if (cmd === 'view.zoomReset') {
                 this.setFontSize(13);
+            } else if (cmd.indexOf('view.theme.') === 0) {
+                this.setEditorTheme(cmd.substring(11));
             } else if (cmd === 'help.shortcuts') {
                 this.showShortcuts();
             } else if (cmd === 'help.about') {
@@ -3990,13 +4057,29 @@ Vue.component('desktop-text-editor', {
                 this._cm.refresh();
             }
         },
+        setEditorTheme: function (id) {
+            var next = normalizeEditorTheme(id);
+            this.editorTheme = next;
+            try {
+                localStorage.setItem(EDITOR_THEME_KEY, next);
+            } catch (e) { /* 隐私模式忽略 */ }
+            try {
+                window.dispatchEvent(new CustomEvent('deepshell:editor-theme', { detail: next }));
+            } catch (e) { /* 旧浏览器忽略 */ }
+            var self = this;
+            this.$nextTick(function () {
+                if (self._cm) {
+                    self._cm.refresh();
+                }
+            });
+        },
         showShortcuts: function () {
             this.$alert('<div style="line-height:1.9;font-size:13px;color:#4b5563">'
                 + '<b>文件</b><br>Ctrl+O 打开 · Ctrl+S 保存 · Ctrl+Shift+S 另存为<br>'
                 + '<b>编辑</b><br>Ctrl+Z 撤销 · Ctrl+Y 重做 · Ctrl+X / C / V 剪切 / 复制 / 粘贴<br>'
                 + 'Ctrl+F 查找 · Ctrl+H 替换 · Ctrl+G 转到行<br>'
                 + '<b>选择</b><br>Ctrl+A 全选<br>'
-                + '<b>视图</b><br>Alt+Z 自动换行</div>', '快捷键', {
+                + '<b>视图</b><br>Alt+Z 自动换行 · 外观风格：浅色 / 深色 / 跟随桌面</div>', '快捷键', {
                 dangerouslyUseHTMLString: true,
                 confirmButtonText: '知道了'
             });
