@@ -1,0 +1,16 @@
+{
+  "name": "deepshell",
+  "productName": "DeepShell",
+  "version": "1.8.0",
+  "private": true,
+  "description": "DeepShell desktop shell built with Electron",
+  "main": "main.js",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "start": "electron .",
+    "start:log": "electron . --enable-logging"
+  },
+  "devDependencies": {
+    "electron": "33.4.11"
+  }
+}

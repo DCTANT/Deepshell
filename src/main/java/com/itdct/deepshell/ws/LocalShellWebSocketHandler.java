@@ -26,9 +26,10 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 本地桌面终端：/ws/local-shell?cols=120&rows=30。
- * 每个 WebSocket 对应一个本机 Shell 进程；输出按系统控制台编码解码后以 UTF-8 二进制帧发送。
- * 仅回环 + 登录校验（由握手拦截器完成），不会向局域网用户暴露本机 Shell。
+ * 本地桌面终端：/ws/local-shell?cols=120&rows=30&shell=powershell。
+ * 每个 WebSocket 对应一个本机 Shell 进程；支持选择 cmd / Windows PowerShell / PowerShell 7。
+ * 输出按系统控制台编码解码后以 UTF-8 二进制帧发送。仅回环 + 登录校验（由握手拦截器完成），
+ * 不会向局域网用户暴露本机 Shell。
  */
 @Slf4j
 @Component
@@ -47,30 +48,37 @@ public class LocalShellWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession ws) {
         int cols = 120;
         int rows = 30;
+        String shellId = "";
         try {
             URI uri = ws.getUri();
             String rawCols = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("cols");
             String rawRows = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("rows");
+            String rawShell = UriComponentsBuilder.fromUri(uri).build().getQueryParams().getFirst("shell");
             if (rawCols != null) {
                 cols = Integer.parseInt(rawCols);
             }
             if (rawRows != null) {
                 rows = Integer.parseInt(rawRows);
             }
+            if (rawShell != null) {
+                shellId = rawShell;
+            }
         } catch (Exception ignore) {
-            // 使用默认尺寸
+            // 使用默认尺寸 / 默认 Shell
         }
         String sessionId = UUID.randomUUID().toString().replace("-", "");
         ws.getAttributes().put("localShellSessionId", sessionId);
         ws.getAttributes().put("cmdTracker", new TerminalCommandTracker());
         ws.getAttributes().put("clientIp", clientIp(ws));
         try {
-            LocalShellService.ShellProcess shell = localShell.start(cols, rows);
+            LocalShellService.ShellProcess shell = localShell.start(cols, rows, shellId);
             ws.getAttributes().put("localShell", shell);
             ObjectNode open = om.createObjectNode();
             open.put("type", "open");
             open.put("sessionId", sessionId);
             open.put("name", "本地 Shell · " + shell.getShellName());
+            open.put("shell", shell.getShellId());
+            open.put("shellName", shell.getShellName());
             open.put("pty", shell.isPty());
             sendText(ws, open.toString());
             startReader(ws, shell);
@@ -102,7 +110,7 @@ public class LocalShellWebSocketHandler extends TextWebSocketHandler {
                 in.flush();
                 auditInput(ws, node, data);
             } else if ("resize".equals(type)) {
-                // 管道 / script 启动后无法安全修改 PTY 尺寸；忽略，避免把 stty 命令写入用户 shell
+                shell.resize(node.path("cols").asInt(120), node.path("rows").asInt(30));
             } else if ("close".equals(type)) {
                 closeQuietly(ws);
             }

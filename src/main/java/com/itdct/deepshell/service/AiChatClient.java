@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -63,13 +64,20 @@ public class AiChatClient {
     }
 
     private final AiConfigService config;
+    private final AiUsageService usageService;
     private final RestTemplate rest;
     private final ObjectMapper mapper = new ObjectMapper();
     /** 已确认不接受 stream_options.include_usage 的接口地址，避免每次流式请求都多失败一次 */
     private final Set<String> usageOptionRejected = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     public AiChatClient(AiConfigService config) {
+        this(config, null);
+    }
+
+    @Autowired
+    public AiChatClient(AiConfigService config, AiUsageService usageService) {
         this.config = config;
+        this.usageService = usageService;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10000);
         factory.setReadTimeout(120000);
@@ -103,7 +111,10 @@ public class AiChatClient {
             }
             String text = choices.get(0).path("message").path("content").asText("");
             String reasoning = reasoningText(choices.get(0).path("message"));
-            return new ChatResult(text, usageOrEstimateFromResponse(root, systemPrompt, history, text), reasoning);
+            ChatResult result = new ChatResult(text,
+                    usageOrEstimateFromResponse(root, systemPrompt, history, text), reasoning);
+            recordUsage(result.usage);
+            return result;
         } catch (IllegalArgumentException | IllegalStateException e) {
             throw e;
         } catch (HttpStatusCodeException e) {
@@ -147,14 +158,25 @@ public class AiChatClient {
                                      AiCancellationToken token) {
         String endpoint = completionsUrl();
         boolean includeUsage = !usageOptionRejected.contains(endpoint);
+        ChatResult result;
         try {
-            return streamOnce(systemPrompt, history, onDelta, onReasoning, token, includeUsage);
+            result = streamOnce(systemPrompt, history, onDelta, onReasoning, token, includeUsage);
         } catch (IllegalStateException e) {
             if (includeUsage && looksLikeUsageOptionRejection(e.getMessage())) {
                 usageOptionRejected.add(endpoint);
-                return streamOnce(systemPrompt, history, onDelta, onReasoning, token, false);
+                result = streamOnce(systemPrompt, history, onDelta, onReasoning, token, false);
+            } else {
+                throw e;
             }
-            throw e;
+        }
+        recordUsage(result.usage);
+        return result;
+    }
+
+    /** 记录一次成功模型调用的 token 用量；统计失败不影响对话 */
+    private void recordUsage(Usage usage) {
+        if (usageService != null) {
+            usageService.record(usage);
         }
     }
 

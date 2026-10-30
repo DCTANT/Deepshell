@@ -39,18 +39,25 @@
             <div v-for="t in tabs" :key="t.key" class="tab"
                  :class="{ active: t.key === activeKey }"
                  draggable="true"
-                 @click="activate(t.key)" @mousedown.middle.prevent="closeTab(t)"
+                 @click="activate(t.key)" @mousedown.middle.prevent="requestCloseTab(t)"
                  @contextmenu.prevent="onTabContextMenu($event, t)"
                  @dragstart="onTabDragStart($event, t)"
                  @dragover="onTabDragOver($event, t)"
                  @drop.prevent="onTabDrop($event, t)"
                  @dragend="onTabDragEnd">
                 <span class="dot" :class="'dot-' + t.status"></span>
+                <span class="cmd-spin" v-if="t.commandRunning" title="命令运行中"></span>
+                <span class="unread-dot" v-if="t.outputUnread" title="有新的后台输出"></span>
                 <span class="tname">{{ t.title }}</span>
-                <i class="el-icon-close tclose" @click.stop="closeTab(t)"></i>
+                <i class="el-icon-close tclose" @click.stop="requestCloseTab(t)"></i>
             </div>
             <div class="tab add" title="打开连接" @click="openConnectDialog">
                 <i class="el-icon-plus"></i>
+            </div>
+            <div class="tab restore" v-if="recentlyClosedTabs.length"
+                 :title="'恢复最近关闭的标签：' + recentlyClosedTabs[0].title"
+                 @click="restoreClosedTab">
+                <i class="el-icon-refresh-left"></i>
             </div>
         </div>
         <div class="topbar-actions">
@@ -82,6 +89,9 @@
             <span class="stat-err" v-else-if="activeTab && activeTab.stats && activeTab.stats.error">
                 {{ activeTab.stats.error }}
             </span>
+            <i class="el-icon-bell tbtn" title="提醒与通知设置"
+               :class="{ active: notifySettings.desktop || notifySettings.sound }"
+               @click.stop="openNotifySettings"></i>
             <el-popover placement="bottom-end" width="400" trigger="manual" v-model="transferCenterOpen"
                         popper-class="xfer-pop">
                 <div class="xfer-pop-head">
@@ -583,6 +593,9 @@
                 <div class="tab-menu-item" @click="onMenuCommand('lan')">
                     <i class="el-icon-share"></i>局域网访问
                 </div>
+                <div class="tab-menu-item" @click="onMenuCommand('gateway')">
+                    <i class="el-icon-guide"></i>执行网关
+                </div>
                 <div class="tab-menu-item" @click="onMenuCommand('auth')">
                     <i class="el-icon-lock"></i>登录与安全
                 </div>
@@ -591,6 +604,9 @@
                 </div>
                 <div class="tab-menu-item" @click="onMenuCommand('integration')">
                     <i class="el-icon-connection"></i>集成接口（HTTP）
+                </div>
+                <div class="tab-menu-item" @click="onMenuCommand('mcp')">
+                    <i class="el-icon-cpu"></i>MCP 服务（AI 调用）
                 </div>
                 <div class="tab-menu-item" @click="onMenuCommand('audit')">
                     <i class="el-icon-tickets"></i>审计日志
@@ -680,6 +696,9 @@
             <i class="el-icon-monitor"></i>进入 AI 可视化桌面
         </div>
         <div class="tab-menu-sep"></div>
+        <div class="tab-menu-item" v-if="recentlyClosedTabs.length" @click="menuAction('restoreClosed')">
+            <i class="el-icon-refresh-left"></i>恢复关闭的标签（{{ recentlyClosedTabs.length }}）
+        </div>
         <div class="tab-menu-item" @click="menuAction('close')">
             <i class="el-icon-close"></i>关闭
         </div>
@@ -1330,7 +1349,7 @@
             </el-popover>
             <i v-if="context !== 'window'" class="el-icon-edit cmd-tool" title="编辑当前连接"
                @click="$root.editCurrentConnection()"></i>
-            <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏"
+            <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏 (Alt+Enter)"
                @click="$root.toggleFullscreen()"></i>
             <i v-if="!localTerminal" class="el-icon-guide cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
         </span>
@@ -1342,7 +1361,7 @@
 <div class="em-bar">
     <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">文件</span>
-        <el-dropdown-menu slot="dropdown" popper-class="em-drop">
+        <el-dropdown-menu slot="dropdown" :class="dropClass">
             <el-dropdown-item command="file.new">
                 <span class="em-item"><span class="em-check"></span><span class="em-label">新建</span></span>
             </el-dropdown-item>
@@ -1363,7 +1382,7 @@
 
     <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">编辑</span>
-        <el-dropdown-menu slot="dropdown" popper-class="em-drop">
+        <el-dropdown-menu slot="dropdown" :class="dropClass">
             <el-dropdown-item command="edit.undo">
                 <span class="em-item"><span class="em-check"></span><span class="em-label">撤销</span><span class="em-sc">Ctrl+Z</span></span>
             </el-dropdown-item>
@@ -1396,7 +1415,7 @@
 
     <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">选择</span>
-        <el-dropdown-menu slot="dropdown" popper-class="em-drop">
+        <el-dropdown-menu slot="dropdown" :class="dropClass">
             <el-dropdown-item command="select.all">
                 <span class="em-item"><span class="em-check"></span><span class="em-label">全选</span><span class="em-sc">Ctrl+A</span></span>
             </el-dropdown-item>
@@ -1409,9 +1428,9 @@
         </el-dropdown-menu>
     </el-dropdown>
 
-    <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
+    <el-dropdown ref="viewDrop" trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">视图</span>
-        <el-dropdown-menu slot="dropdown" popper-class="em-drop">
+        <el-dropdown-menu slot="dropdown" :class="dropClass">
             <el-dropdown-item command="view.wrap">
                 <span class="em-item"><span class="em-check">{{ state.wrap ? '✓' : '' }}</span><span class="em-label">自动换行</span><span class="em-sc">Alt+Z</span></span>
             </el-dropdown-item>
@@ -1421,6 +1440,23 @@
             <el-dropdown-item command="view.activeLine">
                 <span class="em-item"><span class="em-check">{{ state.activeLine ? '✓' : '' }}</span><span class="em-label">高亮当前行</span></span>
             </el-dropdown-item>
+            <li class="em-submenu em-submenu-divided">
+                <div class="em-item em-submenu-trigger">
+                    <span class="em-check"></span>
+                    <span class="em-label">外观风格</span>
+                    <span class="em-sc">{{ state.themeLabel }}</span>
+                    <i class="el-icon-arrow-right em-sub-arrow"></i>
+                </div>
+                <ul class="em-submenu-list">
+                    <li v-for="t in themes" :key="'edtheme-' + t.id" class="em-submenu-item"
+                        @click="chooseTheme(t.id)">
+                        <span class="em-item">
+                            <span class="em-check">{{ state.theme === t.id ? '✓' : '' }}</span>
+                            <span class="em-label">{{ t.label }}</span>
+                        </span>
+                    </li>
+                </ul>
+            </li>
             <el-dropdown-item command="view.zoomIn" divided>
                 <span class="em-item"><span class="em-check"></span><span class="em-label">放大字号</span></span>
             </el-dropdown-item>
@@ -1435,7 +1471,7 @@
 
     <el-dropdown trigger="click" placement="bottom-start" @command="emitCommand">
         <span class="em-menu">帮助</span>
-        <el-dropdown-menu slot="dropdown" popper-class="em-drop">
+        <el-dropdown-menu slot="dropdown" :class="dropClass">
             <el-dropdown-item command="help.shortcuts">
                 <span class="em-item"><span class="em-check"></span><span class="em-label">快捷键说明</span></span>
             </el-dropdown-item>
@@ -1448,7 +1484,7 @@
 </script>
 
 <script type="text/x-template" id="desktop-text-editor-tpl">
-<div class="dsk-text-editor" @keydown="onEditorKey">
+<div class="dsk-text-editor" :class="editorThemeClass" @keydown="onEditorKey">
     <editor-menu-bar :state="menuState" @command="onMenuCommand"></editor-menu-bar>
 
     <div class="te-tabs">

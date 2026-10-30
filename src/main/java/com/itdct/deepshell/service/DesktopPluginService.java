@@ -6,14 +6,17 @@ import com.itdct.deepshell.common.DataDir;
 import com.itdct.deepshell.plugin.PluginSignatureService;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.ClassPathResource;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.annotation.PostConstruct;
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,10 +27,13 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -63,15 +69,40 @@ public class DesktopPluginService {
     private static final long MAX_MANIFEST_BYTES = 512 * 1024;
     private static final int DEFAULT_WIDTH = 760;
     private static final int DEFAULT_HEIGHT = 520;
+    private static final String DEFAULT_CATALOG_URL =
+            "https://gitee.com/decentant/deepshell-plugin/raw/master/catalog.json";
+    private static final long CATALOG_TTL_MS = 10L * 60 * 1000;
+    private static final long CATALOG_MAX_BYTES = 2L * 1024 * 1024;
+    private static final Map<String, String> LEGACY_PLUGIN_IDS = new HashMap<>();
+
+    static {
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.redis", "com.deepshell.redis");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.elasticsearch", "com.deepshell.elasticsearch");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.kafka", "com.deepshell.kafka");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.mongodb", "com.deepshell.mongodb");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.containers", "com.deepshell.containers");
+    }
+
     private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList(
-            "com.deepshell.redis", "com.deepshell.elasticsearch"));
+            "com.itdct.deepshell.plugin.redis", "com.itdct.deepshell.plugin.elasticsearch",
+            "com.itdct.deepshell.plugin.kafka", "com.itdct.deepshell.plugin.mongodb",
+            "com.itdct.deepshell.plugin.containers",
+            // 旧版官方插件 ID 继续保留，避免被未签名插件占用；升级时自动迁移
+            "com.deepshell.redis", "com.deepshell.elasticsearch",
+            "com.deepshell.kafka", "com.deepshell.mongodb",
+            "com.deepshell.containers"));
     private static final ObjectMapper OM = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     private final AuditService audit;
 
+    @Value("${deepshell.plugins.catalog-url:" + DEFAULT_CATALOG_URL + "}")
+    private String catalogUrl;
+
     private Path root;
     private Path stagingRoot;
+    private Path catalogCache;
+    private volatile CatalogSnapshot catalogSnapshot;
 
     public DesktopPluginService(AuditService audit) {
         this.audit = audit;
@@ -86,6 +117,8 @@ public class DesktopPluginService {
     void initAt(Path root, Path stagingRoot) throws Exception {
         this.root = root;
         this.stagingRoot = stagingRoot;
+        this.catalogCache = root.resolve(".catalog.json");
+        this.catalogSnapshot = null;
         Files.createDirectories(root);
         deleteTree(stagingRoot);
         Files.createDirectories(stagingRoot);
@@ -140,67 +173,439 @@ public class DesktopPluginService {
             throw new IllegalArgumentException("插件包不能超过 50MB");
         }
         try (InputStream in = zip.getInputStream()) {
-            return installStream(in, zip.getSize(), false, beforeReplace);
+            PluginInfo info = installStream(in, zip.getSize(), false, beforeReplace);
+            migrateLegacyPlugin(info.getId(), beforeReplace);
+            return info;
         }
     }
 
-    /** 安装随程序分发的内置插件（例如 Redis 管理器）。 */
+    /** 安装官方插件目录中的插件：下载 ZIP，校验 SHA-256 与官方签名后安装。 */
     public PluginInfo installBundled(String bundleId) throws Exception {
         return installBundled(bundleId, null);
     }
 
     public PluginInfo installBundled(String bundleId, Consumer<String> beforeReplace) throws Exception {
         if (bundleId == null || !bundleId.matches("[A-Za-z0-9._-]{1,64}")) {
-            throw new IllegalArgumentException("内置插件 ID 不合法");
+            throw new IllegalArgumentException("官方插件 ID 不合法");
         }
-        ClassPathResource resource = new ClassPathResource("desktop-plugins/" + bundleId + ".zip");
-        if (!resource.exists()) {
-            throw new IllegalArgumentException("内置插件包不存在");
+        CatalogEntry entry = findCatalogEntry(bundleId);
+        if (entry == null) {
+            throw new IllegalArgumentException("官方插件不存在或目录已更新，请刷新后重试");
         }
-        try (InputStream in = resource.getInputStream()) {
-            return installStream(in, resource.contentLength(), true, beforeReplace);
+        URL url = resolveCatalogUrl(entry.file);
+        DownloadedZip zip = null;
+        try {
+            zip = downloadZip(url, entry.sha256);
+            try (InputStream in = Files.newInputStream(zip.file)) {
+                PluginInfo info = installStream(in, zip.size, true, beforeReplace);
+                migrateLegacyPlugin(info.getId(), beforeReplace);
+                return info;
+            }
+        } finally {
+            if (zip != null) {
+                try {
+                    Files.deleteIfExists(zip.file);
+                } catch (Exception ignore) {
+                    // ignore
+                }
+            }
         }
     }
 
     public List<BuiltinPluginInfo> listBuiltin() {
+        return listBuiltin(false);
+    }
+
+    public List<BuiltinPluginInfo> listBuiltin(boolean refresh) {
         List<PluginInfo> installedList = list();
         List<BuiltinPluginInfo> out = new ArrayList<>();
-        out.add(builtinEntry(installedList, "redis", "com.deepshell.redis", "Redis 管理器", "2.1.0",
-                "面向 AI 桌面的 Redis 浏览与调试工具：保存连接（密码加密）、列表 / 键树、SCAN 搜索、类型化查看编辑、TTL、命令控制台与服务器信息。",
-                "/plugin-icons/redis.svg"));
-        out.add(builtinEntry(installedList, "elasticsearch", "com.deepshell.elasticsearch",
-                "Elasticsearch 管理器", "1.0.0",
-                "面向 AI 桌面的 Elasticsearch 管理与调试工具：集群概览、索引与映射浏览、文档搜索编辑、REST 控制台，连接凭据本机加密保存。",
-                "/plugin-icons/elasticsearch.svg"));
+        for (CatalogEntry e : requiredCatalog(refresh)) {
+            PluginInfo installed = findPlugin(installedList, e.id);
+            boolean legacyInstalled = false;
+            if (installed == null) {
+                String legacyId = LEGACY_PLUGIN_IDS.get(e.id);
+                if (legacyId != null) {
+                    installed = findPlugin(installedList, legacyId);
+                    legacyInstalled = installed != null;
+                }
+            }
+            boolean officialInstalled = installed != null && installed.isVerified();
+            String installedVersion = installed == null ? "" : installed.getVersion();
+            // 旧 ID 的已安装插件始终提示更新，安装后自动迁移数据并清理旧目录
+            boolean updateAvailable = officialInstalled
+                    && (legacyInstalled || versionGreater(e.version, installedVersion));
+            out.add(new BuiltinPluginInfo(e.key, e.id, e.name, e.version, e.description,
+                    e.author, e.icon, officialInstalled, installedVersion, updateAvailable,
+                    true, e.hasBackend != null && e.hasBackend));
+        }
         return out;
     }
 
-    private BuiltinPluginInfo builtinEntry(List<PluginInfo> installedList, String key, String id,
-                                           String name, String bundledVersion, String description,
-                                           String iconUrl) {
-        PluginInfo installed = null;
-        for (PluginInfo p : installedList) {
+    private static PluginInfo findPlugin(List<PluginInfo> plugins, String id) {
+        for (PluginInfo p : plugins) {
             if (id.equals(p.getId())) {
-                installed = p;
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 官方插件 ID 从 com.deepshell.* 迁移到 com.itdct.deepshell.plugin.* 后，
+     * 安装新版本时迁移旧插件的连接配置并清理旧插件目录，避免用户重新填写密码。
+     */
+    private void migrateLegacyPlugin(String newId, Consumer<String> beforeReplace) {
+        String legacyId = LEGACY_PLUGIN_IDS.get(newId);
+        if (legacyId == null) {
+            return;
+        }
+        Path legacyDir = root.resolve(legacyId);
+        if (!Files.isDirectory(legacyDir)) {
+            try {
+                migrateLegacyData(newId, legacyId);
+            } catch (Exception e) {
+                log.warn("迁移旧插件数据 {} 失败: {}", legacyId, e.getMessage());
+            }
+            return;
+        }
+        try {
+            Manifest manifest = readManifest(legacyDir);
+            if (manifest.id == null || !legacyId.equals(manifest.id.trim())) {
+                return;
+            }
+            if (PluginSignatureService.verify(legacyDir).getStatus()
+                    != PluginSignatureService.Status.VERIFIED) {
+                log.warn("旧插件 {} 未通过官方验签，跳过自动清理", legacyId);
+                return;
+            }
+            if (beforeReplace != null) {
+                beforeReplace.accept(legacyId);
+            }
+            migrateLegacyData(newId, legacyId);
+            deleteTree(legacyDir);
+            audit.record("PLUGIN_MIGRATE", newId, "OK", legacyId + " -> " + newId);
+            log.info("已迁移旧插件 {} -> {}", legacyId, newId);
+        } catch (Exception e) {
+            log.warn("迁移旧插件 {} 失败: {}", legacyId, e.getMessage());
+        }
+    }
+
+    private void migrateLegacyData(String newId, String legacyId) throws Exception {
+        Path dataRoot = DataDir.root().resolve("plugin-data");
+        Path oldData = dataRoot.resolve(legacyId);
+        Path newData = dataRoot.resolve(newId);
+        if (!Files.isDirectory(oldData) || Files.exists(newData)) {
+            return;
+        }
+        Files.createDirectories(dataRoot);
+        try {
+            Files.move(oldData, newData, StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception atomicFailed) {
+            Files.move(oldData, newData);
+        }
+        log.info("已迁移插件数据 {} -> {}", oldData, newData);
+    }
+
+    private CatalogEntry findCatalogEntry(String key) {
+        for (CatalogEntry e : requiredCatalog(false)) {
+            if (e.key.equals(key)) {
+                return e;
+            }
+        }
+        return null;
+    }
+
+    /** 目录拉取失败且没有可用缓存时抛出，让前端显示“重试”而不是静默隐藏官方插件区域。 */
+    private List<CatalogEntry> requiredCatalog(boolean refresh) {
+        List<CatalogEntry> entries = loadCatalog(refresh);
+        CatalogSnapshot snapshot = catalogSnapshot;
+        if (entries.isEmpty() && snapshot != null && snapshot.error != null) {
+            throw new IllegalStateException("无法获取官方插件目录：" + snapshot.error);
+        }
+        return entries;
+    }
+
+    /**
+     * 读取官方插件目录。目录本身不携带签名，但目录里的 ZIP 必须通过官方 RSA 验签；
+     * 网络失败时回退到上次成功的本地缓存，保证离线也能看到已缓存的插件信息。
+     */
+    private List<CatalogEntry> loadCatalog(boolean refresh) {
+        long now = System.currentTimeMillis();
+        CatalogSnapshot snapshot = catalogSnapshot;
+        if (!refresh && snapshot != null && now - snapshot.fetchedAt < CATALOG_TTL_MS) {
+            return snapshot.entries;
+        }
+        synchronized (this) {
+            snapshot = catalogSnapshot;
+            if (!refresh && snapshot != null && now - snapshot.fetchedAt < CATALOG_TTL_MS) {
+                return snapshot.entries;
+            }
+            String url = effectiveCatalogUrl();
+            if (url.isEmpty()) {
+                CatalogSnapshot empty = new CatalogSnapshot(now, Collections.<CatalogEntry>emptyList(), null);
+                catalogSnapshot = empty;
+                return empty.entries;
+            }
+            try {
+                byte[] data = fetchBytes(url, CATALOG_MAX_BYTES);
+                List<CatalogEntry> entries = normalizeCatalog(OM.readValue(data, Catalog.class));
+                writeCatalogCache(data);
+                CatalogSnapshot fresh = new CatalogSnapshot(now, entries, null);
+                catalogSnapshot = fresh;
+                return entries;
+            } catch (Exception e) {
+                log.warn("获取官方插件目录失败: {}", friendly(e));
+                List<CatalogEntry> cached = readCatalogCache();
+                // 失败后 1 分钟内不重复请求，避免每次打开面板都卡在网络超时上
+                catalogSnapshot = new CatalogSnapshot(now - CATALOG_TTL_MS + 60_000L, cached,
+                        friendly(e));
+                return cached;
+            }
+        }
+    }
+
+    private String effectiveCatalogUrl() {
+        String value = catalogUrl;
+        if (value == null) {
+            return DEFAULT_CATALOG_URL;
+        }
+        value = value.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        if (!value.startsWith("http://") && !value.startsWith("https://")) {
+            return "";
+        }
+        return value;
+    }
+
+    private List<CatalogEntry> readCatalogCache() {
+        if (catalogCache == null || !Files.isRegularFile(catalogCache)) {
+            return Collections.emptyList();
+        }
+        try {
+            if (Files.size(catalogCache) > CATALOG_MAX_BYTES) {
+                return Collections.emptyList();
+            }
+            return normalizeCatalog(OM.readValue(Files.readAllBytes(catalogCache), Catalog.class));
+        } catch (Exception e) {
+            log.warn("读取官方插件目录缓存失败: {}", friendly(e));
+            return Collections.emptyList();
+        }
+    }
+
+    private void writeCatalogCache(byte[] data) {
+        if (catalogCache == null || data == null) {
+            return;
+        }
+        try {
+            Files.createDirectories(catalogCache.getParent());
+            Path tmp = catalogCache.resolveSibling(catalogCache.getFileName().toString() + ".tmp");
+            Files.write(tmp, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE);
+            Files.move(tmp, catalogCache, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            log.warn("写入官方插件目录缓存失败: {}", e.getMessage());
+        }
+    }
+
+    private static List<CatalogEntry> normalizeCatalog(Catalog catalog) {
+        if (catalog == null || catalog.format != 1 || catalog.plugins == null) {
+            return Collections.emptyList();
+        }
+        List<CatalogEntry> out = new ArrayList<>();
+        Set<String> keys = new HashSet<>();
+        for (CatalogEntry e : catalog.plugins) {
+            if (e == null) {
+                continue;
+            }
+            String key = e.key == null ? "" : e.key.trim();
+            if (!key.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}") || !keys.add(key)) {
+                continue;
+            }
+            String id = e.id == null ? "" : e.id.trim();
+            if (!validId(id)) {
+                log.warn("官方插件目录包含非法 id: {} ({})", id, key);
+                continue;
+            }
+            String name = e.name == null ? "" : e.name.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            String file = e.file == null ? "" : e.file.trim();
+            if (file.isEmpty() || file.length() > 1024) {
+                continue;
+            }
+            String sha = e.sha256 == null ? "" : e.sha256.trim().toLowerCase(Locale.ROOT);
+            if (!sha.isEmpty() && !sha.matches("[0-9a-f]{64}")) {
+                log.warn("官方插件目录的 sha256 不合法: {} ({})", e.sha256, key);
+                continue;
+            }
+            e.key = key;
+            e.id = id;
+            e.name = limit(name, 60);
+            e.version = limit(e.version == null || e.version.trim().isEmpty()
+                    ? "1.0.0" : e.version.trim(), 32);
+            e.description = limit(e.description == null ? "" : e.description.trim(), 500);
+            e.author = limit(e.author == null ? "" : e.author.trim(), 60);
+            e.icon = sanitizeIcon(e.icon);
+            e.file = file;
+            e.sha256 = sha;
+            if (e.hasBackend == null) {
+                e.hasBackend = Boolean.FALSE;
+            }
+            out.add(e);
+            if (out.size() >= 64) {
                 break;
             }
         }
-        boolean officialInstalled = installed != null && installed.isVerified();
-        String installedVersion = installed == null ? "" : installed.getVersion();
-        boolean updateAvailable = officialInstalled && versionGreater(bundledVersion, installedVersion);
-        return new BuiltinPluginInfo(
-                key,
-                id,
-                name,
-                bundledVersion,
-                description,
-                "DeepShell",
-                iconUrl,
-                officialInstalled,
-                installedVersion,
-                updateAvailable,
-                true,
-                true);
+        return out;
+    }
+
+    private static String sanitizeIcon(String icon) {
+        if (icon == null) {
+            return null;
+        }
+        String value = icon.trim();
+        if (value.isEmpty() || value.length() > 200_000) {
+            return null;
+        }
+        if (value.startsWith("data:image/")
+                || value.startsWith("https://")
+                || value.startsWith("http://")
+                || value.startsWith("/")) {
+            return value;
+        }
+        return null;
+    }
+
+    private URL resolveCatalogUrl(String file) throws Exception {
+        String base = effectiveCatalogUrl();
+        if (base.isEmpty()) {
+            throw new IllegalArgumentException("官方插件目录未配置");
+        }
+        String target = file == null ? "" : file.trim();
+        if (target.isEmpty()) {
+            throw new IllegalArgumentException("插件缺少下载地址");
+        }
+        URL url = new URL(new URL(base), target);
+        String protocol = url.getProtocol();
+        if (!"http".equalsIgnoreCase(protocol) && !"https".equalsIgnoreCase(protocol)) {
+            throw new IllegalArgumentException("插件下载地址只支持 HTTP/HTTPS");
+        }
+        return url;
+    }
+
+    private DownloadedZip downloadZip(URL url, String expectedSha) throws Exception {
+        if (stagingRoot == null) {
+            throw new IllegalStateException("插件目录尚未初始化");
+        }
+        Files.createDirectories(stagingRoot);
+        Path temp = stagingRoot.resolve("download-"
+                + UUID.randomUUID().toString().replace("-", "").substring(0, 12) + ".zip");
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        long total = 0;
+        HttpURLConnection conn = openConnection(url);
+        try {
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new java.io.IOException("HTTP " + code);
+            }
+            long length = conn.getContentLengthLong();
+            if (length > MAX_TOTAL_BYTES) {
+                throw new IllegalArgumentException("插件包不能超过 50MB");
+            }
+            try (InputStream in = conn.getInputStream();
+                 OutputStream out = Files.newOutputStream(temp,
+                         StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    total += n;
+                    if (total > MAX_TOTAL_BYTES) {
+                        throw new IllegalArgumentException("插件包不能超过 50MB");
+                    }
+                    digest.update(buf, 0, n);
+                    out.write(buf, 0, n);
+                }
+            }
+        } catch (Exception e) {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (Exception ignore) {
+                // ignore
+            }
+            if (e instanceof IllegalArgumentException) {
+                throw e;
+            }
+            throw new java.io.IOException("下载插件失败: " + friendly(e));
+        } finally {
+            conn.disconnect();
+        }
+        if (total == 0) {
+            Files.deleteIfExists(temp);
+            throw new IllegalArgumentException("插件包为空");
+        }
+        if (expectedSha != null && !expectedSha.trim().isEmpty()) {
+            String actual = hex(digest.digest());
+            if (!expectedSha.trim().equalsIgnoreCase(actual)) {
+                Files.deleteIfExists(temp);
+                throw new IllegalArgumentException("插件包校验失败（SHA-256 不匹配）");
+            }
+        }
+        return new DownloadedZip(temp, total);
+    }
+
+    private static byte[] fetchBytes(String url, long maxBytes) throws Exception {
+        HttpURLConnection conn = openConnection(new URL(url));
+        try {
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new java.io.IOException("HTTP " + code);
+            }
+            long length = conn.getContentLengthLong();
+            if (length > maxBytes) {
+                throw new java.io.IOException("响应过大");
+            }
+            try (InputStream in = conn.getInputStream()) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                long total = 0;
+                while ((n = in.read(buf)) != -1) {
+                    total += n;
+                    if (total > maxBytes) {
+                        throw new java.io.IOException("响应过大");
+                    }
+                    out.write(buf, 0, n);
+                }
+                return out.toByteArray();
+            }
+        } finally {
+            conn.disconnect();
+        }
+    }
+
+    private static HttpURLConnection openConnection(URL url) throws Exception {
+        String protocol = url.getProtocol();
+        if (!"http".equalsIgnoreCase(protocol) && !"https".equalsIgnoreCase(protocol)) {
+            throw new IllegalArgumentException("仅支持 HTTP/HTTPS 地址");
+        }
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(10_000);
+        conn.setReadTimeout(30_000);
+        conn.setInstanceFollowRedirects(true);
+        conn.setRequestProperty("User-Agent", "DeepShell-Plugin-Catalog/1.0");
+        conn.setRequestProperty("Accept", "*/*");
+        return conn;
+    }
+
+    private static String hex(byte[] data) {
+        StringBuilder sb = new StringBuilder(data.length * 2);
+        for (byte b : data) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 
     private PluginInfo installStream(InputStream zip, long size, boolean builtin,
@@ -238,9 +643,12 @@ public class DesktopPluginService {
                     && PluginSignatureService.claimsOfficialAuthor(manifest.author)) {
                 throw new IllegalArgumentException("未签名插件不能声明 DeepShell 官方作者，请使用官方签名");
             }
+            if (builtin && sig.getStatus() != PluginSignatureService.Status.VERIFIED) {
+                throw new IllegalArgumentException("官方插件目录中的安装包必须带有 DeepShell 官方签名");
+            }
             if (BUILTIN_IDS.contains(id)
                     && sig.getStatus() != PluginSignatureService.Status.VERIFIED) {
-                throw new IllegalArgumentException("内置应用 ID 只能由 DeepShell 官方签名插件使用");
+                throw new IllegalArgumentException("官方插件 ID 只能由 DeepShell 官方签名插件使用");
             }
             validateBackend(manifest, base);
 
@@ -270,7 +678,7 @@ public class DesktopPluginService {
                     info.getName() + " v" + info.getVersion()
                             + (info.isVerified() ? "（官方签名）" : "（未验证）")
                             + (info.isHasBackend() ? "（含后端）" : "")
-                            + (builtin ? "（内置）" : "") + (hadExisting ? "（更新）" : ""));
+                            + (builtin ? "（官方插件）" : "") + (hadExisting ? "（更新）" : ""));
             return info;
         } catch (IllegalArgumentException e) {
             throw e;
@@ -683,6 +1091,48 @@ public class DesktopPluginService {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
+    }
+
+    public static class Catalog {
+        public int format;
+        public String updatedAt;
+        public List<CatalogEntry> plugins;
+    }
+
+    public static class CatalogEntry {
+        public String key;
+        public String id;
+        public String name;
+        public String version;
+        public String description;
+        public String author;
+        public String icon;
+        public String file;
+        public String sha256;
+        public Long size;
+        public Boolean hasBackend;
+    }
+
+    private static class CatalogSnapshot {
+        private final long fetchedAt;
+        private final List<CatalogEntry> entries;
+        private final String error;
+
+        private CatalogSnapshot(long fetchedAt, List<CatalogEntry> entries, String error) {
+            this.fetchedAt = fetchedAt;
+            this.entries = entries;
+            this.error = error;
+        }
+    }
+
+    private static class DownloadedZip {
+        private final Path file;
+        private final long size;
+
+        private DownloadedZip(Path file, long size) {
+            this.file = file;
+            this.size = size;
+        }
     }
 
     public static class Manifest {

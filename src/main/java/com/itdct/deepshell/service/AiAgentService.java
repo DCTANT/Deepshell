@@ -859,7 +859,7 @@ public class AiAgentService {
     }
 
     /** 清理终端控制序列（ANSI 转义、孤立回车），便于展示与回传给模型 */
-    static String cleanTerminalText(String s) {
+    public static String cleanTerminalText(String s) {
         if (s == null || s.isEmpty()) {
             return "";
         }

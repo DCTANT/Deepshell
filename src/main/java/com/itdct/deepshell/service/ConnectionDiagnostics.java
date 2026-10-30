@@ -41,6 +41,19 @@ public final class ConnectionDiagnostics {
         return base("CONFIG", "连接信息还不完整", msg, steps, msg, "连接参数");
     }
 
+    /** 执行网关本身的故障：地址、Token、白名单或证书，而不是目标机的登录问题。 */
+    public static Map<String, Object> gateway(String gatewayName, String message) {
+        String role = gatewayName == null || gatewayName.trim().isEmpty()
+                ? "执行网关" : "执行网关 " + gatewayName.trim();
+        String msg = message == null ? "" : message.trim();
+        List<String> steps = new ArrayList<>();
+        steps.add("打开「执行网关」设置，用「测试」确认地址与 Token 可用、对方已启用执行网关。");
+        steps.add("确认目标地址在网关白名单内（支持精确主机、*.域名、IP 与 CIDR）。");
+        steps.add("网关使用 HTTPS 自签证书时，需要在网关配置里勾选「跳过证书校验」。");
+        steps.add("确认网关所在网络能访问目标主机的 SSH 端口，而不是只有本机能访问。");
+        return base("GATEWAY_FAILED", "执行网关不可用", role + "：" + msg, steps, msg, role);
+    }
+
     private static Map<String, Object> fromMessage(String message, String who, Throwable e) {
         String msg = message == null ? "" : message;
         String lower = msg.toLowerCase(Locale.ROOT);

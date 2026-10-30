@@ -51,14 +51,15 @@
 - **Windows 风格多窗口**：资源管理器支持拖动、八方向缩放、最小化 / 最大化 / 关闭；多窗口各有独立路径、前进 / 后退与选中状态，任务栏和「显示桌面」统一管理。
 - **AI 与文件操作同屏**：任务栏「AI 终端」打开桌面内的对话窗口，与右侧 AI 面板共用对话、运行态和输入草稿；AI 执行命令时，资源管理器仍可继续浏览同一台服务器。
 - **真实的远程 Desktop**：读取服务器当前用户的 `Desktop`（或 `桌面`）生成桌面图标，支持图片与视频首帧缩略图、快捷方式、拖拽排序和右键菜单；可自定义桌面背景，并提供时钟 / 月历、CPU / 内存 / 交换 / 网络监控与远端电源操作。
-- **无服务器本地桌面**：工作台空状态或「打开连接」弹窗底部可直接进入本地桌面，不建立 SSH 会话；文件保存在数据目录的 `Desktop/` 沙箱，保留资源管理器、上传 / 下载 / 编辑 / 预览与桌面插件；**「终端」直接打开本机 Shell**（Windows cmd / Unix `$SHELL`，Unix 优先分配 PTY），可在本机执行命令而无需 SSH 回本机；AI 终端、任务管理器等服务器专属功能自动隐藏，适合只使用 Redis 等桌面插件或管理本机文件。
-- **本地 Shell**：本地桌面任务栏 / 开始菜单 / 桌面「终端」图标均可打开；终端支持命令执行、`cd`、命令栏历史、复制粘贴与命令审计，和 SSH 终端共用搜索、快捷键与终端外观。本地终端只接受本机回环连接并校验浏览器 Origin，开启登录时仍需登录 Cookie；Windows 使用 cmd 管道 + 前端行编辑（全屏 TUI 与部分交互程序受限），Linux / macOS 优先使用 `script` 分配 PTY。
+- **无服务器本地桌面**：工作台空状态或「打开连接」弹窗底部可直接进入本地桌面，不建立 SSH 会话；文件保存在数据目录的 `Desktop/` 沙箱，保留资源管理器、上传 / 下载 / 编辑 / 预览与桌面插件；**「终端」直接打开本机 Shell**（Windows 支持 PowerShell / 命令提示符，Unix 使用 `$SHELL`），可在本机执行命令而无需 SSH 回本机；AI 终端、任务管理器等服务器专属功能自动隐藏，适合只使用 Redis 等桌面插件或管理本机文件。
+- **本地 Shell**：本地桌面任务栏 / 开始菜单 / 桌面「终端」图标均可打开；任务栏终端按钮旁的下拉箭头可切换 **Windows PowerShell、PowerShell 7、命令提示符**（按系统已安装项显示），并记住上次选择；终端支持提示符、颜色高亮、Tab 补全、方向键历史、Ctrl+C、全屏 TUI、窗口缩放、复制粘贴与命令审计，和 SSH 终端共用搜索、快捷键与终端外观。本地终端只接受本机回环连接并校验浏览器 Origin，开启登录时仍需登录 Cookie；Windows 通过 winpty（优先）/ ConPTY 提供伪终端，两者都不可用时命令提示符回退管道模式；Linux / macOS 优先使用 `script` 分配 PTY。
 - **终端分屏**：终端工作台工具栏提供**左右分屏**与**上下分屏**，按钮是“追加窗格”而非开关：已有 2 个窗格时再点可继续增加第 3 个；存在左右分屏后上下分屏按钮禁用，反之亦然。会优先复用当前连接已有标签，没有时新开同连接会话；**拖动分隔条可调整窗格宽/高**；每个窗格右上角的 **×** 关闭该分屏并二次确认，只剩一个窗格时自动退出分屏。分屏顺序、尺寸与焦点在刷新页面后恢复；点击窗格切换焦点，命令栏 / SFTP / 监控跟随焦点。手机版不支持分屏。
 
 > 桌面中的文件能力与工作台 SFTP 完全一致：复制 / 剪切 / 粘贴、多选与框选、拖拽移动 / 上传、在线编辑（文本编辑器应用，多标签）、VSCode、下载（多选 ZIP / 逐个 / 本机直写）、压缩 / 解压、权限修改等。
 
 ## 功能
 
+- **MCP 服务（AI 直接调用）**：内置 `/mcp` 接口，Qoder / Cursor / Claude Code / Claude Desktop 等 AI 客户端可以列出连接、执行 SSH 命令、读写 / 上传 / 下载文件、查看系统信息与进程、打开桌面标签；支持 Streamable HTTP 与 stdio 桥接，MCP Token 独立管理，所有调用写入审计日志
 - **外部调用（跳板机客户端）**：启动后自动把 `deepshell://` 注册为当前用户的 URL 协议（无需浏览器插件），网页 / 运维门户用 `deepshell://connect?id=...` 或 `host/username/password` 链接即可拉起本机 DeepShell 并打开对应连接；已运行时交给现有实例，不会重复启动，调用目标、来源与结果记入审计
 - **HTTP 集成接口（JumpServer / 门户）**：面向服务端的 `POST /api/integration/connections/open` 接口，使用集成 Token 鉴权；按 `id` 或 `host + port + username` 新增 / 更新连接（含密码、密钥），并通知所有已打开的 DeepShell 页面通过 WebSocket 自动打开连接标签；没有在线页面时返回 `workspaceUrl`，门户可直接跳转
 - **新手连接向导**：新建连接默认是分步向导——选阿里云 / 腾讯云 / 华为云 / 其他，选 Ubuntu / Debian / CentOS 等系统镜像并给出建议登录名（ubuntu / root），再填地址、端口、密码或私钥；每一步都说明 IP、安全组、默认用户去哪找。连不上时按错误类型给步骤（拒绝连接、超时、DNS、认证失败、私钥格式、代理 / 跳板机等），不再只报一句 Auth fail
@@ -70,16 +71,19 @@
 - **多标签终端**：WebSocket 实时流式传输、窗口尺寸自适应（PTY Resize）、连接状态指示、断线提示；**左右 / 上下分屏**（见上）；**手敲命令审计**——终端通道里手动提交的命令会写入审计日志与数据目录 `logs/terminal-commands.log`，记录操作者、来源 IP、连接与完整命令，密码 / SSH 确认等交互提示自动跳过；标签右键支持**复制 IP / 查看服务器系统信息**（主机名、发行版、内核、CPU、内存、磁盘占用、IP、运行时长、负载、系统时间，经独立 exec 通道采集）；**会话保持与自动重连**——WebSocket 断开或刷新页面后，服务端保留 SSH 会话 10 分钟并缓冲最近 256KB 输出，浏览器自动退避重连、重新附着并把输出回放，前台正在运行的命令不会因为 F5 被直接杀掉；远端重启等被动断开时同样自动退避重连，重试期间可在桌面任务栏连接状态处手动重连；点击标签关闭或「断开」才立即结束会话；**tmux 持久会话**——连接默认使用 tmux（可在连接编辑中关闭），程序重启 / 升级后浏览器标签自动重连并附着回原 tmux 会话，前台命令不中断；服务器未安装 tmux 时自动回退为普通会话并提示；命令底栏「搜索」支持在终端输出中**高亮全部匹配**，并支持**区分大小写、全词匹配、正则表达式**（Alt+C / Alt+W / Alt+R），实时显示当前序号 / 匹配总数；上一个 / 下一个跳转并自动滚动到命中行；**终端选区右键菜单**——在工作台终端和 AI 桌面终端窗口中框选内容后右键，可复制、粘贴到命令输入框、AI 解释、按选中内容查找、全选与清空终端；AI 解释会打开对应的 AI 终端，把选中的输出和“这是什么 / 为什么失败”请求发给 AI 分析（只解释，不执行命令）
 - **端口转发**：按连接保存**本机监听（-L）**与**服务器监听（-R）**规则，支持自动启动、运行状态与错误提示、启动 / 停止 / 编辑 / 删除；监听地址默认 `127.0.0.1`，也可显式填写 `0.0.0.0` 对外开放；同一条规则在同一连接上只运行一份（多标签复用，不会重复占用监听端口），停止 / 编辑 / 删除会清理该连接所有会话上的实例；转发规则在每次会话建立后自动恢复，终端底栏最右侧的路线图标可随时管理
 - **SFTP 文件管理**：目录浏览、上传、下载、新建目录、**新建文本文件（输入文件名后直接打开在线编辑）**、重命名、删除（目录递归）、小文件在线编辑保存、**拖拽移动文件到文件夹**（拖动到表格边缘自动滚动、移动前弹出确认对话框明确"文件→目录"）；**目录跟随终端**——终端里 `cd` 后文件面板自动切到对应目录（工具栏链接图标可开关）；**系统文件可直接拖进浏览器窗口上传**到当前目录（拖入时显示目标目录，成功后弹提示）；**传输队列与分片续传**——上传按 4MB 分片写入数据目录临时文件，右下角队列显示进度，支持取消/失败重试，网络抖动后从服务端已收到的偏移继续（刷新页面后文件句柄失效，需要重新选择文件）；**文件夹上传**（选择文件夹后保留目录结构递归上传）与**文件夹打包下载**（自动生成 zip 后下载）；**名称左侧复选框支持多选**（表头可全选），选中后可批量**打包下载**（后端通过 SFTP 流式打包，浏览器只下载一次）或**逐个下载**文件（文件夹自动跳过）；**本机访问时还可「下载到本机」**——后端弹出原生目录选择框、自动创建子目录并通过 SFTP 直接写盘，传输队列显示进度，完成后可查看结果汇总 / 在文件管理器中打开目录（仅 127.0.0.1 / localhost，且运行环境需有图形界面）；**修改文件/目录权限**（SFTP 操作列或属性弹窗，支持 644/755/600/700 快捷值）；SFTP 工具栏另有返回上一目录（访问路径栈）、刷新与分析磁盘占用
-- **文本编辑器应用**：AI 可视化桌面内置「文本编辑器」应用，可从**开始菜单和桌面图标**启动，也可以从资源管理器双击 / 右键在线编辑直接打开文件；采用**顶部菜单栏 + 多标签**布局，菜单包含**文件**（新建 / 打开远程文件 / 保存 / 另存为 / 关闭标签）、**编辑**（撤销 / 重做 / 剪切 / 复制 / 粘贴 / 删除 / 查找 / 替换 / 转到行）、**选择**（全选 / 选择当前行 / 取消选择）、**视图**（自动换行 / 显示行号 / 高亮当前行 / 字号缩放）和**帮助**（快捷键 / 关于）；打开与另存为使用内置远程文件浏览器，可切换远端目录并确认覆盖。**查找 / 替换栏默认隐藏**，按 Ctrl+F / Ctrl+H 或从「编辑」菜单打开，行尾的 × 可随时关闭并清除高亮；菜单下拉统一从左侧向右展开。终端工作台的 SFTP 在线编辑仍以**弹窗**形式打开，但内部使用完全相同的菜单栏、多标签与全部编辑功能，行为与桌面版一致
+- **文本编辑器应用**：AI 可视化桌面内置「文本编辑器」应用，可从**开始菜单和桌面图标**启动，也可以从资源管理器双击 / 右键在线编辑直接打开文件；采用**顶部菜单栏 + 多标签**布局，菜单包含**文件**（新建 / 打开远程文件 / 保存 / 另存为 / 关闭标签）、**编辑**（撤销 / 重做 / 剪切 / 复制 / 粘贴 / 删除 / 查找 / 替换 / 转到行）、**选择**（全选 / 选择当前行 / 取消选择）、**视图**（自动换行 / 显示行号 / 高亮当前行 / 外观风格：浅色 · 深色 · 跟随桌面 / 字号缩放）和**帮助**（快捷键 / 关于）；打开与另存为使用内置远程文件浏览器，可切换远端目录并确认覆盖。**查找 / 替换栏默认隐藏**，按 Ctrl+F / Ctrl+H 或从「编辑」菜单打开，行尾的 × 可随时关闭并清除高亮；菜单下拉统一从左侧向右展开。终端工作台的 SFTP 在线编辑仍以**弹窗**形式打开，但内部使用完全相同的菜单栏、多标签与全部编辑功能，行为与桌面版一致
 - **SFTP 批量分发**：文件面板工具栏「批量分发」图标（分享）打开；选择本地一批文件、一个目标绝对目录和多台已保存连接，服务端**并行上传**到每台服务器的同一路径；已打开的连接直接复用现有 SSH 会话，未连接的按保存的代理 / 跳板机配置临时建立 SFTP 连接；对话框实时展示每台服务器的连接、上传文件与字节进度，支持取消与失败项重试；同名文件覆盖，目录不存在时自动逐级创建
 - **跨服务器文件直传**：终端工作台的 SFTP 选中栏、工具栏，以及 AI 桌面资源管理器工具栏 / 右键菜单都提供「跨服务器传输」；把**当前服务器选中的文件**直接传到一台或多台已保存服务器的同一路径，无需先下载到本机，源文件保持不变；当前连接会从目标列表中排除，逐台展示进度，支持取消与失败重试，同名文件覆盖
 - **快捷命令**：常用命令沉淀为片段，在工作台点击即执行（或仅填入待编辑）；面板顶部可选择**发送到当前会话 / 所有会话 / 勾选指定会话**（批量下发用）；每个命令可直接**编辑 / 删除**（工作台内点铅笔图标）
 - **AI 生成命令**：终端底部命令栏点击魔法棒图标展开 AI 输入条，用自然语言描述需求（如"查看磁盘占用最大的前 10 个目录"），经 OpenAI 兼容接口自动翻译为 shell 命令并填入命令框待确认执行；在右上角菜单「AI 设置」中选择厂商（内置 DeepSeek / 通义千问 Qwen / 智谱 GLM / MiniMax / Kimi / OpenAI，也可自定义兼容地址），**模型列表由厂商接口实时获取**（一键刷新），从下拉直接选择而无需手填；API Key / 接口地址 / 模型 / AI 终端单轮步数上限（默认 50，1-100）均在此配置
 - **AI 终端**（右侧面板第一个标签）：对话式 AI 运维——用自然语言描述需求（如"找出访问日志里请求最多的 IP"），AI 以当前会话的**登录用户身份**在服务器上自动执行命令、读取输出并逐步推进，直到任务完成；命令与输出以卡片展示在对话里（含退出码、可复制命令），经**独立 exec 通道**执行，不干扰正在操作的终端，AI 的 cd 目录会被自动跟踪；默认「**自动执行**」——命令会连续执行（面板内可切换「每步确认」逐条确认）；**对话记录支持多对话并保存在 SQLite 数据库**（随数据目录一起迁移 / 备份）——面板左侧对话列表可新建 / 切换 / 删除，每个连接各自独立、每个对话有独立上下文、工作目录和输入草稿；**不同对话可同时生成与执行、互不阻塞**——正在输出的对话单独显示「停止」，其余对话仍可新建 / 切换 / 发送；**AI 回复经 SSE 流式返回、打字机式逐字显示**（生成中带闪烁光标，解析完成的命令仍以卡片展示）；**回复支持 Markdown**（列表 / 加粗 / 行内代码 / 代码块），模型返回 `reasoning_content` 时显示可折叠的**思考过程**；命令卡片显示**执行耗时**，长输出可**展开全部 / 复制输出**；**输入框支持 ↑↓ 历史、`/` 快捷命令、自动增高和中文输入法安全回车**，AI 执行中按 Enter 会把新要求**排队**并在本轮结束后自动发送；请求失败可一键重试；**点「停止」会真正中止本轮生成**——前端 abort 请求、服务端断开模型连接并终止正在执行的 AI 命令通道，不会在后台继续执行新命令（已执行完的命令不会回滚）；单条命令最长 120 秒、超长输出自动截断；**单轮默认 50 步，可在 AI 设置中调整（1-100）**，达到上限会暂停并给出「继续执行」按钮；兼容模型偶发的 DeepSeek Harness DSML 工具调用格式（自动提取 `cmd` / `note` 并继续执行，无法解析时明确报错而不是打印原始标签）；**上下文用量与压缩（参考 DeepSeek Harness）**——每次模型调用解析厂商返回的 prompt / completion / cached / reasoning tokens，输入框下方实时显示「上下文占用 / 窗口」与比例，点击可查看上次请求明细，超过窗口 80% 会提示压缩；上下文使用超过 50% 后，工具栏与上下文卡片中的「压缩上下文」入口才可用，支持点击按钮或输入 `/compact` 把较早对话交给模型生成结构化检查点（目标、环境、已执行命令与结果、错误、进度、下一步），替换旧消息并保留最近消息，压缩卡片可展开查看摘要；**对话置顶与分叉**——置顶对话优先展示且不会被每连接数量上限淘汰，支持复制全部或从某条 AI 回复 / 命令结果处分叉出新对话，原对话保持不变；**插话与排队**——AI 执行中 Enter 将新要求排入队列（可多条、可单条删除/编辑/插话），本轮结束后自动发送；Ctrl+Enter 或「插话」按钮会中断当前生成/命令并立即发送新要求；AI 设置新增「上下文窗口」，用于占用比例与压缩保留量（默认 400000，按所用模型调整）
-- **AI 可视化桌面（虚拟桌面）**：连接建立后默认进入、也可从右侧 AI 终端工具栏「AI 可视化桌面」按钮进入的虚拟桌面（内置深色 / 浅色 / 春日 / 粉紫 / 赛博朋克 / 经典主题，支持自定义桌面背景与外观微调）。资源管理器变成可拖动、八方向缩放、最小化 / 最大化 / 关闭的 Windows 风格窗口；同一连接可开多个窗口，各有独立路径、前进/后退（工具栏、鼠标侧键、Alt+← →）和选中状态，任务栏为每个窗口提供按钮，右下角「显示桌面」可一键最小化全部、再点还原；窗口位置与**已打开的资源管理器窗口现场**按连接记忆，重开桌面 / 刷新后自动恢复（最多 6 个）；拖动窗口到左右边缘自动半屏、到顶部最大化，拖动时显示落位预览，任务栏窗口过多时可用滚轮横向滚动。窗口内保留原有全部文件能力：大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序、Ctrl / Shift 多选与框选、拖拽移动/上传、**从资源管理器拖到桌面、以及从桌面图标拖到资源管理器窗口（松手后选择复制或剪切）**、**复制 / 剪切 / 粘贴（Ctrl+C / Ctrl+X / Ctrl+V，复制支持文件夹递归，剪切粘贴走移动；复制遇到同名目标时按 Windows 习惯自动生成「- 副本」，剪切到原目录仍会提示）**、在线编辑（文本编辑器应用，多标签）/ VSCode、下载（多选流式 ZIP / 逐个 / 本机直写）、重命名 / 删除 / 复制路径 / 属性 / 压缩（ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ）、图片 / 视频缩略图、音频播放与新标签预览等。窗口支持 **Alt+Tab / Shift+Alt+Tab 循环切换**（若系统占用 Alt+Tab，可用 Alt+` 代替）。底部任务栏含开始菜单（固定应用、常用位置、当前目录搜索、服务器文件递归搜索、**连接与快捷操作搜索**、电源 / 返回工作台；`Ctrl+Shift+K` 可随时呼出并聚焦搜索）、搜索框、AI 终端入口、新建终端、已打开窗口按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 常用目录 / 快捷命令 / 连接管理）、CPU / 内存 / 交换 / 网络 / 连接托盘（点击或右键可重新连接 / 断开 / 查看系统信息，连接断开时状态旁直接显示「重新连接」）、**通知中心**（上传完成 / 部分失败 / 失败、连接断开与恢复，未读角标，可全部清除）、精确到秒的时钟（左键弹出 Windows 风格月历，可翻月、回到今天、点选日期）与显示桌面。开始菜单中的常用目录、快捷命令、传输中心、磁盘、任务管理器、连接管理等工具都在桌面内以独立窗口打开，不再跳转工作台；其中「连接管理」窗口支持搜索、收藏 / 置顶、文件夹、拖动排序、导入导出、新建 / 编辑 / 删除，单击连接会在新标签页打开该连接的 AI 桌面，当前桌面保持不变；桌面终端窗口底栏提供快捷命令入口（单击执行 / + 仅填入）；「设置」打开控制面板式设置窗口，可调整默认文件视图、缩略图、隐藏文件、终端字体与背景、AI 桌面背景、桌面图标显隐、快捷键、时钟与空闲休眠，并查看 / 配置 AI、局域网和当前连接信息；开始菜单底部返回工作台旁有电源按钮，提供远端服务器关机 / 重启 / 断开（关机 / 重启需 root 或免密 sudo，操作前有危险确认并记入审计日志）。
+- **AI 可视化桌面（虚拟桌面）**：连接建立后默认进入、也可从右侧 AI 终端工具栏「AI 可视化桌面」按钮进入的虚拟桌面（内置深色 / 浅色 / 春日 / 粉紫 / 赛博朋克 / 经典主题，支持自定义桌面背景与外观微调）。资源管理器变成可拖动、八方向缩放、最小化 / 最大化 / 关闭的 Windows 风格窗口；同一连接可开多个窗口，各有独立路径、前进/后退（工具栏、鼠标侧键、Alt+← →）和选中状态，任务栏为每个窗口提供按钮，右下角「显示桌面」可一键最小化全部、再点还原；窗口位置与**已打开的资源管理器窗口现场**按连接记忆，重开桌面 / 刷新后自动恢复（最多 6 个）；拖动窗口到左右边缘自动半屏、到顶部最大化，拖动时显示落位预览，任务栏窗口过多时可用滚轮横向滚动。窗口内保留原有全部文件能力：大 / 中 / 小图标与详细列表、面包屑、快速访问、搜索排序、Ctrl / Shift 多选与框选、拖拽移动/上传、**从资源管理器拖到桌面、以及从桌面图标拖到资源管理器窗口（松手后选择复制或剪切）**、**复制 / 剪切 / 粘贴（Ctrl+C / Ctrl+X / Ctrl+V，复制支持文件夹递归，剪切粘贴走移动；复制遇到同名目标时按 Windows 习惯自动生成「- 副本」，剪切到原目录仍会提示）**、在线编辑（文本编辑器应用，多标签）/ VSCode、下载（多选流式 ZIP / 逐个 / 本机直写）、重命名 / 删除 / 复制路径 / 属性 / 压缩（ZIP / 7Z / TAR / TAR.GZ / TAR.BZ2 / TAR.XZ）、图片 / 视频缩略图、音频播放与新标签预览等。窗口支持 **Alt+Tab / Shift+Alt+Tab 循环切换**（若系统占用 Alt+Tab，可用 Alt+` 代替）。底部任务栏含开始菜单（固定应用、常用位置、当前目录搜索、服务器文件递归搜索、**连接与快捷操作搜索**、电源 / 返回工作台；`Ctrl+Shift+K` 可随时呼出并聚焦搜索）、搜索框、AI 终端入口、新建终端、已打开窗口按钮（资源管理器 / 终端 / 传输中心 / 磁盘 / 任务管理器 / 常用目录 / 快捷命令 / 连接管理）、CPU / 内存 / 交换 / 网络 / 连接托盘（点击或右键可重新连接 / 断开 / 查看系统信息，连接断开时状态旁直接显示「重新连接」）、**通知中心**（上传完成 / 部分失败 / 失败、连接断开与恢复，未读角标，可全部清除）、精确到秒的时钟（左键弹出 Windows 风格月历，可翻月、回到今天、点选日期）、**全屏按钮**（`Alt+Enter` 切换，Electron 桌面版另支持 `F11`）与显示桌面。开始菜单中的常用目录、快捷命令、传输中心、磁盘、任务管理器、连接管理等工具都在桌面内以独立窗口打开，不再跳转工作台；其中「连接管理」窗口支持搜索、收藏 / 置顶、文件夹、拖动排序、导入导出、新建 / 编辑 / 删除，单击连接会在新标签页打开该连接的 AI 桌面，当前桌面保持不变；桌面终端窗口底栏提供快捷命令入口（单击执行 / + 仅填入）；「设置」打开控制面板式设置窗口，可调整默认文件视图、缩略图、隐藏文件、终端字体与背景、AI 桌面背景、桌面图标显隐、快捷键、时钟与空闲休眠，并查看 / 配置 AI、局域网和当前连接信息；开始菜单底部返回工作台旁有电源按钮，提供远端服务器关机 / 重启 / 断开（关机 / 重启需 root 或免密 sudo，操作前有危险确认并记入审计日志）。
 - **桌面应用插件**：开始菜单「已安装应用 → 安装 / 管理」支持导入 ZIP 插件；插件自带图标、窗口尺寸与静态 HTML / JS / CSS 应用，安装后直接出现在开始菜单，打开后是可拖动 / 缩放 / 最大化的桌面窗口，运行在隔离沙箱 iframe 中。插件包支持 **RSA 官方签名验证**，官方签名插件显示「官方签名」，未验证插件明确标记为「未验证」，仅修改作者字段无法冒充官方；插件还可以声明并携带后端 JAR，由 DeepShell 启动时隔离加载，安装 / 更新 / 卸载后需重启生效。支持在线更新（同 ID 覆盖）与卸载，插件文件保存于数据目录 `plugins/`。详见下方「桌面应用插件」格式说明
-- **内置 Redis 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 Redis 直连（主机 / 端口 / ACL 用户名 / 密码 / DB，默认关闭登录时也可用）、**保存多个连接**（欢迎页与连接弹窗均可选择，连接成功后可自动保存；密码由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.redis/connections.properties`，不会回传给浏览器）、SCAN 模式搜索与分批加载、列表 / 按冒号分组的可折叠键树、按类型查看和编辑 String / Hash / List / Set / ZSet / Stream、TTL 设置 / 永久化、重命名与删除、多数据库切换、命令控制台（危险命令二次确认）以及 INFO 服务器信息面板；Redis 连接由插件自带的后端 JAR 建立，空闲 30 分钟自动释放。前端通过当前插件窗口的受限消息桥调用自己的后端模块，不接触登录 Cookie，也不能直接访问其他插件的后端
-- **内置 Elasticsearch 管理器**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 HTTP / HTTPS 直连（Basic 认证、API Key、自签名证书忽略校验）、集群健康与节点概览、索引筛选与文档 / 存储统计、映射 / 设置 / 别名查看、索引创建与删除、文档查询（Lucene 查询语法）、文档查看 / 新建 / 编辑 / 删除，以及可执行任意 GET / POST / PUT / DELETE / HEAD 请求的 REST 控制台；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.deepshell.elasticsearch/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR 建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟自动释放
+- **官方 Redis 管理器（插件仓库）**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 Redis 直连（主机 / 端口 / ACL 用户名 / 密码 / DB，默认关闭登录时也可用）、**保存多个连接**（欢迎页与连接弹窗均可选择，连接成功后可自动保存；密码由服务端使用本机密钥加密后写入 `plugin-data/com.itdct.deepshell.plugin.redis/connections.properties`，不会回传给浏览器）、SCAN 模式搜索与分批加载、列表 / 按冒号分组的可折叠键树、按类型查看和编辑 String / Hash / List / Set / ZSet / Stream、TTL 设置 / 永久化、重命名与删除、多数据库切换、命令控制台（危险命令二次确认）以及 INFO 服务器信息面板；Redis 连接由插件自带的后端 JAR 建立，空闲 30 分钟自动释放。前端通过当前插件窗口的受限消息桥调用自己的后端模块，不接触登录 Cookie，也不能直接访问其他插件的后端
+- **官方 Elasticsearch 管理器（插件仓库）**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 HTTP / HTTPS 直连（Basic 认证、API Key、自签名证书忽略校验）、集群健康与节点概览、索引筛选与文档 / 存储统计、映射 / 设置 / 别名查看、索引创建与删除、文档查询（Lucene 查询语法）、文档查看 / 新建 / 编辑 / 删除，以及可执行任意 GET / POST / PUT / DELETE / HEAD 请求的 REST 控制台；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.itdct.deepshell.plugin.elasticsearch/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR 建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟自动释放
+- **官方 Kafka 管理器（插件仓库）**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持 PLAINTEXT / SSL / SASL_PLAINTEXT / SASL_SSL（PLAIN、SCRAM-SHA-256 / SHA-512）、集群与 Broker 概览、主题创建 / 删除 / 增加分区、分区位点与主题配置查看、按分区 / 最新 / 最早 / 指定位点拉取消息、消息发送与 Headers、消费组状态与各分区堆积；**保存多个连接**，凭据由服务端使用本机密钥加密后写入 `plugin-data/com.itdct.deepshell.plugin.kafka/connections.properties`，不会回传给浏览器。连接由插件自带的后端 JAR（内置 kafka-clients 3.7.1）建立，消息浏览使用不提交位点的临时消费组，会话仅保存在内存中，最多 8 个、空闲 30 分钟释放
+- **官方 MongoDB 管理器（插件仓库）**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。支持单机 / 多地址（副本集）连接、SCRAM-SHA-256 / SCRAM-SHA-1 / PLAIN 认证与 TLS、数据库与集合浏览、JSON 查询条件 / 排序 / 投影 / 分页、文档新增 / 编辑（整文档替换，_id 保持不变）/ 删除、索引查看与创建删除、集合统计和命令控制台；**保存多个连接**，密码由服务端使用本机密钥加密后写入 `plugin-data/com.itdct.deepshell.plugin.mongodb/connections.properties`。连接由插件自带的后端 JAR（内置 MongoDB Java 驱动 5.2.1）建立，会话仅保存在内存中，最多 8 个、空闲 30 分钟释放
+- **官方容器与集群管理器（插件仓库）**：AI 桌面 / 本地桌面「安装 / 管理」中可一键安装 / 卸载的 DeepShell 官方插件。Docker 支持本机或 SSH（密码 / 私钥，首次连接确认主机指纹）执行 docker CLI，管理容器、镜像、卷、网络，查看日志、详情与一次性命令；Kubernetes 使用本机 kubectl + kubeconfig（可留空使用默认配置），浏览节点、命名空间、Pod、Deployment、Service、事件，支持日志、一次性命令、缩放 / 重启 / 删除。**保存多个连接**，SSH 密码、私钥、口令与 kubeconfig 由服务端使用本机密钥加密写入 `plugin-data/com.itdct.deepshell.plugin.containers/connections.properties`。运行 DeepShell 的电脑需安装 kubectl；Docker 需本机或 SSH 目标机已安装 docker CLI
 - **桌面图标与本地 Desktop**：桌面按服务器当前用户 home 读取 `Desktop`（优先）或 `桌面`，都不存在时自动创建 `Desktop`（root 为 `/root/Desktop`），把其中的文件 / 文件夹 / 快捷方式映射为桌面图标。默认提供资源管理器（双击进入 `/`）、文本编辑器、终端、传输中心、设置、AI 终端等应用图标；所有图标使用统一顺序网格，可拖动调整顺序，新增文件追加到末尾，顺序与内置图标的隐藏状态按连接保存到 SQLite（`desktop_icon_layout`）。桌面空白右键支持粘贴、刷新、**新建文件夹 / 新建文本文件 / 上传文件 / 在此打开终端**、新建资源管理器窗口、个性化（打开设置并定位外观与桌面）和在新标签页打开工作台（保留当前桌面）；应用图标右键可打开 / 隐藏，隐藏后可在设置中恢复；桌面内置**回收站**图标：删除文件 / 文件夹默认移入 `~/.local/share/Trash`（遵循 freedesktop.org 回收站规范：`files/` 存文件本体、`info/` 存 `.trashinfo` 元数据，与 GNOME / KDE 等桌面共用同一份回收站；首次删除时才创建，`Shift+Delete` 彻底删除），双击打开后可还原到原路径（冲突时自动生成「- 恢复」名称）、彻底删除或清空回收站，回收站项目右键保留还原 / 打开原目录 / 复制原路径 / 属性等操作，回收站图标可隐藏并在设置中恢复；文件和文件夹图标复用资源管理器右键菜单，并可「发送到桌面快捷方式」——在远程 Desktop 写入 JSON 格式 `.lnk`（`target` / `targetType`），不复制原文件，双击快捷方式解析并打开目标。桌面图片与视频文件直接加载缩略图（视频叠加播放角标）；快捷方式按目标类型显示文件夹图标、文件类型图标或图片 / 视频缩略图，并在右下角叠加 link 角标，而不是显示通用的 LNK 文件图标。地址栏左侧星标可把当前目录加入 / 移出「常用目录」，资源管理器任务栏按钮右键可查看常用目录（点击在新窗口打开）、新建窗口和关闭。终端背景与 AI 桌面背景**分别配置**（各自上传或 URL、透明度、模糊度）。
 - **AI 桌面窗口与新标签页工作台**：任务栏「AI 终端」会在桌面内打开一个 AI 对话窗口，与右侧 AI 面板共用同一套对话列表、当前对话、输入和流式输出，支持新建 / 切换 / 删除对话、自动执行 / 每步确认、命令确认与停止；窗口本身和资源管理器一样可拖动、缩放、最小化、最大化、关闭，采用暗色对话控件。开始菜单底部的「新标签页工作台」（或桌面右键同名入口）不会关闭桌面，而是在**新的浏览器标签页**打开同一连接的工作台，原标签页的桌面和所有窗口保持不变；开始菜单底部仍保留真正的「返回工作台」退出桌面。
 - **服务器监控**：工作台顶栏实时显示远端 CPU / 内存 / 交换利用率（阈值变色进度条）与网络上下行速率；每 3 秒经独立 exec 通道采样 `/proc`，不占用交互终端；仅支持 Linux 服务器（Windows 目标会自动提示"监控不可用"）
@@ -113,8 +117,8 @@
 > **一键打包**：直接双击仓库根目录的 `build-release.cmd`。脚本会自动查找 JDK 与 Maven（PATH 中没有 Maven 时使用 IDEA 自带的），生成传统分发包、Windows 绿色版和对应的 `.sha256`，完成后打开 `target` 目录。
 
 ```bash
-# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.6.2.zip）
-mvn -DskipTests package
+# 1. 先打 jar（同时生成传统分发包 target/deepshell-1.8.0.zip）
+mvn -DskipTests clean package
 
 # 2. 生成内置精简 JRE 的 Windows 绿色版
 powershell -ExecutionPolicy Bypass -File tools/build-portable.ps1 -SkipMaven
@@ -123,9 +127,9 @@ powershell -ExecutionPolicy Bypass -File tools/build-portable.ps1 -SkipMaven
 产物：
 
 ```
-target/deepshell-1.6.2-windows-x64-portable/        可直接运行的目录
-target/deepshell-1.6.2-windows-x64-portable.zip     发布给用户的绿色包（约 90 MB）
-target/deepshell-1.6.2-windows-x64-portable.zip.sha256
+target/deepshell-1.8.0-windows-x64-portable/        可直接运行的目录
+target/deepshell-1.8.0-windows-x64-portable.zip     发布给用户的绿色包（含内置 JRE）
+target/deepshell-1.8.0-windows-x64-portable.zip.sha256
 ```
 
 绿色版特性：
@@ -144,19 +148,40 @@ target/deepshell-1.6.2-windows-x64-portable.zip.sha256
 前置要求：JDK 8+、Maven（仅构建需要）。
 
 ```bash
-# 构建（同时生成传统分发包 target/deepshell-1.6.2.zip）
-mvn -DskipTests package
+# 构建（同时生成传统分发包 target/deepshell-1.8.0.zip）
+mvn -DskipTests clean package
 
 # 或直接运行 jar（开发调试）
 java -jar target/deepshell.jar
 ```
 
+### Electron 桌面壳（实验）
+
+用 Electron 给现有页面套一个桌面窗口，不重写前端和后端：壳负责启动 Java、等待端口就绪、加载页面，并在关闭窗口时回收 Java 进程。
+
+前置要求：JDK 8+、Node.js 18+；先构建 `target/deepshell.jar`。打包绿色版还需 JDK 17+（jlink）。
+
+```bash
+mvn -DskipTests clean package
+
+cd electron
+npm install
+npm start
+```
+
+- 默认使用 `target/deepshell.jar` 和系统 `java`，也可以分别用 `DEEPSHELL_JAR`、`DEEPSHELL_JAVA` 覆盖
+- 数据目录默认为 Electron 用户目录下的 `DeepShell/data`，可用 `DEEPSHELL_DATA_DIR` 指向现有 `data/` 或 `~/.deepshell`
+- 壳会关闭 Java 侧的自动打开浏览器、托盘、协议注册与自动更新，避免和 Electron 重复；关闭窗口即退出并停止本地服务
+- 打包绿色版（Electron + 精简 JRE + jar）：`powershell -ExecutionPolicy Bypass -File tools/build-electron.ps1`，产物在 `electron/out/`（含 ZIP 与 .sha256）；首次需先在 `electron/` 执行 `npm install`
+- 尚未提供安装包（NSIS/MSI）与自动更新；发布前仍需自行签名
+- 壳按 HTTP 访问本机服务；如果已开启局域网 HTTPS，请暂用浏览器版，或先关闭 TLS 后再试
+
 ### 分发包
 
-解压 `target/deepshell-1.6.2.zip` 后的目录结构：
+解压 `target/deepshell-1.8.0.zip` 后的目录结构：
 
 ```
-deepshell-1.6.2/
+deepshell-1.8.0/
 ├─ deepshell.jar      主程序
 ├─ application.yml    外置配置（可改端口 / 数据目录等，覆盖内置默认值）
 ├─ start.cmd          Windows 启动脚本（双击运行，关闭窗口即停止）
@@ -301,9 +326,92 @@ curl -X POST 'http://127.0.0.1:17777/api/integration/connections/open' \
 }
 ```
 
+## MCP 服务（AI 直接调用）
+
+DeepShell 内置 [MCP（Model Context Protocol）](https://modelcontextprotocol.io) 服务，AI 客户端可以直接把 DeepShell 当成运维工具：列出已保存连接、执行 SSH 命令、通过 SFTP 读写文件、查看系统信息与进程，或者在 DeepShell 页面里打开连接标签。
+
+### 启用与配置
+
+1. 启动 DeepShell，打开右上角菜单「安全与访问 → MCP 服务」
+2. 弹窗里会显示 HTTP 地址、调用 Token，以及可直接复制的 HTTP / stdio 两种客户端配置
+3. 把配置粘贴到 AI 客户端的 MCP 设置里即可；DeepShell 需要保持运行
+
+- Token 优先读取 `deepshell.mcp.token`；未配置时自动生成到数据目录 `mcp.token`，与 JumpServer 集成接口的 Token 相互独立
+- 点击「重新生成 Token」后，旧配置立即失效，需要重新复制配置
+- 默认地址为 `http://127.0.0.1:17777/mcp`（启用 HTTPS 或自定义端口时以弹窗显示为准）；只接受 `POST`，使用 MCP Streamable HTTP 协议
+- AI 客户端在另一台电脑上时，把 `127.0.0.1` 换成 DeepShell 所在机器的局域网地址；这需要开启局域网访问并保持登录保护
+- 开启 TLS 且使用自签证书时，HTTP 客户端可能因证书不受信任而连接失败；可以在客户端信任证书，或改用 stdio 方式（桥接进程会自动信任本机自签证书）
+- stdio 方式由客户端启动 `java -jar deepshell.jar --mcp-stdio`，桥接进程只做 JSON-RPC 转发，不会启动第二个 DeepShell
+
+### HTTP 配置示例
+
+把 Token 换成弹窗里显示的值：
+
+```json
+{
+  "mcpServers": {
+    "deepshell": {
+      "url": "http://127.0.0.1:17777/mcp",
+      "headers": {
+        "Authorization": "Bearer 这里填弹窗里的Token"
+      }
+    }
+  }
+}
+```
+
+只支持 URL、不能加请求头的客户端，可以使用弹窗里的「含 Token 地址」（`/mcp?token=...`）。这种方式会把 Token 留在客户端配置里，仍然要像密码一样保管。
+
+### stdio 配置示例
+
+绿色版会使用自带的精简 JRE，路径以弹窗生成的配置为准：
+
+```json
+{
+  "mcpServers": {
+    "deepshell": {
+      "command": "C:\\DeepShell\\runtime\\bin\\java.exe",
+      "args": [
+        "-Dfile.encoding=UTF-8",
+        "-jar",
+        "C:\\DeepShell\\app\\deepshell.jar",
+        "--mcp-stdio",
+        "--deepshell.data-dir=C:\\DeepShell\\data"
+      ]
+    }
+  }
+}
+```
+
+### 工具列表
+
+| 工具 | 作用 |
+|---|---|
+| `list_connections` | 列出已保存连接（不返回密码），获取 `connectionId` |
+| `list_sessions` | 查看当前存活的 SSH 会话 |
+| `open_session` | 为连接建立并缓存 SSH 会话 |
+| `close_session` | 关闭 MCP 自己建立的会话 |
+| `run_command` | 执行非交互式 shell 命令，返回输出、退出码与 cwd |
+| `list_files` | 列出远程目录 |
+| `read_file` | 读取远程文件（文本 UTF-8 / 二进制 base64） |
+| `write_file` | 覆盖写入远程文本文件，可自动建父目录 |
+| `upload_file` | 上传 DeepShell 所在电脑的文件 |
+| `download_file` | 下载远程文件到 DeepShell 所在电脑 |
+| `get_system_info` | 系统信息（发行版、内核、CPU、内存、磁盘等） |
+| `get_stats` | CPU / 内存 / 交换 / 网络速率 / 负载实时监控 |
+| `list_processes` | 进程列表，可按 CPU / 内存 / PID 排序 |
+| `open_connection_tab` | 通知已打开的 DeepShell 页面切到该连接标签 |
+
+### 安全说明
+
+- 工具会以保存的连接凭据在远程**真实执行命令、读写文件**；`upload_file` / `download_file` 还会读写 DeepShell 所在电脑的文件，首次使用前请确认 AI 客户端可信
+- 每次工具调用记录为「MCP 调用」，命令执行、文件写入 / 上传 / 下载另有独立审计项
+- 开启局域网访问时 `/mcp` 也会监听局域网地址；不要把 Token 发到不受信任的环境，必要时重新生成
+- MCP 不提供删除连接、修改连接凭据等高危管理能力，连接与凭据仍只在 DeepShell 界面中维护
+
 ## 桌面应用插件
 
-AI 可视化桌面的开始菜单 →「已安装应用」→「安装 / 管理」，导入一个 ZIP 即可安装。安装后应用会出现在开始菜单，可像内置应用一样打开为可拖动 / 缩放 / 最大化的桌面窗口。
+AI 可视化桌面的开始菜单 →「已安装应用」→「安装 / 管理」，导入一个 ZIP 即可安装。安装后应用会出现在开始菜单，可像系统内置应用一样打开为可拖动 / 缩放 / 最大化的桌面窗口。
 
 ZIP 结构：
 
@@ -351,11 +459,11 @@ my-plugin.zip
 - 官方公钥随程序分发：`src/main/resources/plugin-signing/deepshell-plugin-public.pem`，keyId 为 `deepshell-official-2026-10`
 - 官方私钥只保存在维护者本机：`~/.deepshell/signing/deepshell-plugin-private.pem`，**不进入代码仓库、不进入分发包**；`.gitignore` 已忽略私钥和签名临时文件
 - 安装时如果存在 `plugin.sig` 但验签失败，安装会直接拒绝；没有签名的插件可以安装，但会显示「未验证」，且作者字段包含 DeepShell / 官方 / official 时会被拒绝
-- 内置应用 ID（如 `com.deepshell.redis`、`com.deepshell.elasticsearch`）只允许通过官方签名安装，未签名 / 伪造签名的 ZIP 不能覆盖内置应用；本地已存在的旧版未签名内置插件会被视为「未验证」并可在内置应用中重新安装覆盖
+- 官方插件 ID（如 `com.itdct.deepshell.plugin.redis`、`com.itdct.deepshell.plugin.elasticsearch`）只允许通过官方签名安装，未签名 / 伪造签名的 ZIP 不能覆盖官方插件；本地已存在的旧版未签名官方插件会被视为「未验证」并可在官方插件区域重新安装覆盖
 - 请离线备份私钥；私钥丢失后无法再为当前公钥生成可识别签名，只能轮换 keyId 与公钥后重新发布插件
 - 签名文件 `plugin.sig` 是纯文本 Properties：`format` / `keyId` / `algorithm` / `signature`
 
-签名工具（需要 JDK 11+ 的源码模式运行）：
+签名工具已随插件源码移到插件仓库 `tools/PluginSigner.java`（需要 JDK 11+ 的源码模式运行），主程序只保留验签公钥：
 
 ```bash
 java tools/PluginSigner.java generate <private.pem> <public.pem> [keyId]
@@ -381,26 +489,80 @@ public interface DesktopPluginModule {
 - 前端通过宿主消息桥调用当前插件自己的 `/api/desktop/plugins/runtime/{id}/invoke`，不能调用其他插件
 - 含后端 JAR 的插件安装 / 更新后会显示「待重启」，重启 DeepShell 后加载新模块；卸载时会立即释放已加载模块并关闭插件窗口，再次安装后仍需重启加载
 - 未签名的后端插件同样可以安装（用户自行承担来源风险），但会显示「未验证」；后端 JAR 拥有 DeepShell 服务端权限，请只安装可信插件
-- 官方 Redis / Elasticsearch 管理器已经使用该机制：Redis RESP2 客户端和 Elasticsearch REST 客户端都编译在各自插件的后端 JAR 中，主程序不包含对应的 Controller / Service
+- 官方 Redis / Elasticsearch / Kafka / MongoDB / 容器与集群管理器已经使用该机制：Redis RESP2 客户端与 Elasticsearch REST 客户端编译在各自插件的后端 JAR 中；Kafka 插件内置 kafka-clients 3.7.1 及压缩编解码 JAR，MongoDB 插件内置官方同步驱动 5.2.1，容器插件通过本机 / SSH 的 docker CLI 与本机 kubectl 工作，主程序不包含对应的 Controller / Service，也不需要把驱动加入主程序依赖
 
 插件的独立数据目录为 `plugin-data/<id>/`（由 `PluginContext.getDataDir()` 提供）。
 
-### 内置 Redis 管理器
+### 官方插件仓库与在线安装
 
-- 在桌面「安装 / 管理」的「内置应用」区域安装 / 更新；当前插件版本 **2.1.0**，含官方签名与 `backend/redis-backend.jar`，安装或更新后需重启 DeepShell 加载后端
+主程序不再内置插件 ZIP，安装包只保留插件运行时与验签公钥，安装包体积因此减少约 18MB。所有官方插件统一维护在独立的 Gitee 项目：
+
+- 插件仓库：<https://gitee.com/decentant/deepshell-plugin>
+- 插件目录：<https://gitee.com/decentant/deepshell-plugin/raw/master/catalog.json>
+
+主程序从 `catalog.json` 获取插件版本、下载地址、大小与 SHA-256，安装流程为：
+
+1. 读取并缓存插件目录（默认缓存 10 分钟，网络失败时回退到上次缓存）；
+2. 下载 ZIP，限制 50MB，并校验 catalog 中的 SHA-256；
+3. 校验 DeepShell 官方 RSA 签名，官方插件 ID 必须验签通过；
+4. 解压安装到数据目录 `plugins/<id>/`，含后端的插件重启后加载。
+
+可在 `application.yml` 中覆盖目录地址，或留空关闭在线目录（仍可手动导入 ZIP）：
+
+```yaml
+deepshell:
+  plugins:
+    catalog-url: https://gitee.com/decentant/deepshell-plugin/raw/master/catalog.json
+```
+
+插件版本与主程序版本相互独立：发布新插件只需更新插件仓库并推送 `catalog.json` 与 `dist/*.zip`，无需重新发布 DeepShell 安装包。
+
+旧版官方插件使用 `com.deepshell.*` ID；从「安装 / 管理」更新到新版本时，主程序会自动把 `plugin-data` 中的连接配置迁移到 `com.itdct.deepshell.plugin.*`，并清理旧插件目录，不需要重新填写连接密码。
+
+### 官方 Redis 管理器（插件仓库）
+
+- 在桌面「安装 / 管理」的「官方插件」区域安装 / 更新；当前插件版本 **2.1.0**，含官方签名与 `backend/redis-backend.jar`，安装或更新后需重启 DeepShell 加载后端
 - Redis 连接由插件后端 RESP2 客户端建立，支持单机 Redis、AUTH / ACL 与 DB 切换；连接会话只保存在内存中，最多 8 个、空闲 30 分钟释放
 - 保存的连接配置（名称、主机、端口、用户名、DB、超时、最近使用时间）持久化在插件数据目录；密码使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器，导出备份时也只包含密文。可保存 100 个连接，支持在连接弹窗中编辑或删除
 - 当前版本为单机直连，暂不支持 TLS / Sentinel / Cluster / SSH 隧道；`MONITOR` / `SUBSCRIBE` 等长连接命令暂不支持，`FLUSHDB` / `FLUSHALL` / `SHUTDOWN` 会二次确认
-- 插件源码位于 `plugin-src/redis/`（前端）和 `plugin-src/redis/backend/src/`（后端）；修改后重新打包 `redis.zip` 并使用 `PluginSigner` 签名即可随程序分发
+- 插件源码位于独立插件仓库 [deepshell-plugin](https://gitee.com/decentant/deepshell-plugin) 的 `plugins/redis/`（前端）与 `plugins/redis/backend/src/`（后端）；在插件仓库运行 `tools/build-all.ps1` 即可重新编译、签名并更新 `catalog.json`
 
-### 内置 Elasticsearch 管理器
+### 官方 Elasticsearch 管理器（插件仓库）
 
-- 在桌面「安装 / 管理」的「内置应用」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名与 `backend/elasticsearch-backend.jar`，安装或更新后需重启 DeepShell 加载后端
+- 在桌面「安装 / 管理」的「官方插件」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名与 `backend/elasticsearch-backend.jar`，安装或更新后需重启 DeepShell 加载后端
 - 使用插件自带的轻量 REST 客户端直连 Elasticsearch（7.x / 8.x / 9.x），支持 HTTP / HTTPS、Basic 认证、API Key 与自签名证书忽略校验；连接会话只保存在内存中，最多 8 个、空闲 30 分钟释放
 - 概览页展示集群健康、节点角色 / 堆 / 磁盘 / CPU、索引数、文档总数与主分片存储；索引页支持按名称筛选、查看映射 / 设置 / 别名、创建与删除索引、手动刷新索引
 - 文档页支持 Lucene 查询语法搜索、分页浏览、查看 / 新建 / 编辑 / 删除文档；REST 控制台可执行 GET / POST / PUT / DELETE / HEAD 请求并查看状态码、耗时与格式化响应，仅允许以 `/` 开头的集群内路径
-- 保存的连接配置（名称、地址、用户名、认证方式、超时、TLS、最近使用时间）持久化在 `plugin-data/com.deepshell.elasticsearch/connections.properties`；密码 / API Key 使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接
-- 插件源码位于 `plugin-src/elasticsearch/`（前端）和 `plugin-src/elasticsearch/backend/src/`（后端）；修改后重新打包 `elasticsearch.zip` 并使用 `PluginSigner` 签名即可随程序分发
+- 保存的连接配置（名称、地址、用户名、认证方式、超时、TLS、最近使用时间）持久化在 `plugin-data/com.itdct.deepshell.plugin.elasticsearch/connections.properties`；密码 / API Key 使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接
+- 插件源码位于独立插件仓库 [deepshell-plugin](https://gitee.com/decentant/deepshell-plugin) 的 `plugins/elasticsearch/`（前端）与 `plugins/elasticsearch/backend/src/`（后端）；在插件仓库运行 `tools/build-all.ps1` 即可重新编译、签名并更新 `catalog.json`
+
+### 官方 Kafka 管理器（插件仓库）
+
+- 在桌面「安装 / 管理」的「官方插件」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名、`backend/kafka-backend.jar` 与 `backend/lib/` 下的 kafka-clients 3.7.1、lz4、snappy、zstd 依赖，安装或更新后需重启 DeepShell 加载后端
+- 使用官方 Kafka 客户端直连 Broker，支持 PLAINTEXT / SSL / SASL_PLAINTEXT / SASL_SSL（PLAIN、SCRAM-SHA-256 / SCRAM-SHA-512）；SSL 使用本机 JVM 信任库校验服务端证书，自签证书需先在运行 DeepShell 的 JVM 中导入
+- 集群概览展示 Broker、Controller、主题与分区数、消费组数；主题页可创建 / 删除主题、增加分区、查看分区位点 / ISR / 配置，并可按全部或指定分区、最新 / 最早 / 指定位点拉取消息，发送消息时支持 Key、Headers 与指定分区
+- 消息浏览使用 `deepshell-browser-*` 临时消费组且不提交位点，不会影响业务消费组；单次最多 200 条，超过 64KB 的文本会截断，二进制内容以 Base64 展示；消费组页展示成员、分配关系与各分区 LAG
+- 保存的连接配置（名称、Broker 地址、安全协议、SASL 机制、用户名、Client ID、超时、最近使用时间）持久化在 `plugin-data/com.itdct.deepshell.plugin.kafka/connections.properties`；密码使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
+- 插件源码位于独立插件仓库 [deepshell-plugin](https://gitee.com/decentant/deepshell-plugin) 的 `plugins/kafka/`（前端）与 `plugins/kafka/backend/src/`（后端）；在插件仓库运行 `tools/build-all.ps1` 即可重新编译、签名并更新 `catalog.json`
+
+### 官方 MongoDB 管理器（插件仓库）
+
+- 在桌面「安装 / 管理」的「官方插件」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名、`backend/mongodb-backend.jar` 与 `backend/lib/` 下的 MongoDB 驱动 5.2.1、BSON 依赖，安装或更新后需重启 DeepShell 加载后端
+- 使用 MongoDB 官方同步驱动直连，支持单机、多地址（副本集）与 TLS；认证支持 SCRAM-SHA-256 / SCRAM-SHA-1 / PLAIN（LDAP），认证数据库默认 `admin`。TLS 使用本机 JVM 信任库校验服务端证书
+- 概览页展示版本、运行时间、连接数、操作计数、网络流量与数据库大小；数据库页展示集合、文档数、数据 / 存储 / 索引大小；集合页支持 JSON 查询条件、排序、字段投影、分页浏览与总数统计，文档可新增、编辑（整文档替换）与删除，索引页支持查看、创建（唯一 / 稀疏 / TTL）与删除，统计页展示 `collStats` 原始结果
+- 命令控制台可以按当前连接用户的权限执行任意数据库命令（`runCommand`），输入为 JSON；删除数据库、删除集合等危险操作需要二次确认，空条件更新也会要求确认，删除文档必须提供查询条件
+- 保存的连接配置（名称、地址、用户名、认证数据库、认证机制、TLS、超时、最近使用时间）持久化在 `plugin-data/com.itdct.deepshell.plugin.mongodb/connections.properties`；密码使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
+- 查询结果单次最多 500 条；`listDatabases` 权限不足时仅显示数据库名称，不显示大小；编辑文档时 `_id` 由原文档保留，替换内容中即使包含 `_id` 也会被忽略
+- 插件源码位于独立插件仓库 [deepshell-plugin](https://gitee.com/decentant/deepshell-plugin) 的 `plugins/mongodb/`（前端）与 `plugins/mongodb/backend/src/`（后端）；在插件仓库运行 `tools/build-all.ps1` 即可重新编译、签名并更新 `catalog.json`
+
+### 官方容器与集群管理器（插件仓库）
+
+- 在桌面「安装 / 管理」的「官方插件」区域安装 / 更新；当前插件版本 **1.0.0**，含官方签名与 `backend/containers-backend.jar`，安装或更新后需重启 DeepShell 加载后端
+- Docker：可选择本机 docker CLI，或通过 SSH（密码 / 私钥 + 口令）在目标主机执行 docker；支持容器列表与 CPU / 内存统计、启动 / 停止 / 重启 / 暂停 / 删除、日志、JSON 详情、一次性命令，镜像拉取 / 删除，卷与网络查看 / 删除。首次连接新 SSH 主机会显示 SHA-256 指纹，确认后写入 `known_hosts.properties`，之后密钥变化会拒绝连接
+- Kubernetes：使用运行 DeepShell 的电脑上的 kubectl 和 kubeconfig（可留空使用默认 `~/.kube/config`），支持指定 context，浏览节点、命名空间、Pod、Deployment、Service 与事件，查看 Pod 日志、一次性命令、describe，以及 Deployment 缩放 / 滚动重启 / 删除
+- 保存的连接配置持久化在 `plugin-data/com.itdct.deepshell.plugin.containers/connections.properties`；SSH 密码、私钥、私钥口令与 kubeconfig 使用 DeepShell 的 AES-GCM 本机密钥加密，明文不进入浏览器。可保存 100 个连接，会话最多 8 个、空闲 30 分钟释放
+- 依赖：Docker 需要本机或 SSH 目标机已安装 docker CLI；Kubernetes 需要运行 DeepShell 的电脑已安装 kubectl。kubeconfig 只会在连接期间写入插件数据目录并在断开时删除
+- 插件源码位于独立插件仓库 [deepshell-plugin](https://gitee.com/decentant/deepshell-plugin) 的 `plugins/containers/`（前端）与 `plugins/containers/backend/src/`（后端）；在插件仓库运行 `tools/build-all.ps1` 即可重新编译、签名并更新 `catalog.json`
 
 运行与安全：
 
@@ -449,8 +611,11 @@ public interface DesktopPluginModule {
 | 桌面应用插件 | `plugins/<id>/`（导入的前端 / 后端文件；卸载即删除） |
 | 插件后端数据 | `plugin-data/<id>/`（仅声明 backend 的插件使用） |
 | 本地桌面文件 | `Desktop/`（无 SSH 会话进入本地桌面时读写；路径限制在该目录内） |
-| 内置 Redis 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.redis/connections.properties`，密码为 AES-GCM 密文 |
-| 内置 Elasticsearch 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.deepshell.elasticsearch/connections.properties`，密码 / API Key 为 AES-GCM 密文 |
+| 官方 Redis 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.itdct.deepshell.plugin.redis/connections.properties`，密码为 AES-GCM 密文 |
+| 官方 Elasticsearch 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.itdct.deepshell.plugin.elasticsearch/connections.properties`，密码 / API Key 为 AES-GCM 密文 |
+| 官方 Kafka 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.itdct.deepshell.plugin.kafka/connections.properties`，密码为 AES-GCM 密文 |
+| 官方 MongoDB 插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.itdct.deepshell.plugin.mongodb/connections.properties`，密码为 AES-GCM 密文 |
+| 官方容器插件连接 | 会话仅内存保存（最多 8 个，空闲 30 分钟释放）；保存的连接在 `plugin-data/com.itdct.deepshell.plugin.containers/connections.properties`，SSH 密码 / 私钥 / 口令与 kubeconfig 为 AES-GCM 密文；已知 SSH 主机指纹在 `known_hosts.properties` |
 | 插件解压临时目录 | `plugin-staging/`（安装过程使用，启动时自动清理） |
 | 官方插件签名私钥 | 仅维护者本机 `~/.deepshell/signing/`；不进入仓库和分发包 |
 | 审计日志 | `db/deepshell.db` 的 `audit_log` 表（默认最多 5 万条） |
@@ -502,11 +667,16 @@ deepshell.open-browser: true   # 启动后自动打开浏览器
 deepshell.protocol.enabled: true
 deepshell.protocol.scheme: deepshell
 
-# 本地桌面终端：留空用系统默认 Shell（Windows cmd，Unix $SHELL），也可填可执行文件绝对路径
+# 本地桌面终端：Windows 可选 powershell / pwsh / cmd（留空默认优先 PowerShell，无则 cmd）
+deepshell.local-shell.default: ""
+# 自定义 Shell 可执行文件绝对路径：填写后作为额外选项并默认使用
 deepshell.local-shell.command: ""
 
 # HTTP 集成接口（JumpServer / 门户）Token：留空自动生成到数据目录 integration.token
 deepshell.integration.token: ""
+
+# MCP（AI 客户端调用）Token：留空自动生成到数据目录 mcp.token
+deepshell.mcp.token: ""
 
 # 登录认证（默认关闭；开启后必须登录才能访问工作台）
 deepshell.auth.enabled: false

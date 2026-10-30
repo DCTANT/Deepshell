@@ -26,7 +26,7 @@ public class AuthWebConfig implements WebMvcConfigurer {
         registry.addInterceptor(originGuardInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns("/ws/**", "/plugin-assets/**", "/css/**", "/js/**",
-                        "/vendor/**", "/img/**");
+                        "/vendor/**", "/img/**", "/mcp", "/mcp/**");
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns(
@@ -40,6 +40,11 @@ public class AuthWebConfig implements WebMvcConfigurer {
                         "/api/protocol/handoff",
                         // JumpServer / 门户 HTTP 接口：接口内部校验集成 Token
                         "/api/integration/connections/open",
+                        // 执行网关探测接口：接口内部校验网关注入 Token
+                        "/api/gateway/info",
+                        // MCP 接口：接口内部校验 MCP Token
+                        "/mcp",
+                        "/mcp/**",
                         "/css/**",
                         "/js/**",
                         "/vendor/**",

@@ -59,7 +59,7 @@ public class UpdateService implements ApplicationListener<ApplicationReadyEvent>
     private static final Pattern SHA256_PATTERN = Pattern.compile("[a-fA-F0-9]{64}");
     private static final long AUTO_CHECK_DELAY_MS = 15_000L;
 
-    @Value("${deepshell.version:1.6.2}")
+    @Value("${deepshell.version:1.8.0}")
     private String currentVersion;
 
     @Value("${deepshell.update.enabled:true}")

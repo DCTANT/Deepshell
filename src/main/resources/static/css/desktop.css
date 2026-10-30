@@ -1888,6 +1888,51 @@
     text-overflow: ellipsis;
 }
 
+.dsk-task-caret {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 38px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #7f90a8;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dsk-task-caret:hover {
+    background: #222c3d;
+    color: #e8f1ff;
+}
+
+.dsk-task-caret > i {
+    font-size: 11px;
+}
+
+.dsk-shell-menu .dsk-menu-item {
+    gap: 8px;
+}
+
+.dsk-shell-check {
+    width: 14px;
+    flex: 0 0 auto;
+    color: var(--dsk-accent, #5b9bff);
+    font-size: 12px;
+}
+
+.dsk-shell-item-note {
+    margin-left: auto;
+    font-size: 11px;
+    color: #8a96a6;
+}
+
+.ai-desktop .dsk-shell-item-note {
+    color: var(--dsk-panel-fg-dim, #9fb0c6);
+}
+
 .dsk-task-busy {
     position: absolute;
     top: 5px;
@@ -2384,6 +2429,32 @@
     color: #e8f1ff;
 }
 
+.dsk-fullscreen-btn {
+    width: 30px;
+    height: 36px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: #93a2b8;
+    cursor: pointer;
+}
+
+.dsk-fullscreen-btn:hover {
+    background: #273246;
+    border-color: #3a4b68;
+    color: #e8f1ff;
+}
+
+.dsk-fullscreen-btn.active {
+    background: #273246;
+    border-color: #3a4b68;
+    color: #65e6ff;
+}
+
 /* ---------- 开始菜单 ---------- */
 .dsk-start {
     position: absolute;
@@ -2687,6 +2758,10 @@
     background: #ffffff;
 }
 
+.plugin-builtin-card + .plugin-builtin-card {
+    margin-top: 6px;
+}
+
 .plugin-builtin-icon {
     flex: 0 0 40px;
     width: 40px;
@@ -2746,6 +2821,23 @@
     margin-top: 2px;
     color: #9aa7bd;
     font-size: 10.5px;
+}
+
+.plugin-builtin-error {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 7px;
+    padding: 7px 9px;
+    border: 1px solid #f3d2d2;
+    border-radius: 6px;
+    background: #fff6f6;
+    color: #b24a4a;
+    font-size: 11.5px;
+}
+
+.plugin-builtin-error span {
+    flex: 1;
 }
 
 .plugin-mgr-error {
@@ -5821,6 +5913,17 @@
     color: var(--dsk-taskbar-fg);
 }
 
+.ai-desktop .dsk-fullscreen-btn {
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg-dim));
+}
+
+.ai-desktop .dsk-fullscreen-btn:hover,
+.ai-desktop .dsk-fullscreen-btn.active {
+    background: var(--dsk-taskbar-hover);
+    border-color: var(--dsk-taskbar-line);
+    color: var(--dsk-taskbar-fg);
+}
+
 .ai-desktop .dsk-task-busy {
     box-shadow: 0 0 0 2px var(--dsk-taskbar-bg);
 }
@@ -6274,6 +6377,19 @@
 
 .ai-desktop .dsk-set-value {
     color: var(--dsk-panel-fg);
+}
+
+/* 设置项里的普通按钮跟随窗口明暗（深色窗口下不再是一块白底） */
+.ai-desktop .dsk-settings .dsk-set-row .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--text) {
+    background: var(--dsk-field-bg);
+    border-color: var(--dsk-panel-line);
+    color: var(--dsk-panel-fg);
+}
+
+.ai-desktop .dsk-settings .dsk-set-row .el-button:not(.el-button--primary):not(.el-button--danger):not(.el-button--text):hover {
+    background: var(--dsk-panel-hover);
+    border-color: var(--dsk-accent);
+    color: var(--dsk-accent);
 }
 
 .ai-desktop .dsk-set-views {

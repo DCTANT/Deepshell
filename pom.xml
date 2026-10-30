@@ -13,7 +13,7 @@
 
     <groupId>com.itdct.deepshell</groupId>
     <artifactId>deepshell</artifactId>
-    <version>1.6.2</version>
+    <version>1.8.0</version>
     <name>deepshell</name>
     <description>现代化 Web 终端工具：SpringBoot + Thymeleaf + ElementUI + xterm.js</description>
     <url>https://gitee.com/decentant/deepshell</url>
@@ -71,6 +71,29 @@
             <groupId>com.github.mwiede</groupId>
             <artifactId>jsch</artifactId>
             <version>${jsch.version}</version>
+        </dependency>
+        <!-- 本地终端 PTY：Windows 优先 winpty（Ctrl+C 更稳），ConPTY 兜底；Unix 仍使用系统 script -->
+        <dependency>
+            <groupId>org.jetbrains.pty4j</groupId>
+            <artifactId>pty4j</artifactId>
+            <version>0.12.10-jdk8</version>
+            <exclusions>
+                <!-- 仅串口 / Cygwin 场景使用，且该坐标未发布到 Maven Central -->
+                <exclusion>
+                    <groupId>org.jetbrains.pty4j</groupId>
+                    <artifactId>purejavacomm</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.17.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+            <version>5.17.0</version>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>

@@ -50,6 +50,8 @@
                     <span class="conn-row-name">{{ row.name }}</span>
                     <i v-if="row.pinned" class="el-icon-top conn-flag-pin" title="置顶"></i>
                     <i v-if="row.favorite" class="el-icon-star-on conn-flag-star" title="收藏"></i>
+                    <el-tag v-if="row.gatewayId" size="mini" class="conn-gw-tag"
+                            title="经执行网关转发 TCP">网关</el-tag>
                     <span class="conn-row-addr">{{ row.username }}@{{ row.host }}:{{ row.port }}</span>
                     <el-popover placement="left" width="210" trigger="click" popper-class="cmd-pop"
                                 :value="connMenuKey === row.key" @input="setConnMenuOpen(row.key, $event)">
@@ -284,7 +286,7 @@
             <el-switch v-model="hotkeySettings.escClose" size="mini"></el-switch>
         </div>
         <el-divider></el-divider>
-        <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
+        <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ Alt+Enter 或 F11 全屏 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
     </el-dialog>
 
     <!-- 背景图片设置（终端 / AI 桌面共用弹窗） -->
@@ -318,7 +320,8 @@
     </el-dialog>
 
     <!-- AI 设置 -->
-    <el-dialog title="AI 设置（大语言模型）" :visible.sync="aiSetVisible" width="640px" append-to-body>
+    <el-dialog title="AI 设置（大语言模型）" :visible.sync="aiSetVisible" width="700px"
+               custom-class="ai-set-dialog" top="5vh" append-to-body>
         <div class="set-row">
             <span class="set-label">模型厂商</span>
             <el-select size="small" v-model="aiSetForm.provider" style="flex:1" @change="onAiProviderChange">
@@ -356,19 +359,34 @@
             <el-input-number v-model="aiSetForm.contextWindow" size="small" :min="4096" :max="2000000"
                              :step="1000" controls-position="right" style="width:160px"></el-input-number>
             <span class="set-hint" style="margin-left:10px;flex:1">
-                按所用模型的上下文窗口填写（tokens），默认 400000；用于计算占用比例和压缩保留量
+                按所用模型的上下文窗口填写（tokens），用于占用比例与压缩保留量
             </span>
         </div>
-        <div class="set-hint" style="line-height:1.9;min-height:19px">
+        <div class="set-hint ai-set-model-note" style="min-height:19px" :title="aiModelsNote">
             <span v-if="aiModelsLoading">正在从厂商接口实时获取模型列表…</span>
             <span v-else-if="aiModelsNote">{{ aiModelsNote }}</span>
         </div>
-        <div class="set-hint" style="margin-top:6px;line-height:1.9">
-            · 模型列表由厂商接口实时获取（点「刷新列表」随时更新），列表中没有的模型可直接输入<br>
-            · <template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">API Key 获取：{{ aiCurrentPreset.keyUrl }}<br></template>
-            · 各厂商均使用 OpenAI 兼容接口；配置保存在数据目录下的 ai.properties，仅调用 AI 功能时发送到该接口<br>
-            · 达到单轮步数上限后，AI 终端会暂停并给出「继续执行」按钮，不会无限执行消耗额度<br>
-            · 上下文窗口用于计算占用比例和压缩保留量，请按所用模型填写；压缩会调用一次模型生成结构化摘要
+        <div class="set-hint ai-set-help">
+            · 模型列表实时从厂商获取，也可直接输入模型 ID<template v-if="aiCurrentPreset && aiCurrentPreset.keyUrl">；API Key 获取：{{ aiCurrentPreset.keyUrl }}</template><br>
+            · 配置保存在数据目录 ai.properties，仅在调用 AI 功能时发送到该接口；上下文窗口用于计算占用比例与压缩
+        </div>
+        <div class="ai-usage">
+            <div class="ai-usage-head">
+                <b>Token 使用统计</b>
+                <span>按本机日期统计，含 AI 终端、命令翻译、标题与上下文压缩</span>
+                <el-button size="mini" type="text" icon="el-icon-refresh"
+                           :loading="aiUsageLoading" @click="loadAiUsage">刷新</el-button>
+            </div>
+            <div class="ai-usage-grid" v-loading="aiUsageLoading">
+                <div class="ai-usage-card" v-for="b in aiUsageBuckets" :key="b.label" :title="b.hint">
+                    <div class="ai-usage-label">{{ b.labelText }}</div>
+                    <div class="ai-usage-total">{{ b.totalText }}<i>tokens</i></div>
+                    <div class="ai-usage-io">输入 {{ b.inputText }} · 输出 {{ b.outputText }}</div>
+                </div>
+            </div>
+            <div class="ai-usage-tip">
+                接口返回 usage 时使用厂商数据；未返回时按字符数估算。统计只在本机保存，不记录对话内容。
+            </div>
         </div>
         <div slot="footer">
             <el-button size="small" style="float:left" icon="el-icon-magic-stick"
@@ -842,6 +860,119 @@
         </div>
     </el-dialog>
 
+    <!-- 执行网关 -->
+    <el-dialog title="执行网关" :visible.sync="gatewayVisible" width="820px" top="6vh" append-to-body>
+        <el-tabs v-model="gatewayTab">
+            <el-tab-pane label="使用网关（本机出口）" name="client">
+                <div class="gw-intro">
+                    连接可经另一台 DeepShell 转发 TCP：目标机凭据仍保存在本机，远端只负责拨号与转发。
+                    对方需要在「作为网关」中启用，并把目标地址加入白名单。
+                </div>
+                <div class="gw-list">
+                    <div v-for="g in gateways" :key="g.id" class="gw-row">
+                        <div class="gw-main">
+                            <b>{{ g.name }}</b>
+                            <span>{{ g.baseUrl }}</span>
+                        </div>
+                        <el-tag v-if="!g.enabled" size="mini" type="info">已停用</el-tag>
+                        <el-tag v-if="g.insecureTls" size="mini" type="warning">跳过证书校验</el-tag>
+                        <span class="gw-actions">
+                            <el-button size="mini" @click="testGatewayRow(g)">测试</el-button>
+                            <el-button size="mini" @click="editGateway(g)">编辑</el-button>
+                            <el-button size="mini" type="text" @click="removeGateway(g)">删除</el-button>
+                        </span>
+                    </div>
+                    <div v-if="!gateways.length && !gatewayLoading" class="panel-tip">
+                        还没有添加网关。在另一台能访问目标机的 DeepShell 上打开「执行网关 → 作为网关」，
+                        启用后复制 Token 填到这里。
+                    </div>
+                </div>
+
+                <div class="gw-form" v-if="gatewayEditing">
+                    <div class="gw-form-title">{{ gatewayForm.id ? '编辑网关' : '添加网关' }}</div>
+                    <el-form label-width="96px" size="small">
+                        <el-form-item label="名称">
+                            <el-input v-model="gatewayForm.name" placeholder="例如：机房出口"></el-input>
+                        </el-form-item>
+                        <el-form-item label="网关地址">
+                            <el-input v-model="gatewayForm.baseUrl"
+                                      placeholder="https://192.168.0.20:17777"></el-input>
+                            <div class="gw-hint">对方 DeepShell 的访问地址；经反向代理时可带路径前缀。</div>
+                        </el-form-item>
+                        <el-form-item label="Token">
+                            <el-input v-model="gatewayForm.token" type="password" show-password
+                                      :placeholder="gatewayForm.id ? '留空表示不修改' : '对方「作为网关」中的 Token'"></el-input>
+                        </el-form-item>
+                        <el-form-item label="选项">
+                            <el-checkbox v-model="gatewayForm.insecureTls">跳过 HTTPS 证书校验（自签证书）</el-checkbox>
+                            <el-checkbox v-model="gatewayForm.enabled">启用</el-checkbox>
+                        </el-form-item>
+                        <el-form-item>
+                            <el-button size="small" :loading="gatewayTesting" @click="testGatewayForm">测试</el-button>
+                            <el-button size="small" type="primary" :loading="gatewaySaving"
+                                       @click="saveGateway">保存</el-button>
+                            <el-button size="small" @click="resetGatewayForm">取消</el-button>
+                        </el-form-item>
+                        <div v-if="gatewayTestResult" class="gw-test"
+                             :class="gatewayTestResult.ok ? 'ok' : 'fail'">
+                            <i :class="gatewayTestResult.ok ? 'el-icon-circle-check' : 'el-icon-warning-outline'"></i>
+                            {{ gatewayTestResult.message }}
+                            <span v-if="gatewayTestResult.ok && gatewayTestResult.maxConnections">
+                                · 并发 {{ gatewayTestResult.activeTunnels || 0 }}/{{ gatewayTestResult.maxConnections }}
+                                · 白名单 {{ gatewayTestResult.allowlistCount }} 条
+                            </span>
+                        </div>
+                    </el-form>
+                </div>
+                <div v-else>
+                    <el-button size="small" icon="el-icon-plus" @click="startGatewayForm">添加网关</el-button>
+                </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="作为网关（提供服务）" name="server">
+                <el-alert v-if="gatewayInfo.enabled && !gatewayAllowlistText.trim()" type="warning"
+                          :closable="false" show-icon
+                          title="已启用但没有配置白名单：所有目标都会被拒绝"></el-alert>
+                <el-form label-width="110px" size="small" style="margin-top:8px">
+                    <el-form-item label="启用网关">
+                        <el-switch v-model="gatewayInfo.enabled"></el-switch>
+                        <span class="gw-hint" style="margin-left:8px">开启后其他 DeepShell 可经本机转发 TCP 连接</span>
+                    </el-form-item>
+                    <el-form-item label="网关 Token">
+                        <div class="gw-token-row">
+                            <el-input :value="gatewayInfo.token" readonly></el-input>
+                            <el-button size="small" @click="copyGatewayToken">复制</el-button>
+                            <el-button size="small" @click="regenerateGatewayToken">重新生成</el-button>
+                        </div>
+                        <div class="gw-hint">
+                            在本地 DeepShell 的「使用网关」中填写此 Token；
+                            {{ gatewayInfo.tokenConfigured ? '当前由 application.yml 固定' : '保存在数据目录 gateway.token' }}
+                        </div>
+                    </el-form-item>
+                    <el-form-item label="目标白名单">
+                        <el-input type="textarea" :rows="6" v-model="gatewayAllowlistText"
+                                  placeholder="每行一条：10.0.0.0/8、192.168.0.34、*.corp.example.com"></el-input>
+                        <div class="gw-hint">
+                            支持精确主机、*.域名、IP 与 CIDR；留空会拒绝全部目标。白名单按主机生效，包含该主机的所有端口；
+                            只放行你确定允许 SSH 的地址。
+                        </div>
+                    </el-form-item>
+                    <el-form-item label="并发上限">
+                        <el-input-number v-model="gatewayInfo.maxConnections" :min="1" :max="64"
+                                         :controls="false" style="width:100px"></el-input-number>
+                        <span class="gw-hint" style="margin-left:8px">
+                            当前隧道 {{ gatewayInfo.activeTunnels || 0 }} 条
+                        </span>
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button size="small" type="primary" @click="saveGatewaySettings">保存设置</el-button>
+                        <span class="gw-hint" style="margin-left:8px">版本 {{ gatewayInfo.version }}</span>
+                    </el-form-item>
+                </el-form>
+            </el-tab-pane>
+        </el-tabs>
+    </el-dialog>
+
     <!-- 登录与安全 -->
     <el-dialog title="登录与安全" :visible.sync="authSetVisible" width="520px" append-to-body>
         <template v-if="authStatus.enabled">
@@ -1032,6 +1163,88 @@
         </div>
     </el-dialog>
 
+    <!-- MCP 服务（AI 调用） -->
+    <el-dialog title="MCP 服务（AI 调用）" :visible.sync="mcpVisible"
+               width="760px" top="6vh" custom-class="protocol-dlg" append-to-body>
+        <div class="protocol-box" v-loading="mcpLoading">
+            <el-alert :title="'MCP 服务可用 · 已开放 ' + (mcpInfo.toolCount || 0) + ' 个工具 · 当前在线页面 ' + (mcpInfo.clients || 0) + ' 个'"
+                      :description="mcpInfo.configured
+                          ? 'Token 由 application.yml 固定配置；下方接入配置已包含当前 Token。'
+                          : 'Token 自动保存在数据目录 mcp.token；重新生成后旧配置立即失效。'"
+                      type="success" :closable="false" show-icon></el-alert>
+            <div class="protocol-grid">
+                <div class="protocol-k">HTTP 地址</div>
+                <div class="protocol-v">
+                    <el-input :value="mcpInfo.endpoint" readonly size="mini">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyMcpEndpoint">复制</el-button>
+                    </el-input>
+                </div>
+                <div class="protocol-k">调用 Token</div>
+                <div class="protocol-v">
+                    <el-input :value="mcpInfo.token" readonly size="mini" class="integration-token"
+                              placeholder="加载中…">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyMcpToken">复制</el-button>
+                    </el-input>
+                </div>
+                <div class="protocol-k">Token 地址</div>
+                <div class="protocol-v">
+                    <el-input :value="mcpInfo.urlWithToken" readonly size="mini" class="integration-token"
+                              placeholder="仅适合只能填写 URL 的客户端">
+                        <el-button slot="append" icon="el-icon-document-copy"
+                                   @click="copyMcpUrlWithToken">复制</el-button>
+                    </el-input>
+                </div>
+            </div>
+            <div class="protocol-tip">
+                推荐优先使用 HTTP 配置（Qoder / Cursor / Claude Code 等支持远程 MCP 的客户端）；
+                Claude Desktop 等只支持 stdio 的客户端使用第二种配置。
+                无论哪种方式，DeepShell 都需要保持运行。单条命令最长执行 120 秒，
+                如果客户端请求超时更短，请在客户端调大超时时间。
+            </div>
+            <div class="protocol-example-head">方式一：HTTP 配置（复制到客户端的 MCP 配置里）</div>
+            <el-input type="textarea" :rows="7" readonly :value="mcpHttpConfigText"
+                      class="integration-code"></el-input>
+            <div class="mcp-copy-row">
+                <el-button size="mini" icon="el-icon-document-copy" @click="copyMcpHttpConfig">
+                    复制 HTTP 配置
+                </el-button>
+            </div>
+            <div class="protocol-example-head">方式二：stdio 配置（客户端拉起本机 java 转发）</div>
+            <el-alert v-if="!mcpInfo.stdio || !mcpInfo.stdio.available"
+                      :title="(mcpInfo.stdio && mcpInfo.stdio.reason) || '当前运行方式不支持 stdio，请使用 HTTP 配置'"
+                      type="info" :closable="false" show-icon></el-alert>
+            <template v-else>
+                <el-input type="textarea" :rows="8" readonly :value="mcpStdioConfigText"
+                          class="integration-code"></el-input>
+                <div class="mcp-copy-row">
+                    <el-button size="mini" icon="el-icon-document-copy" @click="copyMcpStdioConfig">
+                        复制 stdio 配置
+                    </el-button>
+                </div>
+            </template>
+            <div class="protocol-example-head">已开放的工具</div>
+            <div class="mcp-tool-tags">
+                <el-tag v-for="t in mcpInfo.tools" :key="t.name" size="mini" type="info"
+                        :title="t.description">{{ t.title || t.name }}</el-tag>
+            </div>
+            <div class="protocol-warn">
+                <i class="el-icon-warning"></i>
+                这些工具会以保存的连接凭据在远程真实执行命令、读写文件；上传 / 下载还会读写 DeepShell 所在电脑的文件，
+                所有调用都会写入审计日志。请像密码一样保管 Token；不再使用时重新生成即可让旧配置立即失效。
+            </div>
+        </div>
+        <div slot="footer">
+            <el-button size="small" @click="mcpVisible = false">关闭</el-button>
+            <el-button size="small" icon="el-icon-refresh" :loading="mcpLoading"
+                       @click="loadMcpStatus">刷新状态</el-button>
+            <el-button size="small" type="warning" :disabled="mcpInfo.configured"
+                       :title="mcpInfo.configured ? 'Token 已在 application.yml 配置，请修改配置后重启' : ''"
+                       @click="regenerateMcpToken">重新生成 Token</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 帮助 -->
     <el-dialog title="DeepShell 帮助手册" :visible.sync="helpVisible" width="720px" top="4vh" append-to-body>
         <div class="help-box">
@@ -1040,6 +1253,7 @@
                 <ul>
                     <li>本手册可从<b>工作台右上角菜单 → 帮助 → 帮助手册</b>，或<b>可视化桌面开始菜单 → 帮助手册</b>随时打开；在桌面内打开不会退出当前桌面</li>
                     <li><b>桌面窗口切换</b>：<b>Alt+Tab</b> 循环切换窗口，<b>Shift+Alt+Tab</b> 反向切换；部分操作系统会拦截 Alt+Tab，此时可用 <b>Alt+`</b>（反引号）作为网页内替代</li>
+                    <li><b>全屏</b>：<b>Alt+Enter</b> 切换全屏 / 退出全屏（桌面任务栏右侧也有全屏按钮）；Electron 桌面版同样支持 <b>F11</b>，浏览器版请使用浏览器的原生 F11 全屏</li>
                     <li><b>视频缩略图</b>：可视化桌面与资源管理器的大 / 中图标视图会为视频显示首帧缩略图；缩略图由浏览器从视频流抓取，首次加载稍慢，超大或编码不支持的视频会回退为文件图标，双击视频仍可播放</li>
                 </ul>
             </div>
@@ -1069,6 +1283,7 @@
                 <div class="help-title"><i class="el-icon-connection"></i>HTTP 集成接口（JumpServer / 门户）</div>
                 <ul>
                     <li>右上角菜单「安全与访问 → 集成接口（HTTP）」可查看接口地址、调用 Token 与 cURL 示例；Token 优先使用 <code>deepshell.integration.token</code>，未配置时自动生成到数据目录 <code>integration.token</code></li>
+                    <li>右上角菜单「安全与访问 → MCP 服务」可查看 MCP 地址与 Token，并复制 HTTP / stdio 接入配置；AI 客户端可通过 MCP 直接列连接、执行命令、读写文件、查看监控，每次调用都会写入审计日志</li>
                     <li>JumpServer / 门户后端向 <code>POST /api/integration/connections/open</code> 发送 JSON，并在请求头携带 <code>X-DeepShell-Integration-Token</code>（或 Bearer Token）。接口按 host + port + username 更新已有连接，匹配不到时新建连接，然后通知已打开的 DeepShell 页面自动打开连接标签</li>
                     <li>关键字段：<code>id</code> 更新指定连接；<code>password</code> / <code>keyPath</code> 更新凭据；<code>view=desktop|workbench</code> 指定打开视图；<code>open=false</code> 只保存不打开；<code>openInBrowser=true</code> 在没有在线页面时让 DeepShell 所在机器打开浏览器</li>
                     <li>接口只面向服务端调用（拒绝浏览器 Origin 请求，不开启 CORS），请在内网 / HTTPS 下使用；没有在线页面时响应会返回 <code>workspaceUrl</code>，由门户把用户浏览器跳转到该地址即可</li>
@@ -1111,7 +1326,7 @@
                 <div class="help-title"><i class="el-icon-folder-opened"></i>文件 SFTP（右侧面板）</div>
                 <ul>
                     <li>双击目录进入 / 双击文件在线编辑；点击列头排序（名称 / 大小 / 修改时间）</li>
-                    <li>在线编辑使用 <b>CodeMirror</b>：行号、语法高亮、区分大小写 / 全词 / 正则查找、替换与全部替换、匹配项高亮、双击选中词高亮；快捷键 Ctrl+F 查找、Ctrl+H 替换、Ctrl+S 保存。终端工作台的 SFTP 面板仍以**弹窗**打开，但内部与 AI 桌面的<b>「文本编辑器」应用窗口</b>使用同一套顶部菜单（文件 / 编辑 / 选择 / 视图 / 帮助）、多标签、新建、打开远程文件、保存、另存为、撤销 / 重做、剪切 / 复制 / 粘贴、转到行、行号 / 自动换行 / 字号缩放及未保存确认</li>
+                    <li>在线编辑使用 <b>CodeMirror</b>：行号、语法高亮、区分大小写 / 全词 / 正则查找、替换与全部替换、匹配项高亮、双击选中词高亮；快捷键 Ctrl+F 查找、Ctrl+H 替换、Ctrl+S 保存。终端工作台的 SFTP 面板仍以**弹窗**打开，但内部与 AI 桌面的<b>「文本编辑器」应用窗口</b>使用同一套顶部菜单（文件 / 编辑 / 选择 / 视图 / 帮助）、多标签、新建、打开远程文件、保存、另存为、撤销 / 重做、剪切 / 复制 / 粘贴、转到行、行号 / 自动换行 / 字号缩放 / 外观风格（浅色、深色、跟随桌面）及未保存确认</li>
                     <li><b>拖动文件名到文件夹</b>即可移动（拖到表格边缘自动滚动找目标，移动前弹确认框）</li>
                     <li>VSCode 图标：下载到本机用 VSCode 打开，<b>保存后自动同步回服务器</b>（含 VSCode 原子保存，失败会自动重试）</li>
                     <li><b>批量分发</b>：工具栏「批量分发」图标（分享）打开；选择本地多个文件、目标目录与多台已保存连接，服务端并行上传到每台服务器的同一路径；已打开的会话直接复用，未连接的自动建立临时 SFTP 连接；可查看逐台进度、取消与重试失败项</li>
@@ -1270,10 +1485,10 @@
             <div class="dist-hint">
                 <i class="el-icon-info"></i>
                 <template v-if="distribute.mode === 'cross'">
-                    把当前服务器选中的文件直接传输到其他服务器，无需下载到本机；源文件保持不变，同名文件会被覆盖。
+                    把当前服务器选中的文件直接传输到其他服务器，无需下载到本机；源文件保持不变。
                 </template>
                 <template v-else>
-                    选择本地文件，同时上传到多台服务器的同一目录；同名文件会被覆盖。
+                    选择本地文件，同时上传到多台服务器的同一目录。
                 </template>
             </div>
             <div class="dist-section">
@@ -1318,6 +1533,19 @@
                     </el-input>
                 </div>
                 <div class="dist-sub">所有服务器使用同一绝对路径；目录不存在时自动逐级创建。</div>
+                <div class="dist-row dist-conflict-row">
+                    <span class="dist-label">同名文件</span>
+                    <el-radio-group v-model="distribute.conflict" size="mini">
+                        <el-radio-button label="overwrite">覆盖</el-radio-button>
+                        <el-radio-button label="skip">跳过</el-radio-button>
+                        <el-radio-button label="rename">自动重命名</el-radio-button>
+                    </el-radio-group>
+                    <span class="dist-sub dist-conflict-hint">
+                        {{ distribute.conflict === 'overwrite' ? '替换目标服务器上的同名文件'
+                            : (distribute.conflict === 'skip' ? '保留目标服务器上的同名文件，不再上传'
+                                : '生成 name (2).ext，原文件保持不变') }}
+                    </span>
+                </div>
             </div>
             <div class="dist-section">
                 <div class="dist-section-head">
@@ -1445,10 +1673,10 @@
             <span class="dim">ZIP 根目录需包含 plugin.json、入口 HTML 与图标</span>
         </div>
 
-        <div class="plugin-builtin" v-if="builtinAvailablePlugins.length">
+        <div class="plugin-builtin" v-if="builtinAvailablePlugins.length || pluginCatalogError">
             <div class="plugin-builtin-head">
-                <span>内置应用</span>
-                <em>由 DeepShell 提供 · 仅 AI 可视化桌面可用 · 支持安装与卸载</em>
+                <span>官方插件</span>
+                <em>来自 DeepShell 官方插件仓库 · 需联网下载 · 仅 AI 可视化桌面可用</em>
             </div>
             <div class="plugin-builtin-card" v-for="p in builtinAvailablePlugins" :key="'builtin-' + p.id">
                 <span class="plugin-builtin-icon">
@@ -1461,7 +1689,7 @@
                         <span class="plugin-builtin-ver">v{{ p.version }}</span>
                         <span class="plugin-sign-badge verified">官方签名</span>
                         <span v-if="p.hasBackend" class="plugin-backend-badge">含后端</span>
-                        <span class="plugin-builtin-tag">内置</span>
+                        <span class="plugin-builtin-tag">官方</span>
                     </div>
                     <div class="plugin-builtin-desc" :title="p.description">{{ p.description }}</div>
                     <div class="plugin-builtin-meta">
@@ -1473,6 +1701,12 @@
                 <el-button size="mini" type="primary"
                            :loading="pluginBuiltinInstalling === p.key"
                            @click="installBuiltinPlugin(p)">{{ p.updateAvailable ? '更新' : '安装' }}</el-button>
+            </div>
+            <div class="plugin-builtin-error" v-if="pluginCatalogError">
+                <i class="el-icon-warning-outline"></i>
+                <span>{{ pluginCatalogError }}</span>
+                <el-button size="mini" type="text" icon="el-icon-refresh"
+                           :loading="pluginBuiltinLoading" @click="refreshBuiltinPlugins">重试</el-button>
             </div>
         </div>
 
@@ -1508,7 +1742,7 @@
                 <el-button size="mini" type="text" class="danger-text" @click="deletePlugin(p)">卸载</el-button>
             </div>
             <div v-if="!pluginMgrLoading && !desktopPlugins.length" class="plugin-mgr-empty">
-                还没有安装插件。<template v-if="builtinAvailablePlugins.length">安装上方内置应用，</template>或导入 ZIP 后即可在开始菜单找到它。
+                还没有安装插件。<template v-if="builtinAvailablePlugins.length">安装上方官方插件，</template>或导入 ZIP 后即可在开始菜单找到它。
             </div>
         </div>
         <div class="plugin-mgr-tip">
@@ -1550,6 +1784,91 @@
             <el-button size="small" @click="permVisible = false">取消</el-button>
             <el-button size="small" type="primary" :loading="permSaving" @click="savePerm">保存</el-button>
         </div>
+    </el-dialog>
+
+    <!-- 提醒与通知设置 -->
+    <el-dialog title="提醒与通知" :visible.sync="notifySettingsVisible" width="520px"
+               custom-class="notify-settings-dlg" append-to-body>
+        <div class="notify-settings-card">
+            <div class="notify-settings-row">
+                <div class="notify-settings-info">
+                    <b>桌面通知</b>
+                    <span>页面在后台时，AI 任务完成、文件传输完成或长命令结束会发送系统通知。权限：{{ notifyPermissionText() }}</span>
+                </div>
+                <el-switch v-model="notifySettings.desktop" size="mini"
+                           @change="onNotifyDesktopChange"></el-switch>
+            </div>
+            <div class="notify-settings-row">
+                <div class="notify-settings-info">
+                    <b>提示音</b>
+                    <span>后台任务完成时播放一声轻提示；浏览器可能要求先在本页有过点击操作</span>
+                </div>
+                <el-switch v-model="notifySettings.sound" size="mini"
+                           @change="onNotifySoundChange"></el-switch>
+            </div>
+            <div class="notify-settings-row">
+                <div class="notify-settings-info">
+                    <b>关闭标签前确认</b>
+                    <span>标签里还有命令运行、AI 任务或未完成传输时，关闭前先确认，避免误断会话</span>
+                </div>
+                <el-switch v-model="notifySettings.confirmClose" size="mini"
+                           @change="saveNotifySettings"></el-switch>
+            </div>
+        </div>
+        <div class="notify-settings-foot">
+            <el-button size="mini" @click="testNotify">测试通知</el-button>
+            <span>只有页面在后台时才会打扰你；切回页面后不会重复提醒。</span>
+        </div>
+        <span slot="footer">
+            <el-button size="small" type="primary" @click="notifySettingsVisible = false">完成</el-button>
+        </span>
+    </el-dialog>
+
+    <!-- 上传同名文件冲突：逐项选择覆盖 / 跳过 / 自动重命名 -->
+    <el-dialog title="同名文件冲突" :visible.sync="uploadConflict.visible" width="720px" top="8vh"
+               custom-class="upload-conflict-dlg" :close-on-click-modal="false" append-to-body
+               :before-close="cancelUploadConflict">
+        <div class="upload-conflict">
+            <div class="upload-conflict-head">
+                <i class="el-icon-warning-outline"></i>
+                <div>
+                    <b>目标目录中已有 {{ uploadConflict.items.length }} 个同名项目</b>
+                    <span class="upload-conflict-dir">{{ uploadConflict.dir }}</span>
+                </div>
+            </div>
+            <div class="upload-conflict-bulk">
+                <span>全部设为</span>
+                <el-button size="mini" @click="setAllUploadConflict('overwrite')">覆盖</el-button>
+                <el-button size="mini" @click="setAllUploadConflict('skip')">跳过</el-button>
+                <el-button size="mini" @click="setAllUploadConflict('rename')">自动重命名</el-button>
+            </div>
+            <div class="upload-conflict-list">
+                <div v-for="it in uploadConflict.items" :key="it.relativePath" class="upload-conflict-item">
+                    <div class="upload-conflict-main">
+                        <div class="upload-conflict-name" :title="it.relativePath">{{ it.relativePath }}</div>
+                        <div class="upload-conflict-meta">
+                            <template v-if="it.dir">服务器上是同名文件夹</template>
+                            <template v-else>
+                                服务器 {{ fmtSize(it.size) }} · 本次 {{ fmtSize(it.newSize) }}
+                                <span v-if="it.sameSize" class="upload-conflict-same">大小相同</span>
+                            </template>
+                        </div>
+                    </div>
+                    <el-radio-group v-model="it.action" size="mini">
+                        <el-radio-button label="overwrite">覆盖</el-radio-button>
+                        <el-radio-button label="skip">跳过</el-radio-button>
+                        <el-radio-button label="rename">自动重命名</el-radio-button>
+                    </el-radio-group>
+                </div>
+            </div>
+            <div class="upload-conflict-note">
+                覆盖会替换服务器上的同名项目；自动重命名会生成「name (2).ext」，原文件保持不变；跳过不会写入任何内容。
+            </div>
+        </div>
+        <span slot="footer">
+            <el-button size="small" @click="cancelUploadConflict">取消上传</el-button>
+            <el-button size="small" type="primary" @click="confirmUploadConflict">按所选策略继续</el-button>
+        </span>
     </el-dialog>
 
     <!-- 下载到本机：结果汇总 -->

@@ -49,7 +49,8 @@ public class TransferService {
 
     /** 开始或恢复一个上传任务；返回上传 id 与服务端已收到的字节数 */
     public Map<String, Object> init(String sessionId, String dirPath, String name,
-                                    String relativePath, long size, String uploadId) throws Exception {
+                                    String relativePath, long size, String uploadId,
+                                    String conflictPolicy) throws Exception {
         if (sessionId == null || sessionId.trim().isEmpty()) {
             throw new IllegalArgumentException("缺少会话");
         }
@@ -62,6 +63,7 @@ public class TransferService {
         if (size < 0 || size > MAX_UPLOAD_BYTES) {
             throw new IllegalArgumentException("文件大小超出限制");
         }
+        String policy = SftpService.normalizeConflictPolicy(conflictPolicy);
 
         UploadTask task = uploadId == null || uploadId.trim().isEmpty()
                 ? null : tasks.get(uploadId.trim());
@@ -70,6 +72,7 @@ public class TransferService {
                     || !task.name.equals(safeName) || task.size != size) {
                 throw new IllegalArgumentException("上传任务参数不一致，请重新开始");
             }
+            task.conflictPolicy = policy;
             long offset = Files.exists(task.temp) ? Files.size(task.temp) : 0L;
             task.currentSize = offset;
             return result(task, offset);
@@ -80,7 +83,7 @@ public class TransferService {
         Files.deleteIfExists(temp);
         Files.createFile(temp);
         restrictToOwner(temp);
-        UploadTask created = new UploadTask(id, sessionId, dirPath, safeName, relative, size, temp);
+        UploadTask created = new UploadTask(id, sessionId, dirPath, safeName, relative, size, temp, policy);
         tasks.put(id, created);
         return result(created, 0L);
     }
@@ -128,9 +131,12 @@ public class TransferService {
             }
         }
         String target = join(task.dir, task.relativePath);
+        SftpService.UploadResult result;
         try {
-            sftp.putLocalFile(task.sessionId, task.dir, task.relativePath, task.temp);
-            audit.record("FILE_UPLOAD", target, "OK", task.size + " bytes");
+            result = sftp.putLocalFileWithPolicy(task.sessionId, task.dir, task.relativePath,
+                    task.temp, task.conflictPolicy);
+            audit.record("FILE_UPLOAD", result.path, result.skipped ? "SKIP" : "OK",
+                    result.skipped ? "同名文件，已跳过" : task.size + " bytes");
         } catch (Exception e) {
             audit.record("FILE_UPLOAD", target, "FAIL", e.getMessage());
             throw e;
@@ -138,11 +144,13 @@ public class TransferService {
             Files.deleteIfExists(task.temp);
             tasks.remove(task.id);
         }
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("path", target);
-        result.put("size", task.size);
-        result.put("name", task.name);
-        return result;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("path", result.path);
+        out.put("size", task.size);
+        out.put("name", result.name);
+        out.put("skipped", result.skipped);
+        out.put("renamed", result.renamed);
+        return out;
     }
 
     public void abort(String uploadId) {
@@ -254,10 +262,11 @@ public class TransferService {
         final String relativePath;
         final long size;
         final Path temp;
+        volatile String conflictPolicy;
         long currentSize;
 
         UploadTask(String id, String sessionId, String dir, String name,
-                   String relativePath, long size, Path temp) {
+                   String relativePath, long size, Path temp, String conflictPolicy) {
             this.id = id;
             this.sessionId = sessionId;
             this.dir = dir;
@@ -265,6 +274,7 @@ public class TransferService {
             this.relativePath = relativePath;
             this.size = size;
             this.temp = temp;
+            this.conflictPolicy = conflictPolicy;
         }
     }
 }

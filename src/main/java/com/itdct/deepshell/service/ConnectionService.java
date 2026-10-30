@@ -23,16 +23,19 @@ public class ConnectionService {
     private final CommonDirRepository commonDirRepo;
     private final PortForwardRuleRepository portForwardRepo;
     private final CryptoService cryptoService;
+    private final GatewayEndpointService gatewayService;
 
     public ConnectionService(SshConnectionRepository repo, ConnFolderRepository folderRepo,
                              AiConversationRepository aiConvRepo, CommonDirRepository commonDirRepo,
-                             PortForwardRuleRepository portForwardRepo, CryptoService cryptoService) {
+                             PortForwardRuleRepository portForwardRepo, CryptoService cryptoService,
+                             GatewayEndpointService gatewayService) {
         this.repo = repo;
         this.folderRepo = folderRepo;
         this.aiConvRepo = aiConvRepo;
         this.commonDirRepo = commonDirRepo;
         this.portForwardRepo = portForwardRepo;
         this.cryptoService = cryptoService;
+        this.gatewayService = gatewayService;
     }
 
     public List<SshConnection> list() {
@@ -75,6 +78,7 @@ public class ConnectionService {
         c.setProxyUsername(src.getProxyUsername());
         c.setProxyPasswordEnc(src.getProxyPasswordEnc());
         c.setJumpConnectionId(src.getJumpConnectionId());
+        c.setGatewayId(src.getGatewayId());
         c.setPersistSession(src.getPersistSession());
         c.setFolderId(src.getFolderId());
         c.setSortOrder(src.getSortOrder());
@@ -229,6 +233,14 @@ public class ConnectionService {
             validateJumpChain(jumpId, selfId);
         }
         c.setJumpConnectionId(jumpId);
+        Long gatewayId = f.getGatewayId();
+        if (gatewayId != null) {
+            gatewayService.get(gatewayId);
+            if (!"NONE".equals(proxyType)) {
+                throw new IllegalArgumentException("使用执行网关时不能同时设置代理；如需代理请在网关侧配置出口");
+            }
+        }
+        c.setGatewayId(gatewayId);
         if (f.getPersistSession() != null) {
             c.setPersistSession(f.getPersistSession());
         } else if (c.getPersistSession() == null) {

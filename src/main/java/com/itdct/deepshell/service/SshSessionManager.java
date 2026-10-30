@@ -3,6 +3,7 @@ package com.itdct.deepshell.service;
 import com.itdct.deepshell.dto.ConnectionForm;
 import com.itdct.deepshell.dto.StatsSnapshot;
 import com.itdct.deepshell.entity.SshConnection;
+import com.itdct.deepshell.entity.GatewayEndpoint;
 import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.ChannelShell;
@@ -62,17 +63,23 @@ public class SshSessionManager {
     private final CryptoService cryptoService;
     private final HostKeyService hostKeyService;
     private final ObjectProvider<PortForwardService> portForwardProvider;
+    private final GatewayEndpointService gatewayService;
+    private final GatewayTunnelService gatewayTunnels;
     private final Map<String, SshSession> sessions = new ConcurrentHashMap<>();
     /** 浏览器侧会话键 -> 服务端会话 id，用于 F5 / 断网后重新附着 */
     private final Map<String, String> bindings = new ConcurrentHashMap<>();
 
     public SshSessionManager(ConnectionService connectionService, CryptoService cryptoService,
                              HostKeyService hostKeyService,
-                             ObjectProvider<PortForwardService> portForwardProvider) {
+                             ObjectProvider<PortForwardService> portForwardProvider,
+                             GatewayEndpointService gatewayService,
+                             GatewayTunnelService gatewayTunnels) {
         this.connectionService = connectionService;
         this.cryptoService = cryptoService;
         this.hostKeyService = hostKeyService;
         this.portForwardProvider = portForwardProvider;
+        this.gatewayService = gatewayService;
+        this.gatewayTunnels = gatewayTunnels;
     }
 
     public static class SshSession {
@@ -97,6 +104,9 @@ public class SshSessionManager {
         /** 包含跳板机在内的全部 SSH 传输会话（目标在最后） */
         @Getter
         private final List<Session> transportSessions;
+        /** 建链时打开的执行网关隧道，随会话/临时连接一起关闭 */
+        @Getter
+        private final List<GatewayTunnelService.Tunnel> gatewayTunnels;
         private final OutputStream stdin;
         private final InputStream stdout;
         @Getter
@@ -135,7 +145,8 @@ public class SshSessionManager {
 
         SshSession(Long connectionId, String name, String clientKey,
                    Session jsch, Channel channel, String tmuxName, String notice,
-                   List<Session> transportSessions) throws Exception {
+                   List<Session> transportSessions,
+                   List<GatewayTunnelService.Tunnel> gatewayTunnels) throws Exception {
             this.connectionId = connectionId;
             this.name = name;
             this.clientKey = clientKey;
@@ -144,6 +155,7 @@ public class SshSessionManager {
             this.tmuxName = tmuxName;
             this.notice = notice;
             this.transportSessions = transportSessions;
+            this.gatewayTunnels = gatewayTunnels;
             this.stdin = channel.getOutputStream();
             this.stdout = channel.getInputStream();
         }
@@ -319,13 +331,16 @@ public class SshSessionManager {
         @Getter
         private final ChannelSftp channel;
         private final List<Session> ownedSessions;
+        private final List<GatewayTunnelService.Tunnel> ownedTunnels;
         @Getter
         private final boolean reused;
         private final AtomicBoolean closed = new AtomicBoolean();
 
-        SftpHandle(ChannelSftp channel, List<Session> ownedSessions, boolean reused) {
+        SftpHandle(ChannelSftp channel, List<Session> ownedSessions,
+                   List<GatewayTunnelService.Tunnel> ownedTunnels, boolean reused) {
             this.channel = channel;
             this.ownedSessions = ownedSessions;
+            this.ownedTunnels = ownedTunnels;
             this.reused = reused;
         }
 
@@ -349,6 +364,7 @@ public class SshSessionManager {
                     // 忽略关闭异常
                 }
             }
+            closeTunnels(ownedTunnels);
         }
     }
 
@@ -363,7 +379,7 @@ public class SshSessionManager {
         SshSession live = findLiveSession(connectionId);
         if (live != null) {
             try {
-                return new SftpHandle(openSftpChannel(live.getJsch()), null, true);
+                return new SftpHandle(openSftpChannel(live.getJsch()), null, null, true);
             } catch (Exception e) {
                 log.debug("复用会话打开 SFTP 失败，改为新建连接 connection={}: {}",
                         connectionId, e.getMessage());
@@ -372,9 +388,10 @@ public class SshSessionManager {
         SshConnection cfg = connectionService.get(connectionId);
         Transport transport = connectHops(hopsForSaved(cfg));
         try {
-            return new SftpHandle(openSftpChannel(transport.target), transport.sessions, false);
+            return new SftpHandle(openSftpChannel(transport.target), transport.sessions,
+                    transport.tunnels, false);
         } catch (Exception e) {
-            disconnectAll(transport.sessions);
+            closeTransport(transport);
             throw e;
         }
     }
@@ -399,6 +416,17 @@ public class SshSessionManager {
         }
         for (SshSession s : sessions.values()) {
             if (!s.isClosed() && Objects.equals(s.getConnectionId(), connectionId)) {
+                out.add(s);
+            }
+        }
+        return out;
+    }
+
+    /** 当前进程内所有存活的交互会话（MCP 工具展示 / 排查用）。 */
+    public List<SshSession> liveSessions() {
+        List<SshSession> out = new ArrayList<>();
+        for (SshSession s : sessions.values()) {
+            if (!s.isClosed()) {
                 out.add(s);
             }
         }
@@ -512,7 +540,7 @@ public class SshSessionManager {
             return failure(ConnectionDiagnostics.from(e, "目标主机"));
         } finally {
             if (transport != null) {
-                disconnectAll(transport.sessions);
+                closeTransport(transport);
             }
         }
     }
@@ -542,11 +570,14 @@ public class SshSessionManager {
         Integer proxyPort;
         String proxyUsername;
         String proxyPassword;
+        /** 非空表示该跳不是 SSH 主机，而是执行网关：为下一跳的 host:port 开一条 TCP 隧道 */
+        GatewayEndpoint gateway;
         boolean target;
     }
 
     private static class Transport {
         final List<Session> sessions = new ArrayList<>();
+        final List<GatewayTunnelService.Tunnel> tunnels = new ArrayList<>();
         Session target;
     }
 
@@ -555,6 +586,21 @@ public class SshSessionManager {
         chain.add(hopFromSaved(cfg, true));
         appendJumpChain(chain, cfg.getJumpConnectionId(), cfg.getId());
         Collections.reverse(chain);
+        return prependGateway(chain, cfg.getGatewayId());
+    }
+
+    /** 网关始终位于链路最外层：先连网关，再由它拨号到原来的第一跳 */
+    private List<Hop> prependGateway(List<Hop> chain, Long gatewayId) {
+        if (gatewayId == null || chain.isEmpty()) {
+            return chain;
+        }
+        GatewayEndpoint gateway = gatewayService.get(gatewayId);
+        Hop hop = new Hop();
+        hop.gateway = gateway;
+        hop.name = gateway.getName();
+        hop.host = chain.get(0).host;
+        hop.port = chain.get(0).port;
+        chain.add(0, hop);
         return chain;
     }
 
@@ -615,7 +661,7 @@ public class SshSessionManager {
         chain.add(target);
         appendJumpChain(chain, f.getJumpConnectionId(), saved == null ? null : saved.getId());
         Collections.reverse(chain);
-        return chain;
+        return prependGateway(chain, f.getGatewayId());
     }
 
     private Hop hopFromSaved(SshConnection c, boolean target) {
@@ -659,9 +705,9 @@ public class SshSessionManager {
     }
 
     /**
-     * 依次建立整条链路：外层（跳板机）先连，随后在上一跳开本地端口转发，
+     * 依次建立整条链路：外层（网关 / 跳板机）先连，随后在上一跳开本地端口转发，
      * 下一跳通过 127.0.0.1:临时端口接入，最终返回目标会话。
-     * 代理只作用于链路最外层连接。
+     * 代理只作用于链路最外层 SSH 连接；使用执行网关时不再叠加代理。
      */
     private Transport connectHops(List<Hop> hops) throws Exception {
         Transport t = new Transport();
@@ -669,9 +715,25 @@ public class SshSessionManager {
             int nextLocalPort = -1;
             for (int i = 0; i < hops.size(); i++) {
                 Hop h = hops.get(i);
-                boolean outermost = i == 0;
-                String dialHost = outermost ? h.host : "127.0.0.1";
-                int dialPort = outermost ? h.port : nextLocalPort;
+                if (h.gateway != null) {
+                    Hop next = i + 1 < hops.size() ? hops.get(i + 1) : null;
+                    if (next == null) {
+                        throw new IllegalArgumentException("执行网关缺少目标主机");
+                    }
+                    GatewayTunnelService.Tunnel tunnel;
+                    try {
+                        tunnel = gatewayTunnels.open(h.gateway, next.host, next.port);
+                    } catch (Exception e) {
+                        throw new ConnectionFailure(ConnectionDiagnostics.gateway(
+                                h.gateway.getName(), e.getMessage()));
+                    }
+                    t.tunnels.add(tunnel);
+                    nextLocalPort = tunnel.localPort();
+                    continue;
+                }
+                boolean direct = nextLocalPort < 0;
+                String dialHost = direct ? h.host : "127.0.0.1";
+                int dialPort = direct ? h.port : nextLocalPort;
 
                 JSch jsch = new JSch();
                 if ("KEY".equalsIgnoreCase(h.authType)) {
@@ -694,7 +756,7 @@ public class SshSessionManager {
                     }
                     session.setPassword(h.password);
                 }
-                if (outermost) {
+                if (direct) {
                     applyProxy(session, h);
                 }
                 Properties config = new Properties();
@@ -727,7 +789,7 @@ public class SshSessionManager {
             t.target = t.sessions.get(t.sessions.size() - 1);
             return t;
         } catch (Exception e) {
-            disconnectAll(t.sessions);
+            closeTransport(t);
             throw e;
         }
     }
@@ -771,6 +833,28 @@ public class SshSessionManager {
             }
         }
         sessions.clear();
+    }
+
+    private static void closeTransport(Transport transport) {
+        if (transport == null) {
+            return;
+        }
+        disconnectAll(transport.sessions);
+        closeTunnels(transport.tunnels);
+    }
+
+    private static void closeTunnels(List<GatewayTunnelService.Tunnel> tunnels) {
+        if (tunnels == null) {
+            return;
+        }
+        for (GatewayTunnelService.Tunnel tunnel : tunnels) {
+            try {
+                tunnel.close();
+            } catch (Exception ignore) {
+                // 忽略关闭异常
+            }
+        }
+        tunnels.clear();
     }
 
     private static String friendlyError(JSchException e) {
@@ -843,7 +927,7 @@ public class SshSessionManager {
             }
 
             SshSession s = new SshSession(connectionId, cfg.getName(), clientKey, session,
-                    channel, tmuxName, notice, transport.sessions);
+                    channel, tmuxName, notice, transport.sessions, transport.tunnels);
             sessions.put(s.getId(), s);
             startPump(s);
             if (tmuxName == null) {
@@ -862,7 +946,7 @@ public class SshSessionManager {
             return s;
         } catch (Exception e) {
             if (transport != null) {
-                disconnectAll(transport.sessions);
+                closeTransport(transport);
             }
             throw e;
         }
@@ -1118,7 +1202,7 @@ public class SshSessionManager {
             return parseWrappedOutput(execRaw(transport.target, "saved-" + connectionId,
                     "exec 2>&1\n" + command, timeoutMs, maxBytes, () -> false));
         } finally {
-            disconnectAll(transport.sessions);
+            closeTransport(transport);
         }
     }
 
@@ -1406,6 +1490,7 @@ public class SshSessionManager {
         } catch (Exception ignore) {
         }
         disconnectAll(s.getTransportSessions());
+        closeTunnels(s.getGatewayTunnels());
         try {
             PortForwardService pf = portForwardProvider.getIfAvailable();
             if (pf != null) {

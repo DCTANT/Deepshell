@@ -83,7 +83,8 @@ if (-not $SkipMaven) {
         Fail '未找到 mvn。请把 Maven 加入 PATH，或用 -MavenCmd 指定 mvn.cmd 路径；已构建过可加 -SkipMaven。'
     }
     Info "Maven: $MavenCmd"
-    & $MavenCmd -B -DskipTests package
+    # 先 clean：插件 ZIP 已移出主仓库，避免旧的 target/classes/desktop-plugins 被重新打进 jar
+    & $MavenCmd -B -DskipTests clean package
     if ($LASTEXITCODE -ne 0) { Fail "Maven 构建失败（退出码 $LASTEXITCODE）" }
 }
 

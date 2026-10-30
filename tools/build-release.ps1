@@ -40,7 +40,7 @@ if (-not (Test-Path $portableScript)) { Fail "缺少 $portableScript" }
 
 $classicZip = Join-Path $repo "target\deepshell-$version.zip"
 if ($SkipMaven -and -not (Test-Path $classicZip)) {
-    Fail "未找到 $classicZip。使用 -SkipMaven 时请先执行 mvn -DskipTests package"
+    Fail "未找到 $classicZip。使用 -SkipMaven 时请先执行 mvn -DskipTests clean package"
 }
 
 $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $portableScript)
