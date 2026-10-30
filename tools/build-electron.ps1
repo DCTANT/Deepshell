@@ -123,6 +123,7 @@ Rename-Item (Join-Path $staging 'electron.exe') 'DeepShell.exe'
 $appDir = Join-Path $staging 'resources\app'
 New-Item -ItemType Directory -Force -Path (Join-Path $appDir 'assets') | Out-Null
 Copy-Item (Join-Path $electronDir 'main.js') $appDir -Force
+Copy-Item (Join-Path $electronDir 'preload.js') $appDir -Force
 Copy-Item (Join-Path $electronDir 'assets\*') (Join-Path $appDir 'assets') -Force
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)

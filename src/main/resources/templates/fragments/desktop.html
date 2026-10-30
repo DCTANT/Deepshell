@@ -1949,6 +1949,11 @@
                 <span class="dsk-clock-time">{{ desktopClockTime }}</span>
                 <span class="dsk-clock-date" v-if="desktop.clockShowDate">{{ desktopClockDate }}</span>
             </div>
+            <button class="dsk-fullscreen-btn" :class="{ active: desktop.fullscreen }"
+                    :title="desktop.fullscreen ? '退出全屏 (Alt+Enter)' : '全屏 (Alt+Enter / F11)'"
+                    @click.stop="toggleFullscreen">
+                <i class="el-icon-full-screen"></i>
+            </button>
             <button class="dsk-show-desktop" title="显示桌面 / 还原所有窗口" @click.stop="toggleShowDesktop">
                 <i class="el-icon-s-fold"></i>
             </button>
@@ -2729,7 +2734,7 @@
                                 </div>
                             </div>
                             <div class="dsk-set-note">
-                                固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜
+                                固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ Alt+Enter 或 F11 全屏 ｜ 中键点击标签关闭 ｜
                                 新标签图片预览 ← → 切换、R 旋转；音频预览 空格播放 / 暂停、← → 快退 / 快进、↑ ↓ 音量；视频预览 空格播放 / 暂停、← → 快进 / 快退；Esc 关闭标签页
                             </div>
                         </template>

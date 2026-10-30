@@ -2429,6 +2429,32 @@
     color: #e8f1ff;
 }
 
+.dsk-fullscreen-btn {
+    width: 30px;
+    height: 36px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: #93a2b8;
+    cursor: pointer;
+}
+
+.dsk-fullscreen-btn:hover {
+    background: #273246;
+    border-color: #3a4b68;
+    color: #e8f1ff;
+}
+
+.dsk-fullscreen-btn.active {
+    background: #273246;
+    border-color: #3a4b68;
+    color: #65e6ff;
+}
+
 /* ---------- 开始菜单 ---------- */
 .dsk-start {
     position: absolute;
@@ -5882,6 +5908,17 @@
 }
 
 .ai-desktop .dsk-show-desktop:hover {
+    background: var(--dsk-taskbar-hover);
+    border-color: var(--dsk-taskbar-line);
+    color: var(--dsk-taskbar-fg);
+}
+
+.ai-desktop .dsk-fullscreen-btn {
+    color: var(--dsk-taskbar-icon, var(--dsk-taskbar-fg-dim));
+}
+
+.ai-desktop .dsk-fullscreen-btn:hover,
+.ai-desktop .dsk-fullscreen-btn.active {
     background: var(--dsk-taskbar-hover);
     border-color: var(--dsk-taskbar-line);
     color: var(--dsk-taskbar-fg);

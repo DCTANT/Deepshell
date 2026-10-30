@@ -1346,7 +1346,7 @@
             </el-popover>
             <i v-if="context !== 'window'" class="el-icon-edit cmd-tool" title="编辑当前连接"
                @click="$root.editCurrentConnection()"></i>
-            <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏"
+            <i v-if="context !== 'window'" class="el-icon-full-screen cmd-tool" title="全屏 (Alt+Enter)"
                @click="$root.toggleFullscreen()"></i>
             <i v-if="!localTerminal" class="el-icon-guide cmd-tool" title="端口转发" @click="$root.openPortForwards(tab)"></i>
         </span>

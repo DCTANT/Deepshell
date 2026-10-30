@@ -4655,6 +4655,7 @@ new Vue({
             notifications: [],
             notifUnread: 0,
             notifOpen: false,
+            fullscreen: false,
             settingsVisible: false,
             settingsSection: 'appearance',
             compressSub: { visible: false, x: 0, y: 0 },
@@ -26052,13 +26053,22 @@ new Vue({
             this.editConnFromDialog(t.connId);
         },
         toggleFullscreen: function () {
+            if (this.hasDesktopHost()) {
+                window.deepShellHost.toggleFullscreen().catch(function () { /* ignore */ });
+                return;
+            }
             if (!document.fullscreenElement) {
                 if (document.documentElement.requestFullscreen) {
-                    document.documentElement.requestFullscreen().catch(function () { /* ignore */ });
+                    document.documentElement.requestFullscreen().catch(function () {
+                        ELEMENT.Message.warning('当前环境不允许全屏，请检查权限设置');
+                    });
                 }
             } else if (document.exitFullscreen) {
                 document.exitFullscreen().catch(function () { /* ignore */ });
             }
+        },
+        hasDesktopHost: function () {
+            return !!(window.deepShellHost && typeof window.deepShellHost.toggleFullscreen === 'function');
         },
         findNext: function (tab, text, incremental, opts) {
             var t = tab || this.activeTab;
@@ -26478,6 +26488,29 @@ new Vue({
             self.fitActive();
             self.fitDesktopWindows();
         });
+        // 全屏状态同步：按钮高亮、Esc 退出、F11 后刷新终端尺寸
+        var syncFullscreenState = function () {
+            self.desktop.fullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            self.$nextTick(function () {
+                self.fitActive();
+                self.fitDesktopWindows();
+            });
+        };
+        if (self.hasDesktopHost()) {
+            // Electron 壳：全屏由主进程切换原生窗口全屏，状态通过 IPC 回传
+            var syncHostFullscreen = function (value) {
+                self.desktop.fullscreen = !!value;
+                self.$nextTick(function () {
+                    self.fitActive();
+                    self.fitDesktopWindows();
+                });
+            };
+            window.deepShellHost.isFullscreen().then(syncHostFullscreen).catch(function () { /* ignore */ });
+            window.deepShellHost.onFullscreenChange(syncHostFullscreen);
+        } else {
+            document.addEventListener('fullscreenchange', syncFullscreenState);
+            document.addEventListener('webkitfullscreenchange', syncFullscreenState);
+        }
         // 系统文件拖入浏览器窗口 → 上传到当前 SFTP 目录（仅识别 Files 类型，不影响内部拖拽）
         window.addEventListener('dragenter', function (e) {
             self.onWindowDragEnter(e);
@@ -26609,6 +26642,16 @@ new Vue({
                 }
             }
         });
+        // 全屏快捷键：Alt+Enter 全局切换（浏览器版）；Electron 桌面版的 Alt+Enter / F11 由主进程接管
+        // 注册在桌面快捷键之前，并用 stopImmediatePropagation 避免 Alt+Enter 同时触发桌面「打开」
+        document.addEventListener('keydown', function (e) {
+            var isEnter = e.key === 'Enter' || e.keyCode === 13;
+            if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && isEnter) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                self.toggleFullscreen();
+            }
+        }, true);
         // 可视化桌面快捷键：F2 重命名 / Delete 删除 / Enter 打开 / Backspace 上级 / F5 刷新 / Ctrl+A 全选
         // 捕获阶段注册，避免内层元素拦截或被浏览器默认行为（F2、F5、Alt+←→）抢走
         document.addEventListener('keydown', function (e) {

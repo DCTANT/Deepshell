@@ -284,7 +284,7 @@
             <el-switch v-model="hotkeySettings.escClose" size="mini"></el-switch>
         </div>
         <el-divider></el-divider>
-        <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
+        <div class="set-hint">固定快捷键：Enter 发送 ｜ Alt / ↑↓ 历史命令 ｜ Alt+Enter 或 F11 全屏 ｜ 中键点击标签关闭 ｜ 标签可拖拽排序</div>
     </el-dialog>
 
     <!-- 背景图片设置（终端 / AI 桌面共用弹窗） -->
@@ -1138,6 +1138,7 @@
                 <ul>
                     <li>本手册可从<b>工作台右上角菜单 → 帮助 → 帮助手册</b>，或<b>可视化桌面开始菜单 → 帮助手册</b>随时打开；在桌面内打开不会退出当前桌面</li>
                     <li><b>桌面窗口切换</b>：<b>Alt+Tab</b> 循环切换窗口，<b>Shift+Alt+Tab</b> 反向切换；部分操作系统会拦截 Alt+Tab，此时可用 <b>Alt+`</b>（反引号）作为网页内替代</li>
+                    <li><b>全屏</b>：<b>Alt+Enter</b> 切换全屏 / 退出全屏（桌面任务栏右侧也有全屏按钮）；Electron 桌面版同样支持 <b>F11</b>，浏览器版请使用浏览器的原生 F11 全屏</li>
                     <li><b>视频缩略图</b>：可视化桌面与资源管理器的大 / 中图标视图会为视频显示首帧缩略图；缩略图由浏览器从视频流抓取，首次加载稍慢，超大或编码不支持的视频会回退为文件图标，双击视频仍可播放</li>
                 </ul>
             </div>

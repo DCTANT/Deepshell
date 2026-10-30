@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, session, ipcMain } = require('electron');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -189,6 +189,31 @@ function startJava(port, dataDir) {
     });
 }
 
+function toggleWindowFullscreen(win) {
+    if (!win || win.isDestroyed()) {
+        return false;
+    }
+    const next = !win.isFullScreen();
+    win.setFullScreen(next);
+    return next;
+}
+
+// Windows 上 setFullScreen 的事件回调里 isFullScreen() 仍是切换前的值，这里直接传目标状态
+function notifyFullscreen(fullscreen) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('deepshell:fullscreen', !!fullscreen);
+    }
+}
+
+ipcMain.handle('deepshell:toggle-fullscreen', event => {
+    return toggleWindowFullscreen(BrowserWindow.fromWebContents(event.sender));
+});
+
+ipcMain.handle('deepshell:is-fullscreen', event => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return !!(win && !win.isDestroyed() && win.isFullScreen());
+});
+
 function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1440,
@@ -201,6 +226,7 @@ function createMainWindow() {
         icon: iconPath(),
         autoHideMenuBar: true,
         webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
@@ -214,6 +240,8 @@ function createMainWindow() {
         mainWindow = null;
         app.quit();
     });
+    mainWindow.on('enter-full-screen', () => notifyFullscreen(true));
+    mainWindow.on('leave-full-screen', () => notifyFullscreen(false));
 
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         if (isLocalUrl(url)) {
@@ -232,6 +260,13 @@ function createMainWindow() {
 
     mainWindow.webContents.on('before-input-event', (event, input) => {
         const key = (input.key || '').toLowerCase();
+        // 应用菜单已移除，Chromium 也不会处理 F11；Alt+Enter / F11 全屏交给主进程切换原生窗口全屏
+        if (input.key === 'F11'
+                || (input.alt && !input.control && !input.shift && !input.meta && key === 'enter')) {
+            event.preventDefault();
+            toggleWindowFullscreen(mainWindow);
+            return;
+        }
         if (input.key === 'F12' || (input.control && input.shift && key === 'i')) {
             mainWindow.webContents.toggleDevTools();
             event.preventDefault();
