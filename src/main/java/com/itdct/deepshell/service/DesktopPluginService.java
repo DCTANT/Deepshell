@@ -29,9 +29,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -71,7 +73,21 @@ public class DesktopPluginService {
             "https://gitee.com/decentant/deepshell-plugin/raw/master/catalog.json";
     private static final long CATALOG_TTL_MS = 10L * 60 * 1000;
     private static final long CATALOG_MAX_BYTES = 2L * 1024 * 1024;
+    private static final Map<String, String> LEGACY_PLUGIN_IDS = new HashMap<>();
+
+    static {
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.redis", "com.deepshell.redis");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.elasticsearch", "com.deepshell.elasticsearch");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.kafka", "com.deepshell.kafka");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.mongodb", "com.deepshell.mongodb");
+        LEGACY_PLUGIN_IDS.put("com.itdct.deepshell.plugin.containers", "com.deepshell.containers");
+    }
+
     private static final Set<String> BUILTIN_IDS = new HashSet<>(Arrays.asList(
+            "com.itdct.deepshell.plugin.redis", "com.itdct.deepshell.plugin.elasticsearch",
+            "com.itdct.deepshell.plugin.kafka", "com.itdct.deepshell.plugin.mongodb",
+            "com.itdct.deepshell.plugin.containers",
+            // 旧版官方插件 ID 继续保留，避免被未签名插件占用；升级时自动迁移
             "com.deepshell.redis", "com.deepshell.elasticsearch",
             "com.deepshell.kafka", "com.deepshell.mongodb",
             "com.deepshell.containers"));
@@ -157,7 +173,9 @@ public class DesktopPluginService {
             throw new IllegalArgumentException("插件包不能超过 50MB");
         }
         try (InputStream in = zip.getInputStream()) {
-            return installStream(in, zip.getSize(), false, beforeReplace);
+            PluginInfo info = installStream(in, zip.getSize(), false, beforeReplace);
+            migrateLegacyPlugin(info.getId(), beforeReplace);
+            return info;
         }
     }
 
@@ -179,7 +197,9 @@ public class DesktopPluginService {
         try {
             zip = downloadZip(url, entry.sha256);
             try (InputStream in = Files.newInputStream(zip.file)) {
-                return installStream(in, zip.size, true, beforeReplace);
+                PluginInfo info = installStream(in, zip.size, true, beforeReplace);
+                migrateLegacyPlugin(info.getId(), beforeReplace);
+                return info;
             }
         } finally {
             if (zip != null) {
@@ -200,21 +220,90 @@ public class DesktopPluginService {
         List<PluginInfo> installedList = list();
         List<BuiltinPluginInfo> out = new ArrayList<>();
         for (CatalogEntry e : requiredCatalog(refresh)) {
-            PluginInfo installed = null;
-            for (PluginInfo p : installedList) {
-                if (e.id.equals(p.getId())) {
-                    installed = p;
-                    break;
+            PluginInfo installed = findPlugin(installedList, e.id);
+            boolean legacyInstalled = false;
+            if (installed == null) {
+                String legacyId = LEGACY_PLUGIN_IDS.get(e.id);
+                if (legacyId != null) {
+                    installed = findPlugin(installedList, legacyId);
+                    legacyInstalled = installed != null;
                 }
             }
             boolean officialInstalled = installed != null && installed.isVerified();
             String installedVersion = installed == null ? "" : installed.getVersion();
-            boolean updateAvailable = officialInstalled && versionGreater(e.version, installedVersion);
+            // 旧 ID 的已安装插件始终提示更新，安装后自动迁移数据并清理旧目录
+            boolean updateAvailable = officialInstalled
+                    && (legacyInstalled || versionGreater(e.version, installedVersion));
             out.add(new BuiltinPluginInfo(e.key, e.id, e.name, e.version, e.description,
                     e.author, e.icon, officialInstalled, installedVersion, updateAvailable,
                     true, e.hasBackend != null && e.hasBackend));
         }
         return out;
+    }
+
+    private static PluginInfo findPlugin(List<PluginInfo> plugins, String id) {
+        for (PluginInfo p : plugins) {
+            if (id.equals(p.getId())) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 官方插件 ID 从 com.deepshell.* 迁移到 com.itdct.deepshell.plugin.* 后，
+     * 安装新版本时迁移旧插件的连接配置并清理旧插件目录，避免用户重新填写密码。
+     */
+    private void migrateLegacyPlugin(String newId, Consumer<String> beforeReplace) {
+        String legacyId = LEGACY_PLUGIN_IDS.get(newId);
+        if (legacyId == null) {
+            return;
+        }
+        Path legacyDir = root.resolve(legacyId);
+        if (!Files.isDirectory(legacyDir)) {
+            try {
+                migrateLegacyData(newId, legacyId);
+            } catch (Exception e) {
+                log.warn("迁移旧插件数据 {} 失败: {}", legacyId, e.getMessage());
+            }
+            return;
+        }
+        try {
+            Manifest manifest = readManifest(legacyDir);
+            if (manifest.id == null || !legacyId.equals(manifest.id.trim())) {
+                return;
+            }
+            if (PluginSignatureService.verify(legacyDir).getStatus()
+                    != PluginSignatureService.Status.VERIFIED) {
+                log.warn("旧插件 {} 未通过官方验签，跳过自动清理", legacyId);
+                return;
+            }
+            if (beforeReplace != null) {
+                beforeReplace.accept(legacyId);
+            }
+            migrateLegacyData(newId, legacyId);
+            deleteTree(legacyDir);
+            audit.record("PLUGIN_MIGRATE", newId, "OK", legacyId + " -> " + newId);
+            log.info("已迁移旧插件 {} -> {}", legacyId, newId);
+        } catch (Exception e) {
+            log.warn("迁移旧插件 {} 失败: {}", legacyId, e.getMessage());
+        }
+    }
+
+    private void migrateLegacyData(String newId, String legacyId) throws Exception {
+        Path dataRoot = DataDir.root().resolve("plugin-data");
+        Path oldData = dataRoot.resolve(legacyId);
+        Path newData = dataRoot.resolve(newId);
+        if (!Files.isDirectory(oldData) || Files.exists(newData)) {
+            return;
+        }
+        Files.createDirectories(dataRoot);
+        try {
+            Files.move(oldData, newData, StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception atomicFailed) {
+            Files.move(oldData, newData);
+        }
+        log.info("已迁移插件数据 {} -> {}", oldData, newData);
     }
 
     private CatalogEntry findCatalogEntry(String key) {
