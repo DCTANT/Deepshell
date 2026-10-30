@@ -32,7 +32,7 @@
 
 - 新增 `electron/` 桌面壳：复用现有页面与 Java 后端，负责启动 Java、等待端口就绪、加载窗口并在关闭窗口时回收 Java 进程。
 - 关闭 Java 侧自动打开浏览器、托盘、协议注册与自动更新，避免与 Electron 重复。
-- 当前为开发版壳，尚未内置 JRE、安装包和自动更新；发布级安装包后续再补 jlink 运行时与签名。
+- 本次同时提供 **Windows x64 带壳版** `deepshell-1.8.0-electron-x64.zip`（Gitee 以分卷形式上传）：内置精简 Java 运行时，无需安装 JDK，解压后双击 `DeepShell.exe` 即可；关闭窗口即退出并停止本地服务。该包不参与应用内自动更新，升级时手动替换即可。
 
 ### 上传冲突策略、终端链接与任务提醒
 
@@ -48,7 +48,8 @@
 
 ## 升级说明
 
-- Windows 绿色版：下载 `deepshell-1.8.0-windows-x64-portable.zip`，可同时下载同名 `.sha256` 校验文件；解压后双击 `DeepShell.exe`。
+- Windows 绿色版：由于 Gitee 单附件限制 100MB，绿色版拆为 `deepshell-1.8.0-windows-x64-portable.zip.001`、`.002` 两个分卷。请把两个分卷和 `join-portable.cmd` 下载到同一目录，双击脚本自动合并、校验 SHA256 并解压；进入解压目录双击 `DeepShell.exe`。分卷未合并前不能直接解压。
 - 传统分发包：下载 `deepshell-1.8.0.zip`，需要本机安装 JDK 8+；Windows 双击 `start.cmd`，Linux 执行 `./start.sh`。
-- 应用内自动更新只接受带 `.sha256` 的绿色版 ZIP；升级会保留 `data/` 目录与 `application.yml`，不会影响连接、密码、插件和 AI 配置。
+- Electron 带壳版：拆为 `deepshell-1.8.0-electron-x64.zip.001`、`.002`、`.003` 三个分卷，连同 `join-electron.cmd` 下载到同一目录后双击脚本合并解压。内置 Java 运行时，无需安装 JDK；解压后双击 `DeepShell.exe`。数据保存在 `%APPDATA%\DeepShell\data`，关闭窗口即退出。
+- 应用内自动更新只接受带 `.sha256` 的单个绿色版 ZIP。本次绿色版改为分卷后，1.7.0 的应用内自动更新无法直接安装 1.8.0，请手动下载分卷升级；后续版本会恢复自动更新。手动升级保留 `data/` 目录与 `application.yml` 即可，不会影响连接、密码、插件和 AI 配置。
 - 容器与集群管理器安装或更新后需重启 DeepShell；Docker 功能需要 docker CLI，Kubernetes 功能需要 kubectl。
