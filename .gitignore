@@ -49,9 +49,6 @@ deepshell-plugin-private.pem
 .signing/
 *.signed.tmp
 
-### 插件构建中间产物
-plugin-src/*/backend/classes/
-
 ### Electron 桌面壳 ###
 electron/node_modules/
 electron/dist/

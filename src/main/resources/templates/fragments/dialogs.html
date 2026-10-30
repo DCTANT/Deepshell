@@ -1557,10 +1557,10 @@
             <span class="dim">ZIP 根目录需包含 plugin.json、入口 HTML 与图标</span>
         </div>
 
-        <div class="plugin-builtin" v-if="builtinAvailablePlugins.length">
+        <div class="plugin-builtin" v-if="builtinAvailablePlugins.length || pluginCatalogError">
             <div class="plugin-builtin-head">
-                <span>内置应用</span>
-                <em>由 DeepShell 提供 · 仅 AI 可视化桌面可用 · 支持安装与卸载</em>
+                <span>官方插件</span>
+                <em>来自 DeepShell 官方插件仓库 · 需联网下载 · 仅 AI 可视化桌面可用</em>
             </div>
             <div class="plugin-builtin-card" v-for="p in builtinAvailablePlugins" :key="'builtin-' + p.id">
                 <span class="plugin-builtin-icon">
@@ -1573,7 +1573,7 @@
                         <span class="plugin-builtin-ver">v{{ p.version }}</span>
                         <span class="plugin-sign-badge verified">官方签名</span>
                         <span v-if="p.hasBackend" class="plugin-backend-badge">含后端</span>
-                        <span class="plugin-builtin-tag">内置</span>
+                        <span class="plugin-builtin-tag">官方</span>
                     </div>
                     <div class="plugin-builtin-desc" :title="p.description">{{ p.description }}</div>
                     <div class="plugin-builtin-meta">
@@ -1585,6 +1585,12 @@
                 <el-button size="mini" type="primary"
                            :loading="pluginBuiltinInstalling === p.key"
                            @click="installBuiltinPlugin(p)">{{ p.updateAvailable ? '更新' : '安装' }}</el-button>
+            </div>
+            <div class="plugin-builtin-error" v-if="pluginCatalogError">
+                <i class="el-icon-warning-outline"></i>
+                <span>{{ pluginCatalogError }}</span>
+                <el-button size="mini" type="text" icon="el-icon-refresh"
+                           :loading="pluginBuiltinLoading" @click="refreshBuiltinPlugins">重试</el-button>
             </div>
         </div>
 
@@ -1620,7 +1626,7 @@
                 <el-button size="mini" type="text" class="danger-text" @click="deletePlugin(p)">卸载</el-button>
             </div>
             <div v-if="!pluginMgrLoading && !desktopPlugins.length" class="plugin-mgr-empty">
-                还没有安装插件。<template v-if="builtinAvailablePlugins.length">安装上方内置应用，</template>或导入 ZIP 后即可在开始菜单找到它。
+                还没有安装插件。<template v-if="builtinAvailablePlugins.length">安装上方官方插件，</template>或导入 ZIP 后即可在开始菜单找到它。
             </div>
         </div>
         <div class="plugin-mgr-tip">

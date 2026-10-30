@@ -4522,6 +4522,7 @@ new Vue({
         pluginBuiltinLoading: false,
         pluginImporting: false,
         pluginBuiltinInstalling: '',
+        pluginCatalogError: '',
         pluginMgrError: '',
         desktopStartApps: [
             { id: 'ai', label: 'AI 终端', icon: 'el-icon-chat-dot-round', color: '#3d7eff' },
@@ -18630,15 +18631,26 @@ new Vue({
                 }
             });
         },
-        loadBuiltinPlugins: function (showError) {
+        loadBuiltinPlugins: function (showError, forceRefresh) {
             var self = this;
             this.pluginBuiltinLoading = true;
-            return http.get('/api/desktop/plugins/builtin', { silent: !showError }).then(function (list) {
+            this.pluginCatalogError = '';
+            var opts = { silent: !showError };
+            if (forceRefresh) {
+                opts.params = { refresh: 1 };
+            }
+            return http.get('/api/desktop/plugins/builtin', opts).then(function (list) {
                 self.builtinPlugins = Array.isArray(list) ? list : [];
                 self.pluginBuiltinLoading = false;
-            }).catch(function () {
+            }).catch(function (err) {
+                self.builtinPlugins = [];
                 self.pluginBuiltinLoading = false;
+                self.pluginCatalogError = (err && err.message && err.message !== 'error')
+                    ? err.message : '无法连接官方插件仓库，请检查网络后重试；也可以手动导入 ZIP。';
             });
+        },
+        refreshBuiltinPlugins: function () {
+            return this.loadBuiltinPlugins(true, true);
         },
         installBuiltinPlugin: function (p) {
             if (!p || this.pluginBuiltinInstalling) {
@@ -18683,7 +18695,7 @@ new Vue({
                     });
                 })
                 .catch(function (err) {
-                    self.pluginMgrError = (err && err.message) ? err.message : '内置插件安装失败';
+                    self.pluginMgrError = (err && err.message) ? err.message : '官方插件安装失败';
                 })
                 .then(function () {
                     self.pluginBuiltinInstalling = '';
@@ -18695,6 +18707,7 @@ new Vue({
             this.desktop.wallMenu.visible = false;
             this.pluginMgrVisible = true;
             this.pluginMgrError = '';
+            this.pluginCatalogError = '';
             this.loadDesktopPlugins(true);
             this.loadBuiltinPlugins(true);
         },

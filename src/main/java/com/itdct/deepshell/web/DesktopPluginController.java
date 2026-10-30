@@ -39,8 +39,9 @@ public class DesktopPluginController {
     }
 
     @GetMapping("/builtin")
-    public R<List<DesktopPluginService.BuiltinPluginInfo>> builtin() {
-        return R.ok(service.listBuiltin());
+    public R<List<DesktopPluginService.BuiltinPluginInfo>> builtin(
+            @RequestParam(value = "refresh", required = false) boolean refresh) {
+        return R.ok(service.listBuiltin(refresh));
     }
 
     @PostMapping("/builtin/{id}/install")
