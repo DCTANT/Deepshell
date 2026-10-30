@@ -150,7 +150,7 @@ java -jar target/deepshell.jar
 
 用 Electron 给现有页面套一个桌面窗口，不重写前端和后端：壳负责启动 Java、等待端口就绪、加载页面，并在关闭窗口时回收 Java 进程。
 
-前置要求：JDK 8+、Node.js 18+；先构建 `target/deepshell.jar`。
+前置要求：JDK 8+、Node.js 18+；先构建 `target/deepshell.jar`。打包绿色版还需 JDK 17+（jlink）。
 
 ```bash
 mvn -DskipTests clean package
@@ -163,7 +163,8 @@ npm start
 - 默认使用 `target/deepshell.jar` 和系统 `java`，也可以分别用 `DEEPSHELL_JAR`、`DEEPSHELL_JAVA` 覆盖
 - 数据目录默认为 Electron 用户目录下的 `DeepShell/data`，可用 `DEEPSHELL_DATA_DIR` 指向现有 `data/` 或 `~/.deepshell`
 - 壳会关闭 Java 侧的自动打开浏览器、托盘、协议注册与自动更新，避免和 Electron 重复；关闭窗口即退出并停止本地服务
-- 当前为开发版壳，尚未内置 JRE、安装包和自动更新；发布级打包需要再补 jlink 运行时与签名
+- 打包绿色版（Electron + 精简 JRE + jar）：`powershell -ExecutionPolicy Bypass -File tools/build-electron.ps1`，产物在 `electron/out/`（含 ZIP 与 .sha256）；首次需先在 `electron/` 执行 `npm install`
+- 尚未提供安装包（NSIS/MSI）与自动更新；发布前仍需自行签名
 - 壳按 HTTP 访问本机服务；如果已开启局域网 HTTPS，请暂用浏览器版，或先关闭 TLS 后再试
 
 ### 分发包
