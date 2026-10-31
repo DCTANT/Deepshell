@@ -33,7 +33,7 @@ public class McpServerService {
     private final AuditService audit;
     private final ObjectMapper om = new ObjectMapper();
 
-    @Value("${deepshell.version:1.8.0}")
+    @Value("${deepshell.version:1.9.0}")
     private String version;
 
     public McpServerService(McpTools tools, AuditService audit) {

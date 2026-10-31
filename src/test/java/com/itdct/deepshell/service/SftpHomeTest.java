@@ -69,7 +69,9 @@ class SftpHomeTest {
         when(channel.getOutputStream()).thenReturn(new ByteArrayOutputStream());
         when(channel.getInputStream()).thenReturn(new ByteArrayInputStream(new byte[0]));
         SshSessionManager.SshSession session = new SshSessionManager.SshSession(
-                1L, "termux", null, jsch, channel, null, null, Collections.emptyList());
+                1L, "termux", null, jsch, channel, null, null,
+                Collections.<Session>emptyList(),
+                Collections.<GatewayTunnelService.Tunnel>emptyList());
         session.setSftpChannel(sftp);
         when(sessions.get("s1")).thenReturn(session);
         return new SftpService(sessions);

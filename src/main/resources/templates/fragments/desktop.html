@@ -3341,7 +3341,7 @@
                      @click="desktopMenuAction('crossTransfer')">
                     <i class="el-icon-sort"></i>跨服务器传输
                 </div>
-                <div class="dsk-menu-item has-sub" v-else-if="desktopMenuMulti"
+                <div class="dsk-menu-item has-sub" v-if="desktopMenuMulti"
                      @click.stop="openDesktopDownloadSub($event)">
                     <i class="el-icon-download"></i>下载
                     <i class="el-icon-arrow-right dsk-menu-sub-arrow"></i>

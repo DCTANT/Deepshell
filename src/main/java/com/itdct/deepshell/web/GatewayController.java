@@ -27,7 +27,7 @@ public class GatewayController {
     private final GatewaySettingsService settings;
     private final AuditService audit;
 
-    @Value("${deepshell.version:1.8.0}")
+    @Value("${deepshell.version:1.9.0}")
     private String configuredVersion;
 
     public GatewayController(GatewaySettingsService settings, AuditService audit) {

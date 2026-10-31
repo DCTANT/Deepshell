@@ -25,7 +25,7 @@ public class AppInfoController {
 
     private final ProtocolRegistrar protocolRegistrar;
 
-    @Value("${deepshell.version:1.8.0}")
+    @Value("${deepshell.version:1.9.0}")
     private String configuredVersion;
 
     public AppInfoController(ProtocolRegistrar protocolRegistrar) {

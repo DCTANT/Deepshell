@@ -50,7 +50,7 @@ deepshell:
   data-dir: ./data
 
   # 当前版本号；构建绿色版 / 检查更新时使用
-  version: 1.8.0
+  version: 1.9.0
   # 自动更新：读取 Gitee Releases 最新版本；只接受发布页里带有 SHA256 的绿色版 ZIP。
   # 关闭后仍可在「关于 → 应用与更新」手动检查。
   update:

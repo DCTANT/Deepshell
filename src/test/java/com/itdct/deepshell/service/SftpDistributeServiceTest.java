@@ -57,9 +57,9 @@ class SftpDistributeServiceTest {
         ChannelSftp channel2 = mockChannel(received2);
         SshSessionManager sessions = mock(SshSessionManager.class);
         when(sessions.openSftp(1L)).thenReturn(
-                new SshSessionManager.SftpHandle(channel1, null, false));
+                new SshSessionManager.SftpHandle(channel1, null, null, false));
         when(sessions.openSftp(2L)).thenReturn(
-                new SshSessionManager.SftpHandle(channel2, null, false));
+                new SshSessionManager.SftpHandle(channel2, null, null, false));
 
         service = new SftpDistributeService(sessions, connectionService, audit, mock(SftpService.class));
         service.initAt(temp.resolve("distribute"));
@@ -114,9 +114,9 @@ class SftpDistributeServiceTest {
         ChannelSftp channel2 = mockChannel(received2);
         SshSessionManager sessions = mock(SshSessionManager.class);
         when(sessions.openSftp(1L)).thenReturn(
-                new SshSessionManager.SftpHandle(channel1, null, false));
+                new SshSessionManager.SftpHandle(channel1, null, null, false));
         when(sessions.openSftp(2L)).thenReturn(
-                new SshSessionManager.SftpHandle(channel2, null, false));
+                new SshSessionManager.SftpHandle(channel2, null, null, false));
         SftpService sftp = mock(SftpService.class);
         doAnswer(invocation -> {
             String remote = invocation.getArgument(1);
